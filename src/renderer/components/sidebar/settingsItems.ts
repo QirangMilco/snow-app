@@ -1,4 +1,5 @@
 import {
+  Boxes,
   ChartColumn,
   EyeOff,
   Globe,
@@ -15,6 +16,7 @@ import {
   ShieldAlert,
   Terminal,
   Users,
+  Wand2,
 } from "lucide-react";
 
 import type { MainContentView } from "../mainContent/types";
@@ -59,6 +61,20 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
     labelKey: "settings.systemPromptSettings",
     defaultLabel: "System prompt",
     view: "system-prompt-settings",
+  },
+  {
+    id: "featureprompts",
+    icon: Wand2,
+    labelKey: "settings.featurePromptsSettings",
+    defaultLabel: "Feature prompts",
+    view: "feature-prompts-settings",
+  },
+  {
+    id: "builtin-services",
+    icon: Boxes,
+    labelKey: "settings.builtinServicesSettings",
+    defaultLabel: "Built-in services",
+    view: "builtin-services-settings",
   },
   {
     id: "customheaders",

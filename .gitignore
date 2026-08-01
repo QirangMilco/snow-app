@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+.npm-cache/
+.cargo-home/
 
 # Build outputs
 dist/

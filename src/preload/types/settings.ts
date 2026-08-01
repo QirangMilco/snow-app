@@ -312,6 +312,19 @@ export type SystemPromptItemRecord = SystemPromptItemInput & {
   updatedAt: string;
 };
 
+/** 内置功能提示词记录（由 Rust 后端 listFeaturePrompts 返回）。 */
+export type FeaturePromptRecord = {
+  promptKey: string;
+  name: string;
+  description: string;
+  content: string;
+  defaultContent: string;
+  isModified: boolean;
+};
+
+/** 内置 MCP 服务全局开关状态（serviceId -> enabled）。 */
+export type BuiltinServicesStatus = Record<string, boolean>;
+
 export type CustomHeaderSchemeInput = {
   schemeId: string;
   name: string;

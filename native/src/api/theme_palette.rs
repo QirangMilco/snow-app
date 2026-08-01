@@ -31,27 +31,14 @@ use crate::api::responses::{
     ResponsesApiResult, ResponsesApiStreamCallback,
 };
 
-const PALETTE_SYSTEM_PROMPT: &str = "You are a senior UI/UX color designer. Based on the provided background image, design a coherent theme palette for a desktop application. \
-The palette must work well when the image is used as a translucent, blurred window background. \
-Analyze the dominant colors, mood, and contrast of the image, then derive a palette that keeps text readable and UI elements distinguishable. \
-\n\nRespond with ONLY a JSON object (no markdown fences, no explanation) using exactly this schema:\n\
-{\n  \"light\": { \"bgPrimary\": \"#hex\", \"bgSecondary\": \"#hex\", \"bgTertiary\": \"#hex\", \"bgHover\": \"#hex\", \"bgActive\": \"#hex\", \"chromeBg\": \"#hex\", \"appBg\": \"#hex\", \"borderColor\": \"#hex\", \"borderLight\": \"#hex\", \"borderSubtle\": \"#hex\", \"textPrimary\": \"#hex\", \"textSecondary\": \"#hex\", \"textTertiary\": \"#hex\", \"textMuted\": \"#hex\", \"accentGreen\": \"#hex\", \"accentGreenBg\": \"#hex\", \"accentGreenText\": \"#hex\", \"accentRed\": \"#hex\", \"accentRedBg\": \"#hex\", \"accentRedText\": \"#hex\", \"accentBlue\": \"#hex\", \"accentBlueBg\": \"#hex\", \"accentBlueText\": \"#hex\", \"onSolid\": \"#hex\", \"selectionBg\": \"#hex\", \"focusRing\": \"#hex\" },\n  \"dark\": { ...same fields... }\n\
-}\n\nRules:\n\
-1. All color values must be 6-digit hex strings starting with '#'.\n\
-2. The \"light\" palette should feel bright and airy, with dark text on light backgrounds.\n\
-3. The \"dark\" palette should feel deep and calm, with light text on dark backgrounds.\n\
-4. Keep WCAG AA contrast for textPrimary against bgPrimary in both palettes.\n\
-5. Accent colors should harmonize with the image's dominant hue.\n\
-6. Output only the JSON object, nothing else.";
-
 /// Build a `ResponsesApiRequest` for theme palette generation, embedding the
 /// background image as an inline data URL so the four providers can parse it.
-fn build_request(image_data_url: &str) -> ResponsesApiRequest {
+fn build_request(image_data_url: &str, system_prompt: &str) -> ResponsesApiRequest {
     ResponsesApiRequest {
         messages: vec![
             ResponsesApiMessage {
                 role: "system".to_string(),
-                content: PALETTE_SYSTEM_PROMPT.to_string(),
+                content: system_prompt.to_string(),
                 tool_results_json: None,
                 thinking: None,
                 thinking_blocks_json: None,
@@ -185,7 +172,13 @@ pub async fn generate_theme_palette_stream(
     }
 
     // --- 4. Build request with advanced model ---
-    let mut request = build_request(&image_data_url);
+    // 提示词可被用户覆盖：有覆盖用覆盖，无覆盖用内置默认值。
+    let palette_prompt =
+        crate::storage::services::feature_prompts::resolve_feature_prompt(
+            &context.database_path,
+            crate::storage::services::feature_prompts::PROMPT_KEY_THEME_PALETTE,
+        );
+    let mut request = build_request(&image_data_url, &palette_prompt);
     request.model = Some(advanced_model.to_string());
 
     // --- 5. Dispatch to the correct provider ---

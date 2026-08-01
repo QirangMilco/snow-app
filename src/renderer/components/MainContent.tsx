@@ -62,6 +62,16 @@ const SystemPromptSettingsPanel = lazy(() =>
     default: m.SystemPromptSettingsPanel,
   }))
 );
+const FeaturePromptsSettingsPanel = lazy(() =>
+  import("./sidebar/FeaturePromptsSettingsPanel").then((m) => ({
+    default: m.FeaturePromptsSettingsPanel,
+  }))
+);
+const BuiltinServicesPanel = lazy(() =>
+  import("./sidebar/BuiltinServicesPanel").then((m) => ({
+    default: m.BuiltinServicesPanel,
+  }))
+);
 const TerminalSettingsPanel = lazy(() =>
   import("./sidebar/TerminalSettingsPanel").then((m) => ({
     default: m.TerminalSettingsPanel,
@@ -128,6 +138,10 @@ export const MainContent = ({
             <CodebaseSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "system-prompt-settings" ? (
             <SystemPromptSettingsPanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "feature-prompts-settings" ? (
+            <FeaturePromptsSettingsPanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "builtin-services-settings" ? (
+            <BuiltinServicesPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "custom-headers-settings" ? (
             <CustomHeadersSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "mcp-settings" ? (

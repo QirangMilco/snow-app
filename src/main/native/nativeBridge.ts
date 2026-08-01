@@ -193,6 +193,36 @@ export const loadNativeBridge = (): NativeBridge => {
         Promise.reject(
           new Error("Rust native bridge is required to delete system prompts")
         ),
+      listFeaturePrompts: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to list feature prompts"
+          )
+        ),
+      setFeaturePrompt: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to write feature prompts"
+          )
+        ),
+      resetFeaturePrompt: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to reset feature prompts"
+          )
+        ),
+      getBuiltinServicesStatus: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to read built-in services status"
+          )
+        ),
+      setBuiltinServicesStatus: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to write built-in services status"
+          )
+        ),
       listCustomHeaderSchemes: () =>
         Promise.reject(
           new Error(
@@ -853,10 +883,6 @@ export const loadNativeBridge = (): NativeBridge => {
       getMemoCountSummary: () =>
         Promise.reject(
           new Error("Rust native bridge is required to count memos")
-        ),
-      sha256File: () =>
-        Promise.reject(
-          new Error("Rust native bridge is required to compute sha256")
         ),
     };
   }

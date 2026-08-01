@@ -26,8 +26,6 @@ use crate::api::config::{
 use crate::api::retry::{RetryOptions, should_retry};
 use crate::storage::services::codebase_index::SearchResult;
 
-const REVIEW_SYSTEM_PROMPT: &str = "You are a code search relevance reviewer. Given a user's search query and a list of code search results, your job is to identify which results are actually relevant to the query and which are irrelevant noise.\n\nYou will receive the query and a numbered list of code snippets. Respond with ONLY a JSON object in this exact format:\n{\"relevant\": [1, 3, 5], \"refined_query\": \"optional better search query\"}\n\nRules:\n- \"relevant\" is an array of 1-based result indices that are genuinely relevant to the query.\n- \"refined_query\" should be a better search query ONLY if many results are irrelevant. If results are mostly relevant, set it to empty string \"\".\n- Do not include any explanation, only the JSON object.";
-
 const MAX_REVIEW_ATTEMPTS: u32 = 3;
 
 /// Threshold: if the fraction of irrelevant results exceeds this value,
@@ -241,6 +239,14 @@ where
 /// Send the current results to the basic model for relevance review.
 async fn review_results(query: &str, results: &[SearchResult]) -> Result<ReviewOutcome> {
     let context = get_active_api_request_context()?;
+    let database_path = context.database_path;
+
+    // 提示词可被用户覆盖：有覆盖用覆盖，无覆盖用内置默认值。
+    let system_prompt = crate::storage::services::feature_prompts::resolve_feature_prompt(
+        &database_path,
+        crate::storage::services::feature_prompts::PROMPT_KEY_CODEBASE_REVIEW,
+    );
+
     let api_config = context.api_config;
     let custom_headers = context.custom_headers;
 
@@ -262,16 +268,16 @@ async fn review_results(query: &str, results: &[SearchResult]) -> Result<ReviewO
 
     let review_text = match api_config.request_method.as_str() {
         "responses" => {
-            review_via_responses(&api_config, &api_key, &custom_headers, model, query, results, &retry_options).await?
+            review_via_responses(&api_config, &api_key, &custom_headers, model, &system_prompt, query, results, &retry_options).await?
         }
         "anthropic" => {
-            review_via_anthropic(&api_config, &api_key, &custom_headers, model, query, results, &retry_options).await?
+            review_via_anthropic(&api_config, &api_key, &custom_headers, model, &system_prompt, query, results, &retry_options).await?
         }
         "gemini" => {
-            review_via_gemini(&api_config, &api_key, &custom_headers, model, query, results, &retry_options).await?
+            review_via_gemini(&api_config, &api_key, &custom_headers, model, &system_prompt, query, results, &retry_options).await?
         }
         _ => {
-            review_via_chat(&api_config, &api_key, &custom_headers, model, query, results, &retry_options).await?
+            review_via_chat(&api_config, &api_key, &custom_headers, model, &system_prompt, query, results, &retry_options).await?
         }
     };
 
@@ -301,6 +307,7 @@ async fn review_via_chat(
     api_key: &str,
     custom_headers: &HashMap<String, String>,
     model: &str,
+    system_prompt: &str,
     query: &str,
     results: &[SearchResult],
     retry_options: &RetryOptions,
@@ -316,7 +323,7 @@ async fn review_via_chat(
     let payload = json!({
         "model": model,
         "messages": [
-            {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
         ],
         "stream": false,
@@ -350,6 +357,7 @@ async fn review_via_responses(
     api_key: &str,
     custom_headers: &HashMap<String, String>,
     model: &str,
+    system_prompt: &str,
     query: &str,
     results: &[SearchResult],
     retry_options: &RetryOptions,
@@ -368,7 +376,7 @@ async fn review_via_responses(
     let payload = json!({
         "model": model,
         "input": [
-            {"type": "message", "role": "system", "content": REVIEW_SYSTEM_PROMPT},
+            {"type": "message", "role": "system", "content": system_prompt},
             {"type": "message", "role": "user", "content": user_content}
         ],
         "stream": false,
@@ -393,6 +401,7 @@ async fn review_via_anthropic(
     api_key: &str,
     custom_headers: &HashMap<String, String>,
     model: &str,
+    system_prompt: &str,
     query: &str,
     results: &[SearchResult],
     retry_options: &RetryOptions,
@@ -409,7 +418,7 @@ async fn review_via_anthropic(
         "model": model,
         "max_tokens": 4096,
         "stream": false,
-        "system": REVIEW_SYSTEM_PROMPT,
+        "system": system_prompt,
         "messages": [{"role": "user", "content": user_content}],
     });
 
@@ -432,6 +441,7 @@ async fn review_via_gemini(
     api_key: &str,
     custom_headers: &HashMap<String, String>,
     model: &str,
+    system_prompt: &str,
     query: &str,
     results: &[SearchResult],
     retry_options: &RetryOptions,
@@ -446,7 +456,7 @@ async fn review_via_gemini(
     let user_content = build_review_user_content(query, results);
     let payload = json!({
         "systemInstruction": {
-            "parts": [{"text": REVIEW_SYSTEM_PROMPT}]
+            "parts": [{"text": system_prompt}]
         },
         "contents": [{
             "role": "user",

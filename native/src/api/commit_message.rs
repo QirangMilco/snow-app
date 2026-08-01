@@ -21,25 +21,16 @@ use crate::api::responses::{
     ResponsesApiStreamCallback,
 };
 
-const COMMIT_SYSTEM_PROMPT: &str = "\
-You are a helpful assistant that writes concise, meaningful git commit messages. \
-Based on the provided staged diff, generate a commit message following these rules:\n\
-1. The first line should be a concise summary (max 72 characters) in the imperative mood (e.g. \"Add feature\" not \"Added feature\").\n\
-2. If more detail is needed, leave a blank line after the summary and add a body explaining what and why (not how).\n\
-3. Do not include any prefixes like \"AI:\" or explanations about your reasoning.\n\
-4. Output only the commit message, nothing else.\n\
-5. Write the commit message in the same language as the code changes and comments.";
-
 /// Build a `ResponsesApiRequest` for commit-message generation, forcing the
 /// basic model.
-fn build_request(staged_diff: &str) -> ResponsesApiRequest {
+fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest {
     let diff_content = staged_diff;
 
     ResponsesApiRequest {
         messages: vec![
             crate::api::responses::ResponsesApiMessage {
                 role: "system".to_string(),
-                content: COMMIT_SYSTEM_PROMPT.to_string(),
+                content: system_prompt.to_string(),
                 tool_results_json: None,
                 thinking: None,
                 thinking_blocks_json: None,
@@ -106,7 +97,14 @@ pub async fn generate_commit_message_stream(
     }
 
     // --- 3. Build request with basic model ---
-    let mut request = build_request(&staged_diff);
+    // 提示词可被用户覆盖：有覆盖用覆盖，无覆盖用内置默认值。
+    let database_path = context.database_path;
+    let commit_prompt =
+        crate::storage::services::feature_prompts::resolve_feature_prompt(
+            &database_path,
+            crate::storage::services::feature_prompts::PROMPT_KEY_COMMIT_MESSAGE,
+        );
+    let mut request = build_request(&staged_diff, &commit_prompt);
     request.model = Some(basic_model.to_string());
 
     // --- 4. Dispatch to the correct provider ---
@@ -116,7 +114,6 @@ pub async fn generate_commit_message_stream(
     // the end of each provider will persist a conversation, but that is
     // acceptable — it is a lightweight single exchange.
     let request_method = context.api_config.request_method.clone();
-    let database_path = context.database_path;
     let api_config = context.api_config;
     let custom_headers = context.custom_headers;
 

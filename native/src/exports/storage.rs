@@ -55,6 +55,48 @@ pub async fn set_system_setting(
 }
 
 #[napi]
+pub async fn list_feature_prompts(
+) -> napi::Result<Vec<crate::storage::services::feature_prompts::FeaturePromptRecord>> {
+    tokio::task::spawn_blocking(crate::storage::list_feature_prompts)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_feature_prompt(prompt_key: String, content: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::set_feature_prompt(prompt_key, content)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn reset_feature_prompt(prompt_key: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::reset_feature_prompt(prompt_key))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn get_builtin_services_status() -> napi::Result<std::collections::BTreeMap<String, bool>> {
+    tokio::task::spawn_blocking(crate::storage::get_builtin_services_status)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_builtin_services_status(
+    statuses: std::collections::BTreeMap<String, bool>,
+) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::set_builtin_services_status(statuses)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
 pub async fn get_yolo_mode() -> napi::Result<bool> {
     tokio::task::spawn_blocking(crate::storage::get_yolo_mode)
         .await

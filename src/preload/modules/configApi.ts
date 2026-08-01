@@ -18,6 +18,7 @@ import type {
   SubAgentConfigRecord,
   SystemPromptItemInput,
   SystemPromptItemRecord,
+  FeaturePromptRecord,
 } from "../types";
 
 export const configApi = {
@@ -29,6 +30,15 @@ export const configApi = {
     ipcRenderer.invoke("system-prompts:delete", promptId),
   importSnowCliSystemPromptConfig: (): Promise<SystemPromptItemRecord[]> =>
     ipcRenderer.invoke("system-prompts:import-snow-cli"),
+  listFeaturePrompts: (): Promise<FeaturePromptRecord[]> =>
+    ipcRenderer.invoke("feature-prompts:list"),
+  setFeaturePrompt: (
+    promptKey: string,
+    content: string
+  ): Promise<FeaturePromptRecord[]> =>
+    ipcRenderer.invoke("feature-prompts:set", promptKey, content),
+  resetFeaturePrompt: (promptKey: string): Promise<FeaturePromptRecord[]> =>
+    ipcRenderer.invoke("feature-prompts:reset", promptKey),
   listCustomHeaderSchemes: (): Promise<CustomHeaderSchemeRecord[]> =>
     ipcRenderer.invoke("custom-header-schemes:list"),
   upsertCustomHeaderScheme: (

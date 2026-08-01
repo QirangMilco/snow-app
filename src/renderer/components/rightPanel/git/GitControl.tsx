@@ -439,19 +439,33 @@ export const GitControl = ({
       )
       .then((result) => {
         if (result.status === "error") {
+          // 流式请求以 error 状态返回：展示具体原因，不再静默吞掉。
           setCommitMessage("");
+          setOperationError({
+            title: t("git.generateCommitMessageFailed"),
+            message: t("git.generateCommitMessageFailedDetail", {
+              defaultValue:
+                "The AI could not generate a commit message. Check your API settings and make sure changes are staged.",
+            }),
+          });
         } else if (result.content) {
           setCommitMessage(result.content);
         }
       })
-      .catch(() => {
-        // Error or cancelled — keep whatever was streamed so far
+      .catch((err: unknown) => {
+        // 取消（abort）在 Rust 侧返回 Ok(status="cancelled")，不会走到这里；
+        // 走到 catch 的都是真实失败（网关 403、API key 无效、无暂存变更等），
+        // 弹出错误对话框透出具体原因，便于用户自我排查。
+        setOperationError({
+          title: t("git.generateCommitMessageFailed"),
+          message: err instanceof Error ? err.message : String(err),
+        });
       })
       .finally(() => {
         setIsGeneratingCommitMsg(false);
         commitMsgStreamIdRef.current = null;
       });
-  }, [repoPath, isGeneratingCommitMsg]);
+  }, [repoPath, isGeneratingCommitMsg, t]);
 
   const handleAbortCommitMessage = useCallback(() => {
     const streamId = commitMsgStreamIdRef.current;

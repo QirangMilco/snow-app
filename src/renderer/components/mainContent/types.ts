@@ -4,6 +4,7 @@ export type MainContentView =
   | "proxy-browser-settings"
   | "codebase-settings"
   | "system-prompt-settings"
+  | "feature-prompts-settings"
   | "custom-headers-settings"
   | "mcp-settings"
   | "skills-settings"
@@ -15,4 +16,5 @@ export type MainContentView =
   | "privacy-settings"
   | "keyboard-shortcuts-settings"
   | "usage-settings"
+  | "builtin-services-settings"
   | "system-logs";

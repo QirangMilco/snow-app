@@ -18,6 +18,7 @@ import type {
   ThemeSettings,
   UsageRecordPage,
   UsageSummary,
+  BuiltinServicesStatus,
 } from "../types";
 
 const CHAT_CREATE_RESPONSE_CHUNK_CHANNEL = "chat:create-response:chunk";
@@ -58,6 +59,12 @@ const normalizeResponseStreamChunk = (
 
 export const apiConfigApi = {
   engineInfo: (): Promise<string> => ipcRenderer.invoke("native:engine-info"),
+  getBuiltinServicesStatus: (): Promise<BuiltinServicesStatus> =>
+    ipcRenderer.invoke("builtin-services:get-status"),
+  setBuiltinServicesStatus: (
+    statuses: BuiltinServicesStatus
+  ): Promise<BuiltinServicesStatus> =>
+    ipcRenderer.invoke("builtin-services:set-status", statuses),
   getSystemSettingValue: (settingCode: string): Promise<string | null> =>
     ipcRenderer.invoke("settings:get-system-setting-value", settingCode),
   setSystemSetting: (

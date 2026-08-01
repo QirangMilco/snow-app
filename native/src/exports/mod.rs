@@ -7,4 +7,3 @@ mod sample;
 mod sphere_layout;
 mod storage;
 pub(crate) mod terminal;
-mod updater;

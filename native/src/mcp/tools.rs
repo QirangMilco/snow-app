@@ -364,6 +364,9 @@ pub async fn collect_all_mcp_tools(
 ) -> Result<Vec<McpTool>> {
     let scope = load_project_scope(project_id).await?;
 
+    // 内置服务全局开关：被禁用的服务其工具不进入模型可见列表。
+    let builtin_statuses = load_builtin_services_status().await?;
+
     // Determine whether the codebase search tool should be included.
     // It requires: (1) a project id, (2) codebase enabled in project scope,
     // and (3) at least one embedded chunk in the vector table.
@@ -376,6 +379,13 @@ pub async fn collect_all_mcp_tools(
             // exposed to the model while the current request is in Plan Mode.
             if tool.full_name() == REQUEST_APPROVAL_FULL_NAME {
                 return include_plan_mode_tool;
+            }
+            // 全局禁用：不注册该服务的任何工具，模型上下文中不可见。
+            if !crate::storage::services::builtin_services::is_builtin_service_enabled(
+                &builtin_statuses,
+                &tool.server_id,
+            ) {
+                return false;
             }
             // Exclude codebase search tool unless the project has codebase
             // enabled and an existing index.
@@ -397,6 +407,24 @@ pub async fn collect_all_mcp_tools(
         Err(error) => eprintln!("Failed to discover external MCP tools: {error}"),
     }
     Ok(tools)
+}
+
+/// 读取内置服务全局开关状态（SQLite 读取，spawn_blocking 避免阻塞主线程）。
+async fn load_builtin_services_status(
+) -> Result<std::collections::BTreeMap<String, bool>> {
+    let storage_info = crate::storage::initialize_app_storage()?;
+    let database_path = PathBuf::from(storage_info.database_path);
+
+    tokio::task::spawn_blocking(move || {
+        crate::storage::services::builtin_services::get_builtin_services_status(&database_path)
+    })
+    .await
+    .map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to load built-in services status: {error}"),
+        )
+    })?
 }
 /// Check whether the codebase search tool should be available for the
 /// given project: the project must have codebase enabled AND have at

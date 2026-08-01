@@ -1,0 +1,519 @@
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号，合法 semver，如 0.1.13 或 0.1.13-rc.1"
+        required: false
+        type: string
+      draft:
+        description: "创建为草稿发布"
+        required: false
+        default: true
+        type: boolean
+      prerelease:
+        description: "标记为预发布"
+        required: false
+        default: false
+        type: boolean
+      target_ref:
+        description: "可选。指定提交 SHA、分支名或 tag；留空则使用当前触发提交"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-desktop-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: 准备发布元数据
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      title: ${{ steps.meta.outputs.title }}
+      ref: ${{ steps.meta.outputs.ref }}
+      draft: ${{ steps.meta.outputs.draft }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 计算发布元数据
+        id: meta
+        shell: bash
+        run: |
+          if [[ '${{ github.event_name }}' == 'push' ]]; then
+            # tag 触发：从 tag 名提取版本号
+            TAG_NAME='${{ github.ref_name }}'
+            VERSION="${TAG_NAME#v}"         # 去掉 v 前缀
+            TARGET_REF='${{ github.sha }}'
+            DRAFT="false"
+            # 包含 -rc / -beta / -alpha 的标记为预发布
+            if [[ "$VERSION" == *-* ]]; then
+              PRERELEASE="true"
+            else
+              PRERELEASE="false"
+            fi
+          else
+            # workflow_dispatch 触发：使用输入参数
+            VERSION='${{ inputs.version }}'
+            TARGET_REF='${{ inputs.target_ref }}'
+            DRAFT='${{ inputs.draft }}'
+            PRERELEASE='${{ inputs.prerelease }}'
+            if [[ -z "$TARGET_REF" ]]; then
+              TARGET_REF="$GITHUB_SHA"
+            fi
+          fi
+
+          SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+
+          if [[ ! "$VERSION" =~ $SEMVER_RE ]]; then
+            echo "版本号必须是合法 semver" >&2
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+          TITLE="Snow App ${VERSION}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
+          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Tag: $TAG"
+          echo "Title: $TITLE"
+          echo "Draft: $DRAFT"
+          echo "Prerelease: $PRERELEASE"
+
+      - name: 生成 Release Notes
+        id: notes
+        shell: bash
+        run: |
+          # 范围终点：tag 触发用当前 tag；手动触发用当前提交（计划创建的 tag 尚不存在）
+          if [[ '${{ github.event_name }}' == 'push' ]]; then
+            RANGE_END='${{ github.ref_name }}'
+          else
+            RANGE_END="$GITHUB_SHA"
+          fi
+
+          # 找到前一个版本 tag（按 semver 排序的倒数第二个 tag）
+          PREV_TAG=$(git tag --sort=-version:refname | head -n 2 | tail -n 1 || true)
+
+          if [[ -z "$PREV_TAG" || "$PREV_TAG" == "$RANGE_END" ]]; then
+            # 没有之前的 tag，使用所有提交
+            RANGE=""
+          else
+            RANGE="$PREV_TAG..$RANGE_END"
+          fi
+
+          echo "Generating notes for range: ${RANGE:-ALL}"
+
+          # ---------- 中文版 ----------
+          CN="# 更新内容\n\n"
+
+          for section in "feat|✨ 新功能" "fix|🐛 修复问题" "refactor|🔄 重构" "docs|📖 文档" "chore|🧹 构建与配置" "test|🧪 测试"; do
+            prefix="${section%%|*}"
+            label="${section##*|}"
+
+            if [[ -z "$RANGE" ]]; then
+              commits=$(git log --format="%s" --no-merges | grep -i "^$prefix" || true)
+            else
+              commits=$(git log "$RANGE" --format="%s" --no-merges | grep -i "^$prefix" || true)
+            fi
+
+            if [[ -n "$commits" ]]; then
+              CN+="## $label\n"
+              while IFS= read -r line; do
+                desc=$(echo "$line" | sed -E 's/^[a-zA-Z]+(\([^)]*\))?:\s*//')
+                CN+="- $desc\n"
+              done <<< "$commits"
+              CN+="\n"
+            fi
+          done
+
+          # 其他未分类的提交（中文）
+          if [[ -z "$RANGE" ]]; then
+            other=$(git log --format="%s" --no-merges | grep -vi "^feat\|^fix\|^refactor\|^docs\|^chore\|^test" || true)
+          else
+            other=$(git log "$RANGE" --format="%s" --no-merges | grep -vi "^feat\|^fix\|^refactor\|^docs\|^chore\|^test" || true)
+          fi
+
+          if [[ -n "$other" ]]; then
+            CN+="## 其他\n"
+            while IFS= read -r line; do
+              CN+="- $line\n"
+            done <<< "$other"
+            CN+="\n"
+          fi
+
+          if [[ -n "$RANGE" ]]; then
+            CN+="**完整更新日志**: https://github.com/${{ github.repository }}/compare/$RANGE\n"
+          fi
+
+          # ---------- 英文版 ----------
+          EN="\n------\n\n# What's Changed\n\n"
+
+          for section in "feat|✨ New Features" "fix|🐛 Bug Fixes" "refactor|🔄 Refactoring" "docs|📖 Documentation" "chore|🧹 Build & Config" "test|🧪 Tests"; do
+            prefix="${section%%|*}"
+            label="${section##*|}"
+
+            if [[ -z "$RANGE" ]]; then
+              commits=$(git log --format="%s" --no-merges | grep -i "^$prefix" || true)
+            else
+              commits=$(git log "$RANGE" --format="%s" --no-merges | grep -i "^$prefix" || true)
+            fi
+
+            if [[ -n "$commits" ]]; then
+              EN+="## $label\n"
+              while IFS= read -r line; do
+                desc=$(echo "$line" | sed -E 's/^[a-zA-Z]+(\([^)]*\))?:\s*//')
+                EN+="- $desc\n"
+              done <<< "$commits"
+              EN+="\n"
+            fi
+          done
+
+          # 其他未分类的提交（英文）
+          if [[ -z "$RANGE" ]]; then
+            other=$(git log --format="%s" --no-merges | grep -vi "^feat\|^fix\|^refactor\|^docs\|^chore\|^test" || true)
+          else
+            other=$(git log "$RANGE" --format="%s" --no-merges | grep -vi "^feat\|^fix\|^refactor\|^docs\|^chore\|^test" || true)
+          fi
+
+          if [[ -n "$other" ]]; then
+            EN+="## Other Changes\n"
+            while IFS= read -r line; do
+              EN+="- $line\n"
+            done <<< "$other"
+            EN+="\n"
+          fi
+
+          if [[ -n "$RANGE" ]]; then
+            EN+="**Full Changelog**: https://github.com/${{ github.repository }}/compare/$RANGE\n"
+          fi
+
+          NOTES="${CN}${EN}"
+
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          echo "=== Generated Release Notes ==="
+          echo -e "$NOTES"
+
+          # 写入文件用于跨 job 传递
+          echo -e "$NOTES" > /tmp/release-notes.md
+
+      - name: 上传 Release Notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: /tmp/release-notes.md
+
+  # ============================================================
+  # 三端构建：Electron + Rust (napi) + electron-builder
+  # 版本号通过 --config.extraMetadata.version 注入，不改动仓库文件。
+  # macOS 无签名证书（identity: "-"），关闭代码签名发现。
+  # ============================================================
+
+  build-macos-arm64:
+    name: 构建 macOS arm64
+    runs-on: macos-latest
+    needs: prepare-release
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      NATIVE_BUILD_ARCH: arm64
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CARGO_NET_RETRY: 5
+      CARGO_HTTP_TIMEOUT: 120
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建（Rust native + TypeScript + Vite）
+        run: npm run build
+
+      - name: 打包 dmg + zip
+        run: |
+          npx electron-builder --mac dmg zip --arm64 --publish never \
+            --config.extraMetadata.version=${{ env.VERSION }}
+          ls -la release/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+
+  build-macos-x64:
+    name: 构建 macOS x64
+    runs-on: macos-15-intel
+    needs: prepare-release
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      NATIVE_BUILD_ARCH: x64
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CARGO_NET_RETRY: 5
+      CARGO_HTTP_TIMEOUT: 120
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建（Rust native + TypeScript + Vite）
+        run: npm run build
+
+      - name: 打包 dmg + zip
+        run: |
+          npx electron-builder --mac dmg zip --x64 --publish never \
+            --config.extraMetadata.version=${{ env.VERSION }}
+          ls -la release/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-x64
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+
+  build-linux-amd64:
+    name: 构建 Linux amd64
+    runs-on: ubuntu-latest
+    needs: prepare-release
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      CARGO_NET_RETRY: 5
+      CARGO_HTTP_TIMEOUT: 120
+      CARGO_HTTP_CHECK_REVOKE: false
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建（Rust native + TypeScript + Vite）
+        run: npm run build
+
+      - name: 打包 AppImage + deb
+        run: |
+          npx electron-builder --linux AppImage deb --publish never \
+            --config.extraMetadata.version=${{ env.VERSION }}
+          ls -la release/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-amd64
+          if-no-files-found: error
+          path: |
+            release/*.AppImage
+            release/*.deb
+
+  build-windows-amd64:
+    name: 构建 Windows amd64
+    runs-on: windows-latest
+    needs: prepare-release
+    env:
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      CARGO_NET_RETRY: 5
+      CARGO_HTTP_TIMEOUT: 120
+      CARGO_HTTP_CHECK_REVOKE: false
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.ref }}
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建（Rust native + TypeScript + Vite）
+        run: npm run build
+
+      - name: 打包 nsis + portable
+        shell: pwsh
+        run: |
+          npx electron-builder --win nsis portable --publish never `
+            --config.extraMetadata.version=$env:VERSION
+          Get-ChildItem release
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          if-no-files-found: error
+          path: |
+            release/*.exe
+
+  publish-release:
+    name: 发布 Release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-macos-arm64
+      - build-macos-x64
+      - build-linux-amd64
+      - build-windows-amd64
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare-release.outputs.tag }}
+      VERSION: ${{ needs.prepare-release.outputs.version }}
+      TITLE: ${{ needs.prepare-release.outputs.title }}
+      REF: ${{ needs.prepare-release.outputs.ref }}
+      DRAFT: ${{ needs.prepare-release.outputs.draft }}
+      PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: 下载 Release Notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: /tmp
+
+      - name: 列出产物
+        shell: bash
+        run: |
+          echo "Release assets:"
+          find release-assets -maxdepth 2 -type f | sort
+          echo "Release notes:"
+          cat /tmp/release-notes.md
+
+      - name: 创建或更新 Release
+        shell: bash
+        run: |
+          mapfile -t FILES < <(find release-assets -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) | sort)
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "没有找到构建产物" >&2
+            exit 1
+          fi
+
+          EDIT_ARGS=(
+            --title "$TITLE"
+          )
+
+          if [[ "$DRAFT" == 'true' ]]; then
+            EDIT_ARGS+=(--draft=true)
+          else
+            EDIT_ARGS+=(--draft=false)
+          fi
+
+          if [[ "$PRERELEASE" == 'true' ]]; then
+            EDIT_ARGS+=(--prerelease)
+          fi
+
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，更新 metadata 并上传产物"
+            gh release edit "$TAG" "${EDIT_ARGS[@]}" --repo "$GH_REPO"
+            gh release upload "$TAG" "${FILES[@]}" --clobber --repo "$GH_REPO"
+          else
+            echo "创建 Release $TAG"
+
+            CREATE_ARGS=(
+              --target "$REF"
+              --title "$TITLE"
+              --notes-file /tmp/release-notes.md
+            )
+
+            if [[ "$DRAFT" == 'true' ]]; then
+              CREATE_ARGS+=(--draft)
+            fi
+
+            if [[ "$PRERELEASE" == 'true' ]]; then
+              CREATE_ARGS+=(--prerelease)
+            fi
+
+            gh release create "$TAG" "${FILES[@]}" "${CREATE_ARGS[@]}" --repo "$GH_REPO"
+          fi

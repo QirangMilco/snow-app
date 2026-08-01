@@ -1,5 +1,6 @@
 pub mod api_configs;
 pub mod app_logs;
+pub mod builtin_services;
 pub mod chat_conversations;
 pub mod conversation_export;
 pub mod checkpoint;
@@ -9,6 +10,7 @@ pub mod codebase_index;
 pub mod codebase_watcher;
 pub mod custom_header_schemes;
 pub mod file_scanner;
+pub mod feature_prompts;
 pub mod fs_explorer;
 pub mod git;
 pub mod git_watcher;

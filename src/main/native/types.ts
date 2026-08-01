@@ -347,6 +347,17 @@ export type SystemPromptItemRecord = SystemPromptItemInput & {
   updatedAt: string;
 };
 
+export type FeaturePromptRecord = {
+  promptKey: string;
+  name: string;
+  description: string;
+  content: string;
+  defaultContent: string;
+  isModified: boolean;
+};
+
+export type BuiltinServicesStatus = Record<string, boolean>;
+
 export type CustomHeaderSchemeInput = {
   schemeId: string;
   name: string;
@@ -994,6 +1005,11 @@ export type NativeBridge = {
   listSystemPrompts: () => Promise<SystemPromptItemRecord[]>;
   upsertSystemPrompt: (item: SystemPromptItemInput) => Promise<void>;
   deleteSystemPrompt: (promptId: string) => Promise<void>;
+  listFeaturePrompts: () => Promise<FeaturePromptRecord[]>;
+  setFeaturePrompt: (promptKey: string, content: string) => Promise<void>;
+  resetFeaturePrompt: (promptKey: string) => Promise<void>;
+  getBuiltinServicesStatus: () => Promise<BuiltinServicesStatus>;
+  setBuiltinServicesStatus: (statuses: BuiltinServicesStatus) => Promise<void>;
   listCustomHeaderSchemes: () => Promise<CustomHeaderSchemeRecord[]>;
   upsertCustomHeaderScheme: (item: CustomHeaderSchemeInput) => Promise<void>;
   deleteCustomHeaderScheme: (schemeId: string) => Promise<void>;
@@ -1333,5 +1349,4 @@ export type NativeBridge = {
   updateMemoStatus: (memoId: string, status: string) => Promise<MemoRecord>;
   deleteMemo: (memoId: string) => Promise<void>;
   getMemoCountSummary: (directoryId: string) => Promise<MemoCountSummary>;
-  sha256File: (filePath: string) => Promise<string>;
 };

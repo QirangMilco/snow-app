@@ -12,9 +12,6 @@ use crate::api::conversation::images::{parse_chat_message_content, ChatImage};
 use crate::storage::services::chat_conversations::ChatContextMessage;
 use crate::storage::ApiConfigRecord;
 
-/// 视觉文本化的默认提示词前缀，引导视觉模型输出结构化描述。
-const DEFAULT_VISION_PROMPT: &str = "Please describe this image in detail. Focus on text content, layout, visual elements, colors, and any notable features. If the image contains code, diagrams, or technical content, describe them precisely. Output in the same language as the user's prompt.";
-
 /// 进程内缓存：避免同一张图片在多轮对话中重复调用视觉模型。
 /// Key 为图片 base64 数据的 blake3 哈希，Value 为文本化结果。
 type VisionCache = Arc<RwLock<HashMap<String, String>>>;
@@ -69,6 +66,14 @@ pub async fn textify_images_in_messages(
     }
 
     let vision_config = VisionApiConfig::from(api_config, custom_headers)?;
+
+    // 提示词可被用户覆盖：在入口解析一次，沿调用链逐层传参，
+    // 4 个 provider 分支共用同一自定义提示词。
+    let prompt_template = crate::storage::services::feature_prompts::resolve_feature_prompt(
+        database_path,
+        crate::storage::services::feature_prompts::PROMPT_KEY_VISION,
+    );
+
     let client = crate::api::http_client::build_proxied_client()
         .await
         .map_err(|error| {
@@ -86,7 +91,8 @@ pub async fn textify_images_in_messages(
             continue;
         }
 
-        let textified = textify_parsed_content(&parsed, &client, &vision_config).await?;
+        let textified =
+            textify_parsed_content(&parsed, &client, &vision_config, &prompt_template).await?;
         message.content = textified;
     }
 
@@ -134,12 +140,14 @@ async fn textify_parsed_content(
     parsed: &crate::api::conversation::images::ParsedChatMessageContent,
     client: &reqwest::Client,
     vision_config: &VisionApiConfig,
+    prompt_template: &str,
 ) -> Result<String> {
     let mut result = String::with_capacity(parsed.text.len() + parsed.images.len() * 256);
     result.push_str(&parsed.text);
 
     for image in &parsed.images {
-        let description = describe_image(client, vision_config, image, &parsed.text).await?;
+        let description =
+            describe_image(client, vision_config, image, &parsed.text, prompt_template).await?;
         if !result.is_empty() && !result.ends_with('\n') {
             result.push('\n');
         }
@@ -156,6 +164,7 @@ async fn describe_image(
     vision_config: &VisionApiConfig,
     image: &ChatImage,
     user_prompt: &str,
+    prompt_template: &str,
 ) -> Result<String> {
     let cache_key = blake3::hash(image.data.as_bytes()).to_hex().to_string();
 
@@ -164,10 +173,10 @@ async fn describe_image(
     }
 
     let description = match vision_config.request_method.as_str() {
-        "chat" => describe_image_via_chat(client, vision_config, image, user_prompt).await?,
-        "responses" => describe_image_via_responses(client, vision_config, image, user_prompt).await?,
-        "anthropic" => describe_image_via_anthropic(client, vision_config, image, user_prompt).await?,
-        "gemini" => describe_image_via_gemini(client, vision_config, image, user_prompt).await?,
+        "chat" => describe_image_via_chat(client, vision_config, image, user_prompt, prompt_template).await?,
+        "responses" => describe_image_via_responses(client, vision_config, image, user_prompt, prompt_template).await?,
+        "anthropic" => describe_image_via_anthropic(client, vision_config, image, user_prompt, prompt_template).await?,
+        "gemini" => describe_image_via_gemini(client, vision_config, image, user_prompt, prompt_template).await?,
         method => {
             return Err(Error::from_reason(format!(
                 "Unsupported vision request method: {method}. Supported: chat, responses, anthropic, gemini."
@@ -183,13 +192,13 @@ async fn describe_image(
     Ok(trimmed)
 }
 
-fn build_vision_prompt(user_prompt: &str) -> String {
+fn build_vision_prompt(prompt_template: &str, user_prompt: &str) -> String {
     let user_prompt = user_prompt.trim();
     if user_prompt.is_empty() {
-        return DEFAULT_VISION_PROMPT.to_string();
+        return prompt_template.to_string();
     }
     format!(
-        "{DEFAULT_VISION_PROMPT}\n\nUser context (use as additional guidance for what to focus on):\n{user_prompt}"
+        "{prompt_template}\n\nUser context (use as additional guidance for what to focus on):\n{user_prompt}"
     )
 }
 
@@ -198,9 +207,10 @@ async fn describe_image_via_chat(
     vision_config: &VisionApiConfig,
     image: &ChatImage,
     user_prompt: &str,
+    prompt_template: &str,
 ) -> Result<String> {
     let endpoint = resolve_chat_endpoint(vision_config);
-    let prompt = build_vision_prompt(user_prompt);
+    let prompt = build_vision_prompt(prompt_template, user_prompt);
     let payload = json!({
         "model": vision_config.model,
         "messages": [{
@@ -224,9 +234,10 @@ async fn describe_image_via_responses(
     vision_config: &VisionApiConfig,
     image: &ChatImage,
     user_prompt: &str,
+    prompt_template: &str,
 ) -> Result<String> {
     let endpoint = resolve_responses_endpoint(vision_config);
-    let prompt = build_vision_prompt(user_prompt);
+    let prompt = build_vision_prompt(prompt_template, user_prompt);
     let payload = json!({
         "model": vision_config.model,
         "input": [{
@@ -252,9 +263,10 @@ async fn describe_image_via_anthropic(
     vision_config: &VisionApiConfig,
     image: &ChatImage,
     user_prompt: &str,
+    prompt_template: &str,
 ) -> Result<String> {
     let endpoint = resolve_anthropic_endpoint(vision_config);
-    let prompt = build_vision_prompt(user_prompt);
+    let prompt = build_vision_prompt(prompt_template, user_prompt);
     let payload = json!({
         "model": vision_config.model,
         "max_tokens": 1024,
@@ -285,9 +297,10 @@ async fn describe_image_via_gemini(
     vision_config: &VisionApiConfig,
     image: &ChatImage,
     user_prompt: &str,
+    prompt_template: &str,
 ) -> Result<String> {
     let endpoint = resolve_gemini_endpoint(vision_config, &vision_config.api_key);
-    let prompt = build_vision_prompt(user_prompt);
+    let prompt = build_vision_prompt(prompt_template, user_prompt);
     let payload = json!({
         "contents": [{
             "role": "user",

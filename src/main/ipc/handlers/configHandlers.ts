@@ -128,6 +128,26 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
     readSnowCliSystemPromptConfig(native)
   );
 
+  // ===== Built-in Feature Prompts =====
+  ipcMain.handle("feature-prompts:list", () => native.listFeaturePrompts());
+  ipcMain.handle("feature-prompts:set", async (_event, promptKey: unknown, content: unknown) => {
+    if (typeof promptKey !== "string" || !promptKey.trim()) {
+      throw new Error("Prompt key is required");
+    }
+    if (typeof content !== "string") {
+      throw new Error("Prompt content must be a string");
+    }
+    await native.setFeaturePrompt(promptKey.trim(), content);
+    return native.listFeaturePrompts();
+  });
+  ipcMain.handle("feature-prompts:reset", async (_event, promptKey: unknown) => {
+    if (typeof promptKey !== "string" || !promptKey.trim()) {
+      throw new Error("Prompt key is required");
+    }
+    await native.resetFeaturePrompt(promptKey.trim());
+    return native.listFeaturePrompts();
+  });
+
   // ===== Custom Header Schemes =====
   ipcMain.handle("custom-header-schemes:list", () =>
     native.listCustomHeaderSchemes()

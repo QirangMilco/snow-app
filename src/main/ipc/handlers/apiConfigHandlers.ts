@@ -18,6 +18,34 @@ export const registerApiConfigHandlers = (native: NativeBridge): void => {
     await native.upsertApiConfig(normalizeApiConfigInput(config));
     return native.listApiConfigs();
   });
+
+  // ===== Built-in Services Global Switch =====
+  ipcMain.handle("builtin-services:get-status", () =>
+    native.getBuiltinServicesStatus()
+  );
+  ipcMain.handle(
+    "builtin-services:set-status",
+    async (_event, statuses: unknown) => {
+      if (!statuses || typeof statuses !== "object" || Array.isArray(statuses)) {
+        throw new Error("Built-in services status must be an object");
+      }
+      const raw = statuses as Record<string, unknown>;
+      const normalized: Record<string, boolean> = {};
+      for (const [serviceId, enabled] of Object.entries(raw)) {
+        if (!serviceId.trim()) {
+          continue;
+        }
+        if (typeof enabled !== "boolean") {
+          throw new Error(
+            `Built-in service enabled state must be a boolean: ${serviceId}`
+          );
+        }
+        normalized[serviceId.trim()] = enabled;
+      }
+      await native.setBuiltinServicesStatus(normalized);
+      return native.getBuiltinServicesStatus();
+    }
+  );
   ipcMain.handle("api-configs:delete", async (_event, profileName: unknown) => {
     if (typeof profileName !== "string" || !profileName.trim()) {
       throw new Error("Profile name is required");

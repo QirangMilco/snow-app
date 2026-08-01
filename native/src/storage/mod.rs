@@ -450,6 +450,33 @@ pub fn set_system_setting(
     )
 }
 
+pub fn list_feature_prompts() -> Result<Vec<services::feature_prompts::FeaturePromptRecord>> {
+    let database_path = ensure_database_file()?;
+    services::feature_prompts::list_feature_prompts(&database_path)
+}
+
+pub fn set_feature_prompt(prompt_key: String, content: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::feature_prompts::set_feature_prompt(&database_path, &prompt_key, &content)
+}
+
+pub fn reset_feature_prompt(prompt_key: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::feature_prompts::reset_feature_prompt(&database_path, &prompt_key)
+}
+
+pub fn get_builtin_services_status() -> Result<std::collections::BTreeMap<String, bool>> {
+    let database_path = ensure_database_file()?;
+    services::builtin_services::get_builtin_services_status(&database_path)
+}
+
+pub fn set_builtin_services_status(
+    statuses: std::collections::BTreeMap<String, bool>,
+) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::builtin_services::set_builtin_services_status(&database_path, statuses)
+}
+
 pub fn get_yolo_mode() -> Result<bool> {
     let database_path = ensure_database_file()?;
     services::yolo_settings::get_yolo_mode(&database_path)

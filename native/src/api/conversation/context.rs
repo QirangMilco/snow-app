@@ -94,10 +94,19 @@ pub fn prepare_context_request(
     // executing any changes.
     let shell_type = resolve_default_shell(request.database_path);
     let system_prompt = if request.plan_mode {
-        build_plan_mode_system_prompt(&working_directory, &shell_type)
+        build_plan_mode_system_prompt(
+            request.database_path,
+            &working_directory,
+            &shell_type,
+        )
     } else if request.goal_mode {
         let goal_token_budget = crate::storage::services::system_settings::get_goal_mode_token_budget(request.database_path).unwrap_or(2000000);
-        build_goal_mode_system_prompt(&working_directory, &shell_type, goal_token_budget)
+        build_goal_mode_system_prompt(
+            request.database_path,
+            &working_directory,
+            &shell_type,
+            goal_token_budget,
+        )
     } else {
         build_system_prompt(&working_directory, &shell_type)
     };
