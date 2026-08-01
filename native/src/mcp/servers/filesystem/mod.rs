@@ -17,7 +17,8 @@ use office::{extract_office_document_text, office_document_kind};
 
 /// 模糊匹配的最低相似度阈值（0.0 ~ 1.0）。
 /// 当 searchContent 与文件中某段内容相似度达到此值时，视为匹配成功。
-const FUZZY_MATCH_THRESHOLD: f64 = 0.75;
+/// 0.75 时误替换率偏高，抬高至 0.85 以降低 AI 转述内容被错误匹配的风险。
+const FUZZY_MATCH_THRESHOLD: f64 = 0.85;
 
 /// 编辑成功后，在响应中返回编辑区域前后各多少行上下文供 AI 复核。
 const EDIT_REVIEW_CONTEXT_LINES: usize = 5;

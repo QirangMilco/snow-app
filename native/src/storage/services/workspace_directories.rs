@@ -15,6 +15,65 @@ pub fn list_workspace_directories(database_path: &Path) -> Result<Vec<WorkspaceD
         })
 }
 
+/// 校验项目名是否合法：非空、不含路径分隔符与 Windows 保留字符、不是 "." 或 ".."。
+fn validate_project_name(project_name: &str) -> Result<()> {
+    let trimmed = project_name.trim();
+    if trimmed.is_empty() {
+        return Err(Error::from_reason(
+            "Project name is required and must be non-empty".to_string(),
+        ));
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err(Error::from_reason(format!(
+            "Invalid project name: \"{trimmed}\""
+        )));
+    }
+    if trimmed.contains(['/', '\\']) {
+        return Err(Error::from_reason(
+            "Project name must not contain path separators".to_string(),
+        ));
+    }
+    // Windows 不允许出现在目录名中的字符
+    const INVALID_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+    if trimmed.chars().any(|character| INVALID_CHARS.contains(&character)) {
+        return Err(Error::from_reason(format!(
+            "Project name contains invalid characters: \"{trimmed}\""
+        )));
+    }
+    Ok(())
+}
+
+/// 在 `parent_path` 下创建名为 `project_name` 的项目目录，返回完整路径。
+/// 仅在目标目录尚不存在时创建；目录创建由调用方通过 spawn_blocking 异步执行。
+pub fn create_project_directory(parent_path: &str, project_name: &str) -> Result<String> {
+    validate_project_name(project_name)?;
+
+    let parent = Path::new(parent_path);
+    if !parent.is_dir() {
+        return Err(Error::from_reason(format!(
+            "Parent directory does not exist or is not a directory: '{}'",
+            parent.display()
+        )));
+    }
+
+    let target = parent.join(project_name.trim());
+    if target.exists() {
+        return Err(Error::from_reason(format!(
+            "Target directory already exists: '{}'",
+            target.display()
+        )));
+    }
+
+    fs::create_dir(&target).map_err(|error| {
+        Error::from_reason(format!(
+            "Failed to create project directory at '{}': {error}",
+            target.display()
+        ))
+    })?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
 pub fn upsert_workspace_directory(
     database_path: &Path,
     item: &WorkspaceDirectoryInput,

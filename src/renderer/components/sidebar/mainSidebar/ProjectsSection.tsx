@@ -1,5 +1,6 @@
-import { Folder, Loader2, Plus, Server } from "lucide-react";
+import { Folder, FolderPlus, Loader2, Plus, Server } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../../i18n";
 import { shortcutEvents } from "../../shortcutEvents";
@@ -9,6 +10,7 @@ import type {
   WorkspaceDirectoryRecord,
 } from "../../../../preload";
 import { WorkspaceDirectoryList } from "./WorkspaceDirectoryList";
+import { useMenuPosition } from "./useMenuPosition";
 
 type AddDirectoryMode = "" | WorkspaceDirectoryKind;
 type ProjectsSectionProps = {
@@ -101,8 +103,20 @@ export function ProjectsSection({
     null
   );
   const addMenuRef = useRef<HTMLDivElement | null>(null);
+  const addMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const addMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const directoryListRef = useRef<HTMLDivElement | null>(null);
   const directoryLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
+  const [projectNameInput, setProjectNameInput] = useState("");
+  const createProjectInputRef = useRef<HTMLInputElement | null>(null);
+
+  const { position: addMenuPosition } = useMenuPosition({
+    isOpen: isAddMenuOpen,
+    placement: "auto-up-down",
+    triggerRef: addMenuTriggerRef,
+    panelRef: addMenuPanelRef,
+  });
 
   const activeDirectory = useMemo(
     () => workspaceDirectories.find((directory) => directory.isActive),
@@ -270,10 +284,13 @@ export function ProjectsSection({
       return;
     }
 
-    const handlePointerDown = (event: PointerEvent): void => {
-      const target = event.target;
+    const handleClickOutside = (event: MouseEvent): void => {
+      const target = event.target as Node;
 
-      if (target instanceof Node && addMenuRef.current?.contains(target)) {
+      if (
+        (addMenuRef.current && addMenuRef.current.contains(target)) ||
+        (addMenuPanelRef.current && addMenuPanelRef.current.contains(target))
+      ) {
         return;
       }
 
@@ -282,10 +299,10 @@ export function ProjectsSection({
       setDirectoryError(null);
     };
 
-    window.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("mousedown", handleClickOutside);
 
     return () => {
-      window.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isAddMenuOpen]);
 
@@ -351,6 +368,69 @@ export function ProjectsSection({
           ? error.message
           : t("sidebar.selectLocalDirectoryError", {
               defaultValue: "Failed to select local directory",
+            })
+      );
+    } finally {
+      setIsSavingDirectory(false);
+    }
+  };
+
+  const handleCreateProjectModeOpen = (): void => {
+    setDirectoryError(null);
+    setAddDirectoryMode("");
+    setIsAddMenuOpen(false);
+    setProjectNameInput("");
+    setIsCreateProjectOpen(true);
+    // 表单渲染后聚焦输入框
+    requestAnimationFrame(() => {
+      createProjectInputRef.current?.focus();
+    });
+  };
+
+  const handleCreateProjectCancel = (): void => {
+    if (isSavingDirectory) {
+      return;
+    }
+    setIsCreateProjectOpen(false);
+    setProjectNameInput("");
+    setDirectoryError(null);
+  };
+
+  // 创建项目：先让用户选择保存目录（父目录），再交由主进程/Rust 创建文件夹
+  // 并作为活动项目写入工作区目录列表。
+  const handleCreateProjectConfirm = async (): Promise<void> => {
+    const projectName = projectNameInput.trim();
+    if (!projectName || isSavingDirectory) {
+      return;
+    }
+
+    setIsSavingDirectory(true);
+    setDirectoryError(null);
+
+    try {
+      const parentPath = await window.snow.selectWorkspaceDirectory(
+        t("sidebar.selectCreateProjectParentTitle", {
+          defaultValue: "Choose a folder to save the new project",
+        })
+      );
+
+      if (!parentPath) {
+        return;
+      }
+
+      const directories = await window.snow.createWorkspaceProject(
+        parentPath,
+        projectName
+      );
+      setWorkspaceDirectories(directories);
+      setIsCreateProjectOpen(false);
+      setProjectNameInput("");
+    } catch (error) {
+      setDirectoryError(
+        error instanceof Error
+          ? error.message
+          : t("sidebar.createProjectError", {
+              defaultValue: "Failed to create project",
             })
       );
     } finally {
@@ -539,15 +619,14 @@ export function ProjectsSection({
         <span className="section-title">
           {t("sidebar.projects", { defaultValue: "Projects" })}
         </span>
-        <div
-          className="section-actions workspace-directory-header-actions"
-          ref={addMenuRef}
-        >
+        <div className="section-actions" ref={addMenuRef}>
           {isLoadingDirectories || isSavingDirectory ? (
             <Loader2 className="spin" size={14} />
           ) : (
             <button
+              ref={addMenuTriggerRef}
               aria-expanded={isAddMenuOpen}
+              aria-haspopup="menu"
               aria-label={t("sidebar.addDirectoryScheme", {
                 defaultValue: "Add directory",
               })}
@@ -555,6 +634,8 @@ export function ProjectsSection({
               onClick={() => {
                 setDirectoryError(null);
                 setAddDirectoryMode("");
+                setIsCreateProjectOpen(false);
+                setProjectNameInput("");
                 setIsAddMenuOpen((open) => !open);
               }}
               type="button"
@@ -562,34 +643,116 @@ export function ProjectsSection({
               <Plus size={14} />
             </button>
           )}
-          {isAddMenuOpen ? (
-            <div className="workspace-directory-add-menu">
-              <button
-                onClick={() => void handleAddDirectoryModeSelect("local")}
-                type="button"
-              >
-                <Folder size={13} />
-                <span>
-                  {t("sidebar.addLocalDirectory", {
-                    defaultValue: "Add local directory",
-                  })}
-                </span>
-              </button>
-              <button
-                onClick={() => void handleAddDirectoryModeSelect("ssh")}
-                type="button"
-              >
-                <Server size={13} />
-                <span>
-                  {t("sidebar.addSshDirectory", {
-                    defaultValue: "Add SSH directory",
-                  })}
-                </span>
-              </button>
-            </div>
-          ) : null}
+          {isAddMenuOpen
+            ? createPortal(
+                <div
+                  ref={addMenuPanelRef}
+                  className="chat-item-menu"
+                  style={
+                    addMenuPosition
+                      ? {
+                          top: addMenuPosition.top,
+                          left: addMenuPosition.left,
+                        }
+                      : undefined
+                  }
+                  role="menu"
+                >
+                  <button
+                    type="button"
+                    className="chat-item-menu-item"
+                    onClick={handleCreateProjectModeOpen}
+                    role="menuitem"
+                  >
+                    <FolderPlus size={13} />
+                    <span>
+                      {t("sidebar.createProject", {
+                        defaultValue: "Create project",
+                      })}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-item-menu-item"
+                    onClick={() => void handleAddDirectoryModeSelect("local")}
+                    role="menuitem"
+                  >
+                    <Folder size={13} />
+                    <span>
+                      {t("sidebar.addLocalDirectory", {
+                        defaultValue: "Add local directory",
+                      })}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-item-menu-item"
+                    onClick={() => void handleAddDirectoryModeSelect("ssh")}
+                    role="menuitem"
+                  >
+                    <Server size={13} />
+                    <span>
+                      {t("sidebar.addSshDirectory", {
+                        defaultValue: "Add SSH directory",
+                      })}
+                    </span>
+                  </button>
+                </div>,
+                document.body
+              )
+            : null}
         </div>
       </div>
+      {isCreateProjectOpen ? (
+        <div className="workspace-directory-create">
+          <span className="workspace-directory-create-title">
+            {t("sidebar.createProjectTitle", {
+              defaultValue: "Create a new project",
+            })}
+          </span>
+          <input
+            ref={createProjectInputRef}
+            className="workspace-directory-create-input"
+            disabled={isSavingDirectory}
+            maxLength={120}
+            onChange={(event) => setProjectNameInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                void handleCreateProjectConfirm();
+              } else if (event.key === "Escape") {
+                handleCreateProjectCancel();
+              }
+            }}
+            placeholder={t("sidebar.createProjectNamePlaceholder", {
+              defaultValue: "Project name",
+            })}
+            value={projectNameInput}
+          />
+          <div className="workspace-directory-create-actions">
+            <button
+              type="button"
+              className="workspace-directory-create-btn cancel"
+              disabled={isSavingDirectory}
+              onClick={handleCreateProjectCancel}
+            >
+              {t("common.cancel", { defaultValue: "Cancel" })}
+            </button>
+            <button
+              type="button"
+              className="workspace-directory-create-btn confirm"
+              disabled={isSavingDirectory || !projectNameInput.trim()}
+              onClick={() => void handleCreateProjectConfirm()}
+            >
+              {isSavingDirectory ? (
+                <Loader2 className="spin" size={12} />
+              ) : null}
+              {t("sidebar.createProjectConfirm", {
+                defaultValue: "Create",
+              })}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="workspace-directory-card">
         <span className="workspace-directory-label">
           {t("sidebar.activeDirectory", {

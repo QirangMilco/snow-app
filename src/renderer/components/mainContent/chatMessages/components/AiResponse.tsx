@@ -1,5 +1,5 @@
 import { Loader2 } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import { useI18n } from "../../../../i18n";
 import { AiResponseActions } from "./AiResponseActions";
 import { StreamCursor } from "./StreamCursor";
@@ -33,6 +33,7 @@ export const AiResponse = memo(
     onFork,
   }: AiResponseProps): React.JSX.Element => {
     const { t } = useI18n();
+    const [showRawMarkdown, setShowRawMarkdown] = useState(false);
     const normalizedThinking = thinking?.trim();
     const normalizedSummary = summary.trim();
     const summaryClassName = "ai-message-summary";
@@ -71,22 +72,30 @@ export const AiResponse = memo(
 
           {/* 2. Body / Summary */}
           {normalizedSummary ? (
-            <MarkdownBlock
-              className={summaryClassName}
-              content={normalizedSummary}
-              streaming={isStreaming}
-            />
+            showRawMarkdown ? (
+              <pre className="ai-message-raw">{normalizedSummary}</pre>
+            ) : (
+              <MarkdownBlock
+                className={summaryClassName}
+                content={normalizedSummary}
+                streaming={isStreaming}
+              />
+            )
           ) : null}
 
           {/* 3. Sections */}
           {sections.map((section) => (
             <section className="ai-message-section" key={section.title}>
               <h3>{section.title}</h3>
-              <MarkdownBlock
-                className="ai-message-section-body"
-                content={section.body}
-                streaming={isStreaming}
-              />
+              {showRawMarkdown ? (
+                <pre className="ai-message-raw">{section.body}</pre>
+              ) : (
+                <MarkdownBlock
+                  className="ai-message-section-body"
+                  content={section.body}
+                  streaming={isStreaming}
+                />
+              )}
             </section>
           ))}
 
@@ -158,6 +167,8 @@ export const AiResponse = memo(
             content={normalizedSummary}
             conversationId={conversationId}
             responseId={responseId}
+            showRawMarkdown={showRawMarkdown}
+            onToggleRawMarkdown={() => setShowRawMarkdown((prev) => !prev)}
             onFork={onFork}
           />
         ) : null}

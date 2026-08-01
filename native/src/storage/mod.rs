@@ -901,6 +901,10 @@ pub fn delete_workspace_directory(directory_id: String) -> Result<()> {
     let database_path = ensure_database_file()?;
     services::workspace_directories::delete_workspace_directory(&database_path, &directory_id)
 }
+
+pub fn create_project_directory(parent_path: String, project_name: String) -> Result<String> {
+    services::workspace_directories::create_project_directory(&parent_path, &project_name)
+}
 pub fn read_directory_entries(dir_path: String) -> Result<Vec<services::fs_explorer::DirectoryEntry>> {
     services::fs_explorer::read_directory_entries(&dir_path)
 }

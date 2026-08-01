@@ -1,14 +1,9 @@
 import { AlertTriangle, Ellipsis, FileSearch, Trash2 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../../i18n";
+import { useMenuPosition } from "./useMenuPosition";
 
 type WorkspaceDirectoryMenuProps = {
   canDelete?: boolean;
@@ -17,14 +12,6 @@ type WorkspaceDirectoryMenuProps = {
   onOpenChange?: (isOpen: boolean) => void;
   onShowDetails?: () => void;
 };
-
-type MenuPosition = {
-  top: number;
-  left: number;
-} | null;
-
-const MENU_GAP = 4;
-const VIEWPORT_MARGIN = 8;
 
 export function WorkspaceDirectoryMenu({
   canDelete = true,
@@ -36,45 +23,18 @@ export function WorkspaceDirectoryMenu({
   const { t } = useI18n();
   const [isOpen, setIsOpen] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<MenuPosition>(null);
   const containerRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
-  const updateMenuPosition = useCallback((): void => {
-    const trigger = triggerRef.current;
-    const menu = menuRef.current;
-
-    if (!trigger || !menu) {
-      return;
-    }
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const menuRect = menu.getBoundingClientRect();
-    const spaceAbove = triggerRect.top - VIEWPORT_MARGIN;
-    const spaceBelow =
-      window.innerHeight - triggerRect.bottom - VIEWPORT_MARGIN;
-    const shouldOpenUpward =
-      spaceBelow < menuRect.height + MENU_GAP && spaceAbove > spaceBelow;
-    const preferredTop = shouldOpenUpward
-      ? triggerRect.top - menuRect.height - MENU_GAP
-      : triggerRect.bottom + MENU_GAP;
-    const maxTop = Math.max(
-      VIEWPORT_MARGIN,
-      window.innerHeight - menuRect.height - VIEWPORT_MARGIN
-    );
-    const maxLeft = Math.max(
-      VIEWPORT_MARGIN,
-      window.innerWidth - menuRect.width - VIEWPORT_MARGIN
-    );
-
-    setMenuPosition({
-      top: Math.min(Math.max(preferredTop, VIEWPORT_MARGIN), maxTop),
-      left: Math.min(Math.max(triggerRect.left, VIEWPORT_MARGIN), maxLeft),
-    });
-  }, []);
+  const { position: menuPosition } = useMenuPosition({
+    isOpen,
+    placement: "auto-up-down",
+    triggerRef,
+    panelRef: menuRef,
+  });
 
   useEffect(() => {
     onOpenChangeRef.current?.(isOpen);
@@ -104,34 +64,6 @@ export function WorkspaceDirectoryMenu({
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [isOpen]);
-
-  useLayoutEffect(() => {
-    if (!isOpen) {
-      setMenuPosition(null);
-      return;
-    }
-
-    updateMenuPosition();
-    const menu = menuRef.current;
-    const sidebar = triggerRef.current?.closest<HTMLElement>(".sidebar");
-    const layoutObserver = new ResizeObserver(updateMenuPosition);
-
-    if (menu) {
-      layoutObserver.observe(menu);
-    }
-    if (sidebar) {
-      layoutObserver.observe(sidebar);
-    }
-
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
-
-    return () => {
-      layoutObserver.disconnect();
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
-    };
-  }, [isOpen, updateMenuPosition]);
 
   const handleToggle = (event: React.SyntheticEvent): void => {
     event.stopPropagation();

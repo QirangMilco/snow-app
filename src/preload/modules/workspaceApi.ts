@@ -58,6 +58,15 @@ export const workspaceApi = {
     directoryId: string
   ): Promise<WorkspaceDirectoryRecord[]> =>
     ipcRenderer.invoke("workspace-directories:delete", directoryId),
+  createWorkspaceProject: (
+    parentPath: string,
+    projectName: string
+  ): Promise<WorkspaceDirectoryRecord[]> =>
+    ipcRenderer.invoke(
+      "workspace-directories:create-project",
+      parentPath,
+      projectName
+    ),
   selectWorkspaceDirectory: (dialogTitle?: string): Promise<string | null> =>
     ipcRenderer.invoke(
       "workspace-directories:select-local-directory",

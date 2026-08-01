@@ -13,6 +13,7 @@ const TOOL_CREATE_MEMO: &str = "createMemo";
 const TOOL_SET_MODE: &str = "setMode";
 const TOOL_OPEN_SETTINGS: &str = "openSettings";
 const TOOL_CREATE_SCHEDULED_TASK: &str = "createScheduledTask";
+const TOOL_CREATE_PROJECT: &str = "createProject";
 const TOOL_REQUEST_APPROVAL: &str = "requestApproval";
 
 const APPROVE_OPTION: &str = "Approve and execute the plan";
@@ -20,7 +21,7 @@ const KEEP_PLANNING_OPTION: &str = "Keep planning";
 
 #[napi(object)]
 pub struct AppControlCommand {
-    /// Action identifier: "create_memo" | "set_mode" | "open_settings" | "create_scheduled_task"
+    /// Action identifier: "create_memo" | "set_mode" | "open_settings" | "create_scheduled_task" | "create_project"
     pub action: String,
     /// JSON-encoded action payload
     pub payload_json: String,
@@ -52,6 +53,7 @@ impl AppControlService {
             TOOL_SET_MODE => validate_set_mode_args(args)?,
             TOOL_OPEN_SETTINGS => validate_open_settings_args(args)?,
             TOOL_CREATE_SCHEDULED_TASK => validate_create_scheduled_task_args(args)?,
+            TOOL_CREATE_PROJECT => validate_create_project_args(args)?,
             _ => return Err(unknown_tool_error(tool_name)),
         };
 
@@ -221,6 +223,26 @@ impl McpService for AppControlService {
             },
             McpTool {
                 server_id: SERVER_ID.to_string(),
+                name: TOOL_CREATE_PROJECT.to_string(),
+                description: "Create a new project (workspace directory) in the Snow App. The project folder is created on disk and registered as the active project. Provide `name` and an optional `parentPath`; when `parentPath` is omitted, the user is prompted to choose the save location interactively. Returns the created project record with its directoryId, name and path."
+                    .to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "The project (folder) name. Must not contain path separators or invalid characters."
+                        },
+                        "parentPath": {
+                            "type": "string",
+                            "description": "Optional absolute path of the parent directory where the project folder is created. When omitted, the user is asked to pick the save location."
+                        }
+                    },
+                    "required": ["name"]
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
                 name: TOOL_REQUEST_APPROVAL.to_string(),
                 description: "Request the user's explicit approval to execute the completed implementation plan. In Plan Mode, call this dedicated tool after the plan is ready and before calling filesystem-replace_edit or filesystem-create. The tool returns a structured `approved` boolean; no wording or keyword in a normal chat response can unlock file editing. Call this tool by itself and wait for the user's decision."
                     .to_string(),
@@ -247,7 +269,7 @@ impl McpService for AppControlService {
                     "{SERVER_ID}-{TOOL_REQUEST_APPROVAL} must be executed through the asynchronous Electron interaction bridge"
                 ),
             )),
-            TOOL_CREATE_MEMO | TOOL_SET_MODE | TOOL_OPEN_SETTINGS | TOOL_CREATE_SCHEDULED_TASK => Err(Error::new(
+            TOOL_CREATE_MEMO | TOOL_SET_MODE | TOOL_OPEN_SETTINGS | TOOL_CREATE_SCHEDULED_TASK | TOOL_CREATE_PROJECT => Err(Error::new(
                 Status::GenericFailure,
                 format!(
                     "{SERVER_ID}-{tool_name} must be executed through the asynchronous Electron app control bridge"
@@ -612,11 +634,47 @@ fn validate_create_scheduled_task_args(args: &Value) -> napi::Result<(String, Va
     ))
 }
 
+fn validate_create_project_args(args: &Value) -> napi::Result<(String, Value)> {
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            Error::new(
+                Status::InvalidArg,
+                "name is required and must be a non-empty string for createProject".to_string(),
+            )
+        })?;
+
+    if name.contains(['/', '\\']) {
+        return Err(Error::new(
+            Status::InvalidArg,
+            format!("name must not contain path separators for createProject, received \"{name}\""),
+        ));
+    }
+
+    // parentPath 可选：未提供时由渲染层弹出目录选择框让用户指定保存位置。
+    let parent_path = args
+        .get("parentPath")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("name".to_string(), json!(name));
+    if let Some(parent_path) = parent_path {
+        payload.insert("parentPath".to_string(), json!(parent_path));
+    }
+
+    Ok(("create_project".to_string(), Value::Object(payload)))
+}
+
 fn unknown_tool_error(tool_name: &str) -> Error {
     Error::new(
         Status::GenericFailure,
         format!(
-            "Unknown tool: \"{tool_name}\" for MCP server \"{SERVER_ID}\". Available tools: [{SERVER_ID}-{TOOL_CREATE_MEMO}, {SERVER_ID}-{TOOL_SET_MODE}, {SERVER_ID}-{TOOL_OPEN_SETTINGS}, {SERVER_ID}-{TOOL_CREATE_SCHEDULED_TASK}, {SERVER_ID}-{TOOL_REQUEST_APPROVAL}]"
+            "Unknown tool: \"{tool_name}\" for MCP server \"{SERVER_ID}\". Available tools: [{SERVER_ID}-{TOOL_CREATE_MEMO}, {SERVER_ID}-{TOOL_SET_MODE}, {SERVER_ID}-{TOOL_OPEN_SETTINGS}, {SERVER_ID}-{TOOL_CREATE_SCHEDULED_TASK}, {SERVER_ID}-{TOOL_CREATE_PROJECT}, {SERVER_ID}-{TOOL_REQUEST_APPROVAL}]"
         ),
     )
 }

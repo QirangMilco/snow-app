@@ -693,6 +693,18 @@ pub async fn delete_workspace_directory(directory_id: String) -> napi::Result<()
 }
 
 #[napi]
+pub async fn create_project_directory(
+    parent_path: String,
+    project_name: String,
+) -> napi::Result<String> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::create_project_directory(parent_path, project_name)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
 pub async fn read_directory_entries(dir_path: String) -> napi::Result<Vec<DirectoryEntry>> {
     tokio::task::spawn_blocking(move || crate::storage::read_directory_entries(dir_path))
         .await

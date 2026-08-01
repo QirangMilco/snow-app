@@ -11,6 +11,7 @@ export const APP_CONTROL_OPEN_SETTINGS_EVENT = "app-control:open-settings";
 export const APP_CONTROL_MEMO_CREATED_EVENT = "app-control:memo-created";
 export const APP_CONTROL_SCHEDULED_TASK_CREATED_EVENT =
   "app-control:scheduled-task-created";
+export const APP_CONTROL_PROJECT_CREATED_EVENT = "app-control:project-created";
 
 type AppControlHandlers = {
   activeDirectory: WorkspaceDirectoryRecord | null;
@@ -118,6 +119,49 @@ export const useAppControl = ({
               name: created.name,
               status: created.status,
               nextRunAt: created.nextRunAt,
+            });
+          }
+
+          case "create_project": {
+            const name = (payload.name as string) ?? "";
+            if (!name.trim()) {
+              throw new Error("name is required");
+            }
+            const providedParentPath = (
+              payload.parentPath as string | undefined
+            )?.trim();
+            // 未提供父目录时弹出目录选择框，让用户指定保存位置。
+            const parentPath =
+              providedParentPath ??
+              (await window.snow.selectWorkspaceDirectory(
+                "Choose a folder to save the new project"
+              ));
+            if (!parentPath) {
+              return JSON.stringify({ success: false, cancelled: true });
+            }
+            const directories = await window.snow.createWorkspaceProject(
+              parentPath,
+              name.trim()
+            );
+            const created = directories.find(
+              (directory) => directory.isActive
+            );
+            window.dispatchEvent(
+              new CustomEvent(APP_CONTROL_PROJECT_CREATED_EVENT, {
+                detail: created
+                  ? {
+                      directoryId: created.directoryId,
+                      name: created.name,
+                      path: created.path,
+                    }
+                  : undefined,
+              })
+            );
+            return JSON.stringify({
+              success: true,
+              directoryId: created?.directoryId,
+              name: created?.name,
+              path: created?.path,
             });
           }
 

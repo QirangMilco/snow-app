@@ -7,12 +7,11 @@ import {
   CheckCircle2,
   Bot,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../../i18n";
 import type { ChatConversationRecord } from "../../../../preload";
 import { ChatItemMenu, type ExportFormat } from "./ChatItemMenu";
-import { EmojiPicker } from "./EmojiPicker";
 import { formatTimeLabel, parseDbTimestamp } from "./chatTimeGroup";
 
 type ChatItemProps = {
@@ -51,11 +50,9 @@ export function ChatItem({
   const [editingValue, setEditingValue] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
-  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
   const cancelledRef = useRef(false);
-  const iconRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (isEditing && editInputRef.current) {
@@ -152,49 +149,6 @@ export function ChatItem({
     onSelect?.();
   };
 
-  // emoji picker 悬停控制：鼠标离开图标/面板后延迟关闭，
-  // 留出跨越图标与面板间隙的缓冲时间；重新进入则取消关闭
-  const emojiCloseTimerRef = useRef<number | null>(null);
-
-  const cancelEmojiPickerClose = useCallback((): void => {
-    if (emojiCloseTimerRef.current !== null) {
-      window.clearTimeout(emojiCloseTimerRef.current);
-      emojiCloseTimerRef.current = null;
-    }
-  }, []);
-
-  const scheduleEmojiPickerClose = useCallback((): void => {
-    cancelEmojiPickerClose();
-    emojiCloseTimerRef.current = window.setTimeout(() => {
-      emojiCloseTimerRef.current = null;
-      setIsEmojiPickerOpen(false);
-    }, 200);
-  }, [cancelEmojiPickerClose]);
-
-  useEffect(() => cancelEmojiPickerClose, [cancelEmojiPickerClose]);
-
-  const handleEmojiPickerClose = (): void => {
-    cancelEmojiPickerClose();
-    setIsEmojiPickerOpen(false);
-  };
-
-  // icon hover 立即显示 emoji picker，定位在首帧即到位，CSS 仅做淡入
-  const handleIconMouseEnter = (): void => {
-    if (isStreaming) {
-      return;
-    }
-    cancelEmojiPickerClose();
-    setIsEmojiPickerOpen(true);
-  };
-
-  const handleIconMouseLeave = (): void => {
-    scheduleEmojiPickerClose();
-  };
-
-  const handleEmojiSelect = async (emoji: string): Promise<void> => {
-    await onSetEmoji(emoji);
-  };
-
   const handleToggleExpand = (event: React.MouseEvent): void => {
     event.stopPropagation();
     setIsExpanded((prev) => !prev);
@@ -238,23 +192,15 @@ export function ChatItem({
       }}
     >
       <span
-        ref={iconRef}
         className={`chat-item-icon${isStreaming ? " streaming" : ""}${
           isCompleted && !isStreaming ? " completed" : ""
         }${isForked ? " forked" : ""}${hasSubAgents ? " has-sub-agents" : ""}${
           hasEmoji ? " has-emoji" : ""
         }`}
-        onMouseEnter={handleIconMouseEnter}
-        onMouseLeave={handleIconMouseLeave}
         onClick={(event) => {
-          // 面板由悬停控制显隐，点击 icon 仅阻止选中会话
+          // 图标不再承载交互，点击仅阻止选中会话；修改入口在右键菜单中
           event.stopPropagation();
         }}
-        role="button"
-        tabIndex={-1}
-        aria-label={t("sidebar.chatItemIconLabel", {
-          defaultValue: "Change conversation icon",
-        })}
       >
         {isStreaming ? (
           <Loader2 size={11} className="spin" />
@@ -267,16 +213,6 @@ export function ChatItem({
         )}
         {isCompleted && !isStreaming && <span className="chat-item-badge" />}
       </span>
-      {isEmojiPickerOpen && !isStreaming && (
-        <EmojiPicker
-          triggerRef={iconRef}
-          currentEmoji={conversation.emoji}
-          onSelect={(emoji) => void handleEmojiSelect(emoji)}
-          onClose={handleEmojiPickerClose}
-          onPanelMouseEnter={cancelEmojiPickerClose}
-          onPanelMouseLeave={scheduleEmojiPickerClose}
-        />
-      )}
       <div className="chat-item-content">
         {isEditing ? (
           <input
@@ -334,8 +270,10 @@ export function ChatItem({
         >
           <ChatItemMenu
             isPinned={isPinned}
+            emoji={conversation.emoji}
             onPin={onPin}
             onRename={handleRenameStart}
+            onSetEmoji={onSetEmoji}
             onDelete={onDelete}
             onExport={onExport}
             onOpenChange={setIsMenuOpen}

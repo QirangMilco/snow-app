@@ -5,6 +5,7 @@ import type {
   NativeBridge,
 } from "../../native/types";
 import {
+  createWorkspaceDirectoryInput,
   normalizeWorkspaceDirectory,
   normalizeWorkspaceDirectoryList,
 } from "../../settings/workspaceDirectories";
@@ -103,6 +104,30 @@ export const registerWorkspaceHandlers = (native: NativeBridge): void => {
         : await dialog.showOpenDialog(options);
 
       return result.canceled ? null : result.filePaths[0] ?? null;
+    }
+  );
+  ipcMain.handle(
+    "workspace-directories:create-project",
+    async (_event, parentPath: unknown, projectName: unknown) => {
+      if (typeof parentPath !== "string" || !parentPath.trim()) {
+        throw new Error("Parent directory path is required");
+      }
+      if (typeof projectName !== "string" || !projectName.trim()) {
+        throw new Error("Project name is required");
+      }
+
+      // 在 Rust 后端创建项目目录，随后作为活动本地工作区目录持久化。
+      const createdPath = await native.createProjectDirectory(
+        parentPath.trim(),
+        projectName.trim()
+      );
+      const existingCount = (await native.listWorkspaceDirectories()).length;
+      await native.upsertWorkspaceDirectory(
+        createWorkspaceDirectoryInput(createdPath, "local", existingCount)
+      );
+      const directories = await native.listWorkspaceDirectories();
+      broadcastDirectoryListChanged();
+      return directories;
     }
   );
 

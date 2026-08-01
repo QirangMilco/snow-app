@@ -1020,6 +1020,10 @@ export type NativeBridge = {
     items: WorkspaceDirectoryInput[]
   ) => Promise<void>;
   deleteWorkspaceDirectory: (directoryId: string) => Promise<void>;
+  createProjectDirectory: (
+    parentPath: string,
+    projectName: string
+  ) => Promise<string>;
   readDirectoryEntries: (dirPath: string) => Promise<DirectoryEntry[]>;
   renameWorkspaceEntry: (
     rootPath: string,

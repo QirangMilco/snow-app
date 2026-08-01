@@ -8,41 +8,34 @@ import {
   Download,
   ChevronRight,
   ChevronLeft,
+  SmilePlus,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../../i18n";
+import { useMenuPosition } from "./useMenuPosition";
+import { EmojiPicker } from "./EmojiPicker";
 
 export type ExportFormat = "markdown" | "html" | "json" | "csv";
 
 type ChatItemMenuProps = {
   isPinned: boolean;
+  emoji: string;
   onPin: () => void;
   onRename: () => void;
+  onSetEmoji: (emoji: string) => void | Promise<void>;
   onDelete: () => void;
   onExport: (format: ExportFormat) => void;
   onOpenChange?: (isOpen: boolean) => void;
 };
 
-type MenuPosition = {
-  top: number;
-  left: number;
-} | null;
-
-const MENU_GAP = 4;
-const VIEWPORT_MARGIN = 8;
-
 export function ChatItemMenu({
   isPinned,
+  emoji,
   onPin,
   onRename,
+  onSetEmoji,
   onDelete,
   onExport,
   onOpenChange,
@@ -51,93 +44,44 @@ export function ChatItemMenu({
   const [isOpen, setIsOpen] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
-  const [menuPosition, setMenuPosition] = useState<MenuPosition>(null);
-  const [exportPosition, setExportPosition] = useState<MenuPosition>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
   const containerRef = useRef<HTMLSpanElement>(null);
   const triggerRef = useRef<HTMLSpanElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const exportPanelRef = useRef<HTMLDivElement>(null);
   const exportTriggerRef = useRef<HTMLButtonElement>(null);
+  const emojiTriggerRef = useRef<HTMLButtonElement>(null);
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
 
-  const computePosition = useCallback(
-    (
-      triggerRect: DOMRect,
-      panelRect: DOMRect,
-      preferredSide: "right" | "left" | "below" | "above"
-    ): MenuPosition => {
-      let preferredTop: number;
-      let preferredLeft: number;
+  const showExportRef = useRef(showExport);
+  showExportRef.current = showExport;
 
-      if (preferredSide === "right") {
-        preferredTop = triggerRect.top;
-        preferredLeft = triggerRect.right + MENU_GAP;
-      } else if (preferredSide === "left") {
-        preferredTop = triggerRect.top;
-        preferredLeft = triggerRect.left - panelRect.width - MENU_GAP;
-      } else if (preferredSide === "above") {
-        preferredTop = triggerRect.top - panelRect.height - MENU_GAP;
-        preferredLeft = triggerRect.left;
-      } else {
-        preferredTop = triggerRect.bottom + MENU_GAP;
-        preferredLeft = triggerRect.left;
+  const { position: menuPosition } = useMenuPosition({
+    isOpen,
+    placement: "auto-up-down",
+    triggerRef,
+    panelRef: menuRef,
+    onReposition: () => {
+      if (showExportRef.current) {
+        updateExportPositionRef.current?.();
       }
-
-      const maxTop = Math.max(
-        VIEWPORT_MARGIN,
-        window.innerHeight - panelRect.height - VIEWPORT_MARGIN
-      );
-      const maxLeft = Math.max(
-        VIEWPORT_MARGIN,
-        window.innerWidth - panelRect.width - VIEWPORT_MARGIN
-      );
-
-      return {
-        top: Math.min(Math.max(preferredTop, VIEWPORT_MARGIN), maxTop),
-        left: Math.min(Math.max(preferredLeft, VIEWPORT_MARGIN), maxLeft),
-      };
     },
-    []
-  );
+  });
 
-  const updateMenuPosition = useCallback((): void => {
-    const trigger = triggerRef.current;
-    const menu = menuRef.current;
+  const {
+    position: exportPosition,
+    updatePosition: updateExportPosition,
+  } = useMenuPosition({
+    isOpen: isOpen && showExport,
+    placement: "auto-left-right",
+    triggerRef: exportTriggerRef,
+    panelRef: exportPanelRef,
+    observeRefs: [menuRef],
+  });
 
-    if (!trigger || !menu) {
-      return;
-    }
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const menuRect = menu.getBoundingClientRect();
-    const spaceAbove = triggerRect.top - VIEWPORT_MARGIN;
-    const spaceBelow =
-      window.innerHeight - triggerRect.bottom - VIEWPORT_MARGIN;
-    const shouldOpenUpward =
-      spaceBelow < menuRect.height + MENU_GAP && spaceAbove > spaceBelow;
-    const side: "above" | "below" = shouldOpenUpward ? "above" : "below";
-
-    setMenuPosition(computePosition(triggerRect, menuRect, side));
-  }, [computePosition]);
-
-  const updateExportPosition = useCallback((): void => {
-    const trigger = exportTriggerRef.current;
-    const panel = exportPanelRef.current;
-
-    if (!trigger || !panel) {
-      return;
-    }
-
-    const triggerRect = trigger.getBoundingClientRect();
-    const panelRect = panel.getBoundingClientRect();
-    const spaceRight =
-      window.innerWidth - triggerRect.right - VIEWPORT_MARGIN;
-    const side: "right" | "left" =
-      spaceRight < panelRect.width + MENU_GAP ? "left" : "right";
-
-    setExportPosition(computePosition(triggerRect, panelRect, side));
-  }, [computePosition]);
+  const updateExportPositionRef = useRef(updateExportPosition);
+  updateExportPositionRef.current = updateExportPosition;
 
   useEffect(() => {
     onOpenChangeRef.current?.(isOpen);
@@ -162,6 +106,7 @@ export function ChatItemMenu({
       setIsOpen(false);
       setShowConfirm(false);
       setShowExport(false);
+      setShowEmoji(false);
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -170,54 +115,13 @@ export function ChatItemMenu({
     };
   }, [isOpen]);
 
-  useLayoutEffect(() => {
-    if (!isOpen) {
-      setMenuPosition(null);
-      setExportPosition(null);
-      return;
-    }
-
-    updateMenuPosition();
-    const menu = menuRef.current;
-    const sidebar = triggerRef.current?.closest<HTMLElement>(".sidebar");
-    const layoutObserver = new ResizeObserver(() => {
-      updateMenuPosition();
-      if (showExport) {
-        updateExportPosition();
-      }
-    });
-
-    if (menu) {
-      layoutObserver.observe(menu);
-    }
-    if (sidebar) {
-      layoutObserver.observe(sidebar);
-    }
-
-    window.addEventListener("resize", updateMenuPosition);
-    window.addEventListener("scroll", updateMenuPosition, true);
-
-    return () => {
-      layoutObserver.disconnect();
-      window.removeEventListener("resize", updateMenuPosition);
-      window.removeEventListener("scroll", updateMenuPosition, true);
-    };
-  }, [isOpen, updateMenuPosition, showExport, updateExportPosition]);
-
-  useLayoutEffect(() => {
-    if (!showExport) {
-      setExportPosition(null);
-      return;
-    }
-    updateExportPosition();
-  }, [showExport, updateExportPosition]);
-
   const handleToggle = (event: React.SyntheticEvent): void => {
     event.stopPropagation();
     event.preventDefault();
     setIsOpen((prev) => !prev);
     setShowConfirm(false);
     setShowExport(false);
+    setShowEmoji(false);
   };
 
   const handlePin = (): void => {
@@ -233,6 +137,7 @@ export function ChatItemMenu({
   const handleDeleteClick = (): void => {
     setShowConfirm(true);
     setShowExport(false);
+    setShowEmoji(false);
   };
 
   const handleDeleteConfirm = (): void => {
@@ -248,11 +153,34 @@ export function ChatItemMenu({
   const handleExportClick = (): void => {
     setShowExport((prev) => !prev);
     setShowConfirm(false);
+    setShowEmoji(false);
   };
 
   const handleExportSelect = (format: ExportFormat): void => {
     onExport(format);
     setIsOpen(false);
+    setShowExport(false);
+  };
+
+  const handleEmojiClick = (): void => {
+    setShowEmoji((prev) => !prev);
+    setShowConfirm(false);
+    setShowExport(false);
+  };
+
+  const handleEmojiSelect = (emoji: string): void => {
+    void onSetEmoji(emoji);
+    setIsOpen(false);
+    setShowEmoji(false);
+    setShowConfirm(false);
+    setShowExport(false);
+  };
+
+  // Escape / 焦点离开面板等场景：关闭整个菜单
+  const handleEmojiClose = (): void => {
+    setIsOpen(false);
+    setShowEmoji(false);
+    setShowConfirm(false);
     setShowExport(false);
   };
 
@@ -351,6 +279,30 @@ export function ChatItemMenu({
                   </button>
                   <button
                     type="button"
+                    ref={emojiTriggerRef}
+                    className={`chat-item-menu-item${
+                      showEmoji ? " active" : ""
+                    }`}
+                    onClick={handleEmojiClick}
+                    role="menuitem"
+                    aria-expanded={showEmoji}
+                    aria-haspopup="menu"
+                  >
+                    {emoji ? (
+                      <span className="chat-item-menu-emoji">{emoji}</span>
+                    ) : (
+                      <SmilePlus size={13} />
+                    )}
+                    <span>
+                      {t("sidebar.chatActionIcon", { defaultValue: "Icon" })}
+                    </span>
+                    <ChevronRight
+                      size={11}
+                      className="chat-item-menu-sub-arrow"
+                    />
+                  </button>
+                  <button
+                    type="button"
                     ref={exportTriggerRef}
                     className={`chat-item-menu-item${
                       showExport ? " active" : ""
@@ -429,6 +381,15 @@ export function ChatItemMenu({
             document.body
           )
         : null}
+      {isOpen && showEmoji && (
+        <EmojiPicker
+          triggerRef={emojiTriggerRef}
+          currentEmoji={emoji}
+          onSelect={handleEmojiSelect}
+          onClose={handleEmojiClose}
+          focusOutKeepRef={menuRef}
+        />
+      )}
     </span>
   );
 }

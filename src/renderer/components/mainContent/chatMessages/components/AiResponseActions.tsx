@@ -6,7 +6,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, Copy, GitFork, Type } from "lucide-react";
+import { Check, Copy, Eye, FileCode, GitFork, Type } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import { stripMarkdown } from "../utils/stripMarkdown";
 
@@ -14,6 +14,8 @@ export type AiResponseActionsProps = {
   content: string;
   conversationId: string;
   responseId?: string;
+  showRawMarkdown: boolean;
+  onToggleRawMarkdown: () => void;
   onFork: (conversationId: string, upToResponseId: string) => void;
 };
 
@@ -29,6 +31,8 @@ export const AiResponseActions = ({
   content,
   conversationId,
   responseId,
+  showRawMarkdown,
+  onToggleRawMarkdown,
   onFork,
 }: AiResponseActionsProps): React.JSX.Element => {
   const { t } = useI18n();
@@ -116,6 +120,23 @@ export const AiResponseActions = ({
 
   return (
     <div className="ai-response-actions" aria-label="AI response actions">
+      <button
+        className={`ai-response-action-btn${showRawMarkdown ? " is-open" : ""}`}
+        type="button"
+        aria-label={
+          showRawMarkdown
+            ? t("chat.showRenderedView", { defaultValue: "Show rendered view" })
+            : t("chat.showRawMarkdown", { defaultValue: "Show raw Markdown" })
+        }
+        aria-pressed={showRawMarkdown}
+        onClick={onToggleRawMarkdown}
+      >
+        {showRawMarkdown ? (
+          <Eye size={15} strokeWidth={1.8} />
+        ) : (
+          <FileCode size={15} strokeWidth={1.8} />
+        )}
+      </button>
       <button
         ref={copyBtnRef}
         className={`ai-response-action-btn${isCopyMenuOpen ? " is-open" : ""}`}

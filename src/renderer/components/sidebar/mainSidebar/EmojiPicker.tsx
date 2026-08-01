@@ -24,6 +24,8 @@ export type EmojiPickerProps = {
   onPanelMouseEnter?: () => void;
   /** 鼠标离开面板（用于悬停控制时调度延迟关闭） */
   onPanelMouseLeave?: () => void;
+  /** 焦点移入该区域时保持面板打开（用于嵌入菜单等场景，避免点击菜单项时面板先关闭吞掉点击） */
+  focusOutKeepRef?: React.RefObject<HTMLElement | null>;
 };
 
 type PanelPosition = {
@@ -172,40 +174,6 @@ const EMOJI_GROUPS: Array<{ key: string; emojis: EmojiEntry[] }> = [
     ],
   },
   {
-    key: "people",
-    emojis: [
-      { char: "👶", keywords: ["baby"] },
-      { char: "🧒", keywords: ["child"] },
-      { char: "👦", keywords: ["boy"] },
-      { char: "👧", keywords: ["girl"] },
-      { char: "🧑", keywords: ["person"] },
-      { char: "👨", keywords: ["man"] },
-      { char: "👩", keywords: ["woman"] },
-      { char: "🧓", keywords: ["old"] },
-      { char: "👴", keywords: ["old", "man"] },
-      { char: "👵", keywords: ["old", "woman"] },
-      { char: "👮", keywords: ["police", "cop"] },
-      { char: "👷", keywords: ["worker", "helmet"] },
-      { char: "💂", keywords: ["guard"] },
-      { char: "🕵️", keywords: ["spy", "detective"] },
-      { char: "👨‍💻", keywords: ["coder", "developer", "man"] },
-      { char: "👩‍💻", keywords: ["coder", "developer", "woman"] },
-      { char: "🧙", keywords: ["wizard", "mage"] },
-      { char: "🧚", keywords: ["fairy"] },
-      { char: "🧛", keywords: ["vampire"] },
-      { char: "🧜", keywords: ["mermaid"] },
-      { char: "🧝", keywords: ["elf"] },
-      { char: "🧞", keywords: ["genie"] },
-      { char: "🧟", keywords: ["zombie"] },
-      { char: "🧠", keywords: ["brain", "smart"] },
-      { char: "💀", keywords: ["skull", "dead"] },
-      { char: "👻", keywords: ["ghost"] },
-      { char: "👽", keywords: ["alien"] },
-      { char: "🤖", keywords: ["robot"] },
-      { char: "💩", keywords: ["poop"] },
-    ],
-  },
-  {
     key: "animals",
     emojis: [
       { char: "🐶", keywords: ["dog", "puppy"] },
@@ -249,67 +217,6 @@ const EMOJI_GROUPS: Array<{ key: string; emojis: EmojiEntry[] }> = [
       { char: "🐳", keywords: ["whale"] },
       { char: "🦕", keywords: ["dinosaur"] },
       { char: "🦖", keywords: ["dinosaur", "t-rex"] },
-    ],
-  },
-  {
-    key: "food",
-    emojis: [
-      { char: "🍎", keywords: ["apple", "red"] },
-      { char: "🍐", keywords: ["pear"] },
-      { char: "🍊", keywords: ["orange"] },
-      { char: "🍋", keywords: ["lemon"] },
-      { char: "🍌", keywords: ["banana"] },
-      { char: "🍉", keywords: ["watermelon"] },
-      { char: "🍇", keywords: ["grape"] },
-      { char: "🍓", keywords: ["strawberry"] },
-      { char: "🫐", keywords: ["blueberry"] },
-      { char: "🍈", keywords: ["melon"] },
-      { char: "🍒", keywords: ["cherry"] },
-      { char: "🍑", keywords: ["peach"] },
-      { char: "🥭", keywords: ["mango"] },
-      { char: "🍍", keywords: ["pineapple"] },
-      { char: "🥥", keywords: ["coconut"] },
-      { char: "🥝", keywords: ["kiwi"] },
-      { char: "🍅", keywords: ["tomato"] },
-      { char: "🥑", keywords: ["avocado"] },
-      { char: "🍔", keywords: ["burger"] },
-      { char: "🍟", keywords: ["fries"] },
-      { char: "🍕", keywords: ["pizza"] },
-      { char: "🌭", keywords: ["hotdog"] },
-      { char: "🥪", keywords: ["sandwich"] },
-      { char: "🌮", keywords: ["taco"] },
-      { char: "🌯", keywords: ["burrito"] },
-      { char: "🥗", keywords: ["salad"] },
-      { char: "🍿", keywords: ["popcorn"] },
-      { char: "🧈", keywords: ["butter"] },
-      { char: "🧂", keywords: ["salt"] },
-      { char: "🥚", keywords: ["egg"] },
-      { char: "🍳", keywords: ["egg", "fried"] },
-      { char: "🥞", keywords: ["pancake"] },
-      { char: "🧇", keywords: ["waffle"] },
-      { char: "🥖", keywords: ["bread", "baguette"] },
-      { char: "🍞", keywords: ["bread"] },
-      { char: "🧀", keywords: ["cheese"] },
-      { char: "🍚", keywords: ["rice"] },
-      { char: "🍜", keywords: ["noodle", "ramen"] },
-      { char: "🍝", keywords: ["pasta", "spaghetti"] },
-      { char: "🍣", keywords: ["sushi"] },
-      { char: "🍱", keywords: ["bento"] },
-      { char: "🍪", keywords: ["cookie"] },
-      { char: "🎂", keywords: ["cake", "birthday"] },
-      { char: "🍰", keywords: ["cake"] },
-      { char: "🧁", keywords: ["cupcake"] },
-      { char: "🍫", keywords: ["chocolate"] },
-      { char: "🍬", keywords: ["candy"] },
-      { char: "🍭", keywords: ["lollipop"] },
-      { char: "🍩", keywords: ["donut"] },
-      { char: "☕", keywords: ["coffee"] },
-      { char: "🍵", keywords: ["tea"] },
-      { char: "🧃", keywords: ["juice"] },
-      { char: "🍺", keywords: ["beer"] },
-      { char: "🍻", keywords: ["beer", "cheers"] },
-      { char: "🥂", keywords: ["cheers"] },
-      { char: "🍷", keywords: ["wine"] },
     ],
   },
   {
@@ -499,32 +406,71 @@ const EMOJI_GROUPS: Array<{ key: string; emojis: EmojiEntry[] }> = [
       { char: "💭", keywords: ["thought"] },
     ],
   },
+  {
+    key: "tech",
+    emojis: [
+      { char: "🔍", keywords: ["search", "magnify", "zoom"] },
+      { char: "🔎", keywords: ["search", "magnify", "zoom"] },
+      { char: "🧭", keywords: ["compass", "navigation", "direction"] },
+      { char: "🔬", keywords: ["microscope", "science", "research"] },
+      { char: "🔭", keywords: ["telescope", "space", "astronomy"] },
+      { char: "📡", keywords: ["satellite", "antenna", "signal"] },
+      { char: "🛰️", keywords: ["satellite", "space"] },
+      { char: "🧲", keywords: ["magnet", "magnetic"] },
+      { char: "🧪", keywords: ["test", "tube", "lab", "chemistry"] },
+      { char: "🧫", keywords: ["petri", "bacteria", "biology"] },
+      { char: "🧬", keywords: ["dna", "gene", "biology"] },
+      { char: "⚗️", keywords: ["alembic", "chemistry", "lab"] },
+      { char: "🪐", keywords: ["saturn", "planet", "space"] },
+      { char: "⚛️", keywords: ["atom", "nuclear", "physics"] },
+      { char: "☢️", keywords: ["radioactive"] },
+      { char: "☣️", keywords: ["biohazard"] },
+      { char: "🧮", keywords: ["abacus", "math", "calculator"] },
+      { char: "📊", keywords: ["chart", "bar", "stats", "data"] },
+      { char: "📈", keywords: ["chart", "growth", "trend", "up"] },
+      { char: "📉", keywords: ["chart", "decline", "trend", "down"] },
+      { char: "🧾", keywords: ["receipt", "bill", "invoice"] },
+      { char: "🏷️", keywords: ["tag", "label", "price"] },
+      { char: "💲", keywords: ["dollar", "currency", "money"] },
+      { char: "🪙", keywords: ["coin", "money", "currency"] },
+      { char: "💱", keywords: ["currency", "exchange", "money"] },
+      { char: "🏦", keywords: ["bank", "building", "finance"] },
+      { char: "🏧", keywords: ["atm", "cash", "money"] },
+      { char: "📌", keywords: ["pushpin", "pin", "mark"] },
+      { char: "📍", keywords: ["pushpin", "location", "map"] },
+      { char: "📎", keywords: ["paperclip", "attach"] },
+      { char: "✂️", keywords: ["scissors", "cut"] },
+      { char: "🗑️", keywords: ["wastebasket", "trash", "bin"] },
+      { char: "🖨️", keywords: ["printer", "print"] },
+      { char: "📠", keywords: ["fax", "machine"] },
+      { char: "☎️", keywords: ["telephone", "phone", "landline"] },
+      { char: "📞", keywords: ["telephone", "phone", "receiver"] },
+    ],
+  },
 ];
 
 const GROUP_LABEL_KEYS: Record<string, string> = {
   status: "sidebar.emojiGroupStatus",
   smileys: "sidebar.emojiGroupSmileys",
   gestures: "sidebar.emojiGroupGestures",
-  people: "sidebar.emojiGroupPeople",
   animals: "sidebar.emojiGroupAnimals",
-  food: "sidebar.emojiGroupFood",
   activities: "sidebar.emojiGroupActivities",
   travel: "sidebar.emojiGroupTravel",
   objects: "sidebar.emojiGroupObjects",
   symbols: "sidebar.emojiGroupSymbols",
+  tech: "sidebar.emojiGroupTech",
 };
 
 const GROUP_DEFAULT_LABELS: Record<string, string> = {
   status: "Status",
   smileys: "Smileys",
   gestures: "Gestures",
-  people: "People",
   animals: "Animals",
-  food: "Food & Drink",
   activities: "Activities",
   travel: "Travel",
   objects: "Objects",
   symbols: "Symbols",
+  tech: "Tech",
 };
 
 /** 将所有 emoji 展平为一维数组，用于搜索 */
@@ -543,6 +489,7 @@ export function EmojiPicker({
   onClose,
   onPanelMouseEnter,
   onPanelMouseLeave,
+  focusOutKeepRef,
 }: EmojiPickerProps): React.JSX.Element {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -618,6 +565,9 @@ export function EmojiPicker({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
+  const focusOutKeepRefRef = useRef(focusOutKeepRef);
+  focusOutKeepRefRef.current = focusOutKeepRef;
+
   // 挂载时注册为全局唯一面板，并关闭此前仍存在的实例
   useEffect(() => {
     activePickerClose?.();
@@ -653,6 +603,10 @@ export function EmojiPicker({
     const handleFocusOut = (event: FocusEvent): void => {
       const next = event.relatedTarget as Node | null;
       if (next && panel.contains(next)) {
+        return;
+      }
+      // 焦点移入菜单等宿主区域时保持打开，交由宿主处理点击
+      if (next && focusOutKeepRefRef.current?.current?.contains(next)) {
         return;
       }
       onCloseRef.current();

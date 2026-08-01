@@ -271,6 +271,12 @@ export const loadNativeBridge = (): NativeBridge => {
             "Rust native bridge is required to delete workspace directories"
           )
         ),
+      createProjectDirectory: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to create project directories"
+          )
+        ),
       readDirectoryEntries: () =>
         Promise.reject(
           new Error("Rust native bridge is required to read directory entries")
