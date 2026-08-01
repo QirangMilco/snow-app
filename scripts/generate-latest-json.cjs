@@ -21,7 +21,7 @@ const { createHash } = require("node:crypto");
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
 const { join } = require("node:path");
 
-const OWNER = "MayDay-wpf";
+const OWNER = "QirangMilco";
 const REPO = "snow-app";
 
 const tag = process.argv[2];

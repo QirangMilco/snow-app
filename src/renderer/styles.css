@@ -2582,12 +2582,54 @@ input {
   font-weight: 600;
 }
 
-/* Settings - About section */
+/* Settings - About / Update section */
 .settings-about-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.settings-update-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-update-actions .nav-item {
+  width: 100%;
+}
+
+.settings-update-actions .nav-item > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check-update-btn.checking {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.check-update-btn.checking svg {
+  animation: snow-spin 1.5s linear infinite;
+  color: var(--accent, #2563eb);
+}
+
+.check-update-btn:disabled {
+  cursor: default;
+}
+
+.settings-update-error {
+  font-size: 12px;
+  color: var(--danger, #dc2626);
+  padding: 2px 4px;
+}
+
+.settings-update-hint {
+  font-size: 12px;
+  color: var(--success, #16a34a);
+  padding: 2px 4px;
 }
 
 .api-settings-page {
@@ -4538,6 +4580,27 @@ input {
   border-radius: var(--radius-sm);
   flex-shrink: 0;
   line-height: 1.4;
+}
+
+.update-ready-btn {
+  color: var(--accent, #2563eb);
+}
+
+.update-ready-btn:hover {
+  background: var(--bg-hover);
+}
+
+.update-ready-btn svg {
+  color: var(--accent, #2563eb);
+}
+
+.update-downloading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.update-downloading svg {
+  animation: snow-spin 1.5s linear infinite;
 }
 
 .sidebar.collapsed .sidebar-content-wrapper {

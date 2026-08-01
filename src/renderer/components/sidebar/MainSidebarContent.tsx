@@ -1,5 +1,7 @@
 import {
   CalendarClock,
+  Download,
+  LoaderCircle,
   NotebookText,
   Search,
   Settings,
@@ -21,8 +23,18 @@ import { ScheduledTasksModal } from "./ScheduledTasksModal";
 import type { SidebarContentProps } from "./types";
 import type {
   ConversationSearchResult,
+  UpdateStatus,
   WorkspaceDirectoryRecord,
 } from "../../../preload";
+
+const INITIAL_UPDATE_STATUS: UpdateStatus = {
+  available: false,
+  version: null,
+  downloading: false,
+  progress: 0,
+  downloaded: false,
+  error: null,
+};
 
 export function MainSidebarContent({
   activeDirectory,
@@ -39,6 +51,9 @@ export function MainSidebarContent({
   const [isMemoOpen, setIsMemoOpen] = useState(false);
   const [isScheduledTasksOpen, setIsScheduledTasksOpen] = useState(false);
   const [pendingMemoCount, setPendingMemoCount] = useState(0);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(
+    INITIAL_UPDATE_STATUS
+  );
 
   // Scheduled tasks: the hook registers buildFromContent as the AI Loop
   // executor and subscribes to the in-memory store. Mounted here (always
@@ -76,6 +91,29 @@ export function MainSidebarContent({
       window.removeEventListener(APP_CONTROL_MEMO_CREATED_EVENT, handler);
     };
   }, [refreshPendingMemoCount]);
+
+  // 订阅自动更新状态：autoUpdater 在启动后自动检测更新，发现新版本时
+  // 通过 onUpdateStatusChanged 推送，此处据此在设置按钮旁显示更新入口。
+  useEffect(() => {
+    window.snow
+      .getUpdateStatus()
+      .then(setUpdateStatus)
+      .catch(() => undefined);
+    const unsubscribe = window.snow.onUpdateStatusChanged((status) => {
+      setUpdateStatus(status);
+    });
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  const handleDownloadUpdate = useCallback((): void => {
+    void window.snow.downloadUpdate();
+  }, []);
+
+  const handleInstallUpdate = useCallback((): void => {
+    void window.snow.installUpdate();
+  }, []);
 
   // 订阅快捷键事件：Ctrl/Cmd+F 切换搜索 modal，Ctrl/Cmd+B 切换备忘录 modal。
   // 快捷键引擎通过 shortcutEvents 总线触发，此组件持有 modal open 状态。
@@ -194,6 +232,61 @@ export function MainSidebarContent({
             <Settings size={18} strokeWidth={1.8} />
             <span>{t("sidebar.settings", { defaultValue: "Settings" })}</span>
           </button>
+
+          {/* 自动检测到新版本时显示更新入口 */}
+          {updateStatus.available &&
+            !updateStatus.downloading &&
+            !updateStatus.downloaded && (
+              <button
+                className="nav-item update-ready-btn"
+                onClick={handleDownloadUpdate}
+                type="button"
+                title={t("settings.newVersionAvailable", {
+                  values: { version: updateStatus.version ?? "" },
+                  defaultValue: `Update to ${updateStatus.version ?? ""}`,
+                })}
+              >
+                <Download size={16} strokeWidth={1.8} />
+                <span>
+                  {t("settings.update", {
+                    defaultValue: "Update",
+                  })}
+                </span>
+              </button>
+            )}
+
+          {/* 下载中 */}
+          {updateStatus.available && updateStatus.downloading && (
+            <div
+              className="nav-item update-downloading"
+              title={t("settings.updateDownloading", {
+                values: { percent: updateStatus.progress },
+                defaultValue: `Downloading ${updateStatus.progress}%`,
+              })}
+            >
+              <LoaderCircle size={16} strokeWidth={1.8} />
+              <span>{updateStatus.progress}%</span>
+            </div>
+          )}
+
+          {/* 下载完成 → 重启更新 */}
+          {updateStatus.downloaded && (
+            <button
+              className="nav-item update-ready-btn"
+              onClick={handleInstallUpdate}
+              type="button"
+              title={t("settings.updateReady", {
+                defaultValue: "Restart to update",
+              })}
+            >
+              <Download size={16} strokeWidth={1.8} />
+              <span>
+                {t("settings.updateReady", {
+                  defaultValue: "Restart to update",
+                })}
+              </span>
+            </button>
+          )}
         </div>
       </div>
       <GlobalSearchModal

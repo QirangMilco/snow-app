@@ -15,7 +15,7 @@ use super::skills::{parse_skill_metadata_for_install, SKILL_FILE_NAME};
 /// Parsed GitHub URL information used to download a repository archive.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ParsedGitHubUrl {
-    /// GitHub owner / org name, e.g. "MayDay-wpf"
+    /// GitHub owner / org name, e.g. "QirangMilco"
     pub owner: String,
     /// Repository name, e.g. "snow-cli"
     pub repo: String,

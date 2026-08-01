@@ -1,0 +1,4 @@
+owner: QirangMilco
+repo: snow-app
+provider: github
+updaterCacheDirName: snow-app-updater

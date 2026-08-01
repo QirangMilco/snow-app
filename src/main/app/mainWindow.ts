@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from "electron";
+import { BrowserWindow, ipcMain, nativeTheme, shell } from "electron";
 import { is } from "@electron-toolkit/utils";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,7 @@ import {
   macTrafficLightPosition,
 } from "./constants";
 import { killAllPtyForWebContents } from "../pty/ptyManager";
+import { initAutoUpdater } from "../updater/autoUpdater";
 import {
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
@@ -171,11 +172,8 @@ export const createWindow = (): BrowserWindow => {
       });
   }
 
-  // 本地化构建：不注册任何自动更新模块，编译产物不含更新逻辑。
-  // 仅保留 app:get-version（设置页 About 区块显示版本号使用）。
-  if (!ipcMain.listenerCount("app:get-version")) {
-    ipcMain.handle("app:get-version", () => app.getVersion());
-  }
+  // 初始化自动更新模块（注册 IPC + 启动后自动检查更新）
+  initAutoUpdater(mainWindow);
 
   return mainWindow;
 };

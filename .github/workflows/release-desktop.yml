@@ -269,6 +269,13 @@ jobs:
             --config.extraMetadata.version=${{ env.VERSION }}
           ls -la release/
 
+      - name: 重命名 arm64 更新清单避免与 x64 冲突
+        shell: bash
+        run: |
+          if [ -f release/latest-mac.yml ]; then
+            mv release/latest-mac.yml release/latest-mac-arm64.yml
+          fi
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
@@ -277,6 +284,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
+            release/latest-mac-arm64.yml
 
   build-macos-x64:
     name: 构建 macOS x64
@@ -326,6 +334,7 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
+            release/latest-mac.yml
 
   build-linux-amd64:
     name: 构建 Linux amd64
@@ -380,6 +389,7 @@ jobs:
           path: |
             release/*.AppImage
             release/*.deb
+            release/latest.yml
 
   build-windows-amd64:
     name: 构建 Windows amd64
@@ -428,6 +438,7 @@ jobs:
           if-no-files-found: error
           path: |
             release/*.exe
+            release/latest.yml
 
   publish-release:
     name: 发布 Release
@@ -449,12 +460,15 @@ jobs:
       PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
 
     steps:
+      - name: 检出代码（scripts/ 生成更新清单需要）
+        uses: actions/checkout@v4
+
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
           pattern: release-*
           merge-multiple: true
-          path: release-assets
+          path: release
 
       - name: 下载 Release Notes
         uses: actions/download-artifact@v4
@@ -466,14 +480,22 @@ jobs:
         shell: bash
         run: |
           echo "Release assets:"
-          find release-assets -maxdepth 2 -type f | sort
+          find release -maxdepth 2 -type f | sort
           echo "Release notes:"
           cat /tmp/release-notes.md
+
+      - name: 合并 macOS 更新清单（arm64 + x64）
+        shell: bash
+        run: node scripts/merge-mac-yml.cjs
+
+      - name: 生成 macOS 无签名更新清单 latest-mac.json
+        shell: bash
+        run: node scripts/generate-latest-json.cjs ${{ needs.prepare-release.outputs.tag }}
 
       - name: 创建或更新 Release
         shell: bash
         run: |
-          mapfile -t FILES < <(find release-assets -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' \) | sort)
+          mapfile -t FILES < <(find release -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name 'latest*.yml' -o -name 'latest-mac.json' \) | sort)
 
           if [ ${#FILES[@]} -eq 0 ]; then
             echo "没有找到构建产物" >&2

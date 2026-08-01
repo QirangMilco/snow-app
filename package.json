@@ -3,8 +3,8 @@
   "version": "0.1.12",
   "description": "High-performance cross-platform desktop app scaffold powered by Electron, React, TypeScript, and Rust.",
   "author": {
-    "name": "MayDay",
-    "email": "mufasa@snow.app"
+    "name": "Qirang",
+    "email": "qirang@snow.app"
   },
   "private": true,
   "type": "module",
@@ -18,6 +18,7 @@
     "build:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64",
     "build:mac:x64": "npm run build && electron-builder --mac dmg zip --x64",
     "build:mac:universal": "npm run build && electron-builder --mac dmg zip --universal",
+    "update:manifest": "node scripts/generate-latest-json.cjs",
     "build:linux": "npm run build && electron-builder --linux AppImage deb",
     "build:all": "npm run build && electron-builder -mwl",
     "build:rust": "node scripts/build-native.cjs",
@@ -34,6 +35,7 @@
     "@napi-rs/triples": "^1.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.9",
     "highlight.js": "^11.11.1",
     "katex": "^0.18.1",
     "lucide-react": "^1.17.0",
@@ -95,6 +97,11 @@
     "directories": {
       "output": "release"
     },
+    "publish": {
+      "provider": "github",
+      "owner": "QirangMilco",
+      "repo": "snow-app"
+    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "resources/icon.icns",
@@ -123,7 +130,7 @@
     },
     "linux": {
       "icon": "resources/icon.png",
-      "maintainer": "MayDay <mufasa@snow.app>"
+      "maintainer": "Qirang <qirang@snow.app>"
     }
   },
   "allowScripts": {
