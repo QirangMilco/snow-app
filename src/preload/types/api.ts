@@ -60,6 +60,7 @@ export type ResponsesApiMessage = {
 export type ResponsesApiRequest = {
   messages: ResponsesApiMessage[];
   model?: string | null;
+  apiProfile?: string | null;
   conversationId?: string | null;
   previousResponseId?: string | null;
   directoryId?: string | null;

@@ -62,12 +62,40 @@ pub fn is_retriable_error(error: &Error) -> bool {
         return true;
     }
 
-    // Network errors
-    if message.contains("network")
+    // Network errors — reqwest surfaces connect-layer failures as
+    // "error sending request for url (...): <cause>" where <cause> can be a
+    // DNS failure, refused/reset connection, TLS handshake error, timeout,
+    // HTTP/2 stream error, or a plain "connection closed before message
+    // completed". Match both the top-level wrapper and the common causes so
+    // transient network failures are retried instead of failing the turn.
+    if message.contains("error sending request")
+        || message.contains("error trying to connect")
+        || message.contains("network")
         || message.contains("econnrefused")
         || message.contains("econnreset")
         || message.contains("etimedout")
         || message.contains("timeout")
+        || message.contains("connection refused")
+        || message.contains("connection closed")
+        || message.contains("connection aborted")
+        || message.contains("connection reset")
+        || message.contains("socket hang up")
+        || message.contains("dns error")
+        || message.contains("dns lookup")
+        || message.contains("failed to lookup")
+        || message.contains("tls handshake")
+        || message.contains("handshake error")
+        || message.contains("ehostunreach")
+        || message.contains("enetunreach")
+        || message.contains("network is unreachable")
+        || message.contains("no route to host")
+        || message.contains("unexpected eof")
+        || message.contains("end of file")
+        || message.contains("http2 error")
+        || message.contains("h2 error")
+        || message.contains("stream error")
+        || message.contains("tunnel")
+        || message.contains("proxy error")
     {
         return true;
     }
@@ -99,10 +127,7 @@ pub fn is_retriable_error(error: &Error) -> bool {
     }
 
     // Connection terminated by server
-    if message.contains("terminated")
-        || message.contains("connection reset")
-        || message.contains("socket hang up")
-    {
+    if message.contains("terminated") {
         return true;
     }
 
@@ -145,12 +170,22 @@ pub fn should_retry(error: &Error, attempt: u32, options: &RetryOptions) -> bool
 }
 
 /// Wait for the retry delay, respecting the cancel token.
+///
+/// The delay grows exponentially with the attempt count
+/// (`base_delay_ms × 2^attempt`, capped at 30s) so a recovering network gets
+/// progressively more time to come back before the retry budget is
+/// exhausted. `attempt` is the number of failures already seen (0 = first
+/// retry).
+///
 /// Returns `Err` if cancelled during the wait.
 pub async fn wait_before_retry(
     options: &RetryOptions,
     cancel_token: &CancellationToken,
+    attempt: u32,
 ) -> Result<()> {
-    let delay = Duration::from_millis(options.base_delay_ms);
+    const MAX_BACKOFF_MS: u64 = 30_000;
+    let backoff = options.base_delay_ms.saturating_mul(1u64 << attempt.min(4));
+    let delay = Duration::from_millis(backoff.min(MAX_BACKOFF_MS));
     tokio::select! {
         biased;
         _ = cancel_token.cancelled() => {

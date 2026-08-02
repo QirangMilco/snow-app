@@ -1,5 +1,37 @@
 # Release Notes
 
+## v0.1.13
+
+## New Features
+
+- **Session-Scoped API Profiles**: Each conversation session now remembers its own API provider and model selection. A new `apiProfile` pipeline routes through Rust with graceful fallback, per-session storage binding, and an `Alt+P` shortcut to cycle providers. The provider selector has been moved into the model menu's secondary view for a cleaner header.
+- **System Tray (macOS)**: Added full system tray support with template icons, hover statistics, and hide-to-tray. Active status dots are now parameterized instead of using app logos, and the 16 px shrink/solid-block rendering issue is fixed.
+- **Personalization Settings**: A dedicated settings page for editing global and project-level `ROLE.md` files with a priority explainer. Global and project rules are composed automatically, and SSH workspaces are supported.
+- **Built-in Documentation System**: Introduced an internal documentation framework with the `snow-app-docs` skill, allowing the agent to read bundled docs and assist with MCP, skills, and API configuration.
+- **MCP Settings UI Enhancements**: Added a JSON edit mode, batch import, and localized error messages. Built-in `config` and `skills-config` services now support GitHub token and codeload fallback for skill installation.
+- **File-Change Stats Panel**: Conversation sessions now display a file-change statistics panel summarizing additions, deletions, and modified files.
+- **Right-Panel Context Menus**: Tabs and the terminal now support right-click context menus, including paste-in-terminal.
+- **Bash Session Context Injection**: Bash tool execution now injects session context as environment variables, making session-scoped information available to subprocesses.
+- **Project Creation & Raw Markdown Toggle**: Projects can now be created directly from the UI, and a raw markdown toggle is available for note editing.
+- **Sub-Agent Read-Only View**: Optimized the sub-agent panel as a read-only view for clearer separation from the main conversation.
+
+## Improvements
+
+- **Network Error Handling & Retry**: Enhanced network error classification with exponential backoff retry at the Rust level. Visual (image) request failures now include diagnostic messages and base64 validity checks.
+- **Cream Theme**: Introduced the Cream theme (formerly Anthropic theme) with refined personalization UI styling.
+- **Git Graph & Refresh**: Added a manual git refresh button and improved graph lane rendering for better readability.
+- **Session Icon Selector**: Migrated the session icon emoji selector to a context menu for a less cluttered sidebar.
+- **Line-Ending Normalization**: Added `.gitattributes` to enforce LF line endings, preventing CRLF false diffs on Windows.
+
+## Bug Fixes
+
+- **MCP Discover Fallback**: When the modern `discover` handshake fails, the client automatically falls back to the legacy `initialize` flow (issue #19).
+- **Plan Mode Approval Persistence**: Plan approval state is now preserved across session switches and migrated alongside pending requests.
+- **SSH Browse Path History**: SSH directory browsing no longer loses path history when navigating back and forth.
+- **macOS Tray Icon Rendering**: Fixed the tray icon shrinking to 16 px and becoming a solid block on macOS.
+- **i18n Completeness**: Filled in missing translations for shortcuts and provider dropdown labels in both English and Chinese.
+- **Copilot Review Feedback**: Addressed four review comments from Copilot covering code quality and correctness.
+
 ## v0.1.12
 
 ## New Features

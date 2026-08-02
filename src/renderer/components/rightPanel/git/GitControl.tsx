@@ -5,6 +5,7 @@ import {
   GitCommitHorizontal,
   GitGraph as GitGraphIcon,
   Loader2,
+  RefreshCw,
   Sparkles,
   Square,
 } from "lucide-react";
@@ -77,6 +78,13 @@ export const GitControl = ({
   // to top once the refreshed status has been applied to the DOM.
   const commitPendingRef = useRef(false);
   const [viewMode, setViewMode] = useState<"changes" | "graph">("changes");
+  // Spins the toolbar refresh button until the current view's refresh
+  // settles: status fetch always, plus the GitGraph reload when the graph
+  // view is active. graphLoadedResolveRef bridges the GitGraph onLoaded
+  // callback into the refresh promise chain.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0);
+  const graphLoadedResolveRef = useRef<(() => void) | null>(null);
 
   // Propagate status changes upward via ref to avoid render-cycle side effects
   useEffect(() => {
@@ -158,6 +166,46 @@ export const GitControl = ({
   const handleStatusChange = useCallback(() => {
     refresh();
   }, [refresh]);
+
+  // Manual refresh: re-fetch status and, when the graph view is active,
+  // also force GitGraph to reload its history. The spinner runs until BOTH
+  // settle. GitGraph is only mounted in graph mode, so its onLoaded is
+  // bridged through graphLoadedResolveRef and only awaited there; in
+  // changes mode the status promise alone stops the spinner.
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    const statusPromise = refresh();
+    if (viewMode === "graph") {
+      setGraphRefreshKey((key) => key + 1);
+      const graphPromise = new Promise<void>((resolve) => {
+        graphLoadedResolveRef.current = resolve;
+      });
+      void Promise.all([statusPromise, graphPromise]).finally(() => {
+        setIsRefreshing(false);
+      });
+    } else {
+      void statusPromise.finally(() => {
+        setIsRefreshing(false);
+      });
+    }
+  }, [refresh, viewMode]);
+
+  const handleGraphLoaded = useCallback(() => {
+    const resolve = graphLoadedResolveRef.current;
+    graphLoadedResolveRef.current = null;
+    resolve?.();
+  }, []);
+
+  // Switching views unmounts GitGraph (graph -> changes), so its onLoaded
+  // callback will never fire; resolve any pending graph wait and stop the
+  // spinner regardless of direction — remounting into graph mode reloads
+  // on its own.
+  const handleToggleViewMode = useCallback(() => {
+    setViewMode((prev) => (prev === "graph" ? "changes" : "graph"));
+    graphLoadedResolveRef.current?.();
+    graphLoadedResolveRef.current = null;
+    setIsRefreshing(false);
+  }, []);
 
   const handleFileSelect = useCallback(
     (
@@ -517,90 +565,104 @@ export const GitControl = ({
   );
 
   return (
-    <div className="git-control" ref={scrollRef}>
-      {repos && repos.length > 1 && onRepoSelect && (
-        <div className="git-repo-selector-bar">
-          <RepoSelector
-            repos={repos}
-            selectedRepoPath={repoPath ?? null}
-            onSelect={onRepoSelect}
+    <div className="git-control">
+      <div className="git-control-top">
+        {repos && repos.length > 1 && onRepoSelect && (
+          <div className="git-repo-selector-bar">
+            <RepoSelector
+              repos={repos}
+              selectedRepoPath={repoPath ?? null}
+              onSelect={onRepoSelect}
+            />
+          </div>
+        )}
+        <div className="git-control-header">
+          <BranchSelector
+            repoPath={repoPath}
+            currentBranch={status.currentBranch}
+            onBranchChanged={handleStatusChange}
           />
+          <div className="git-control-actions">
+            <button
+              type="button"
+              className="icon-btn git-action-btn"
+              onClick={handleRefresh}
+              disabled={actionInProgress !== null || isRefreshing}
+              title={t("git.refresh")}
+            >
+              {isRefreshing ? (
+                <Loader2 size={14} strokeWidth={1.8} className="spin" />
+              ) : (
+                <RefreshCw size={14} strokeWidth={1.8} />
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon-btn git-action-btn"
+              onClick={handlePull}
+              disabled={actionInProgress !== null}
+              title={
+                status.behind > 0
+                  ? t("git.pullBehind", { values: { count: status.behind } })
+                  : t("git.pull")
+              }
+            >
+              {actionInProgress === "pull" ? (
+                <Loader2 size={14} strokeWidth={1.8} className="spin" />
+              ) : (
+                <ArrowDownToLine size={14} strokeWidth={1.8} />
+              )}
+              {status.behind > 0 && (
+                <span className="git-pull-badge" aria-hidden="true" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="icon-btn git-action-btn"
+              onClick={handlePush}
+              disabled={actionInProgress !== null}
+              title={t("git.push")}
+            >
+              {actionInProgress === "push" ? (
+                <Loader2 size={14} strokeWidth={1.8} className="spin" />
+              ) : (
+                <ArrowUpFromLine size={14} strokeWidth={1.8} />
+              )}
+            </button>
+            <button
+              type="button"
+              className={`icon-btn git-action-btn${
+                viewMode === "graph" ? " active" : ""
+              }`}
+              onClick={handleToggleViewMode}
+              title={viewMode === "graph" ? t("git.changes") : t("git.graph")}
+            >
+              {viewMode === "graph" ? (
+                <Diff size={14} strokeWidth={1.8} />
+              ) : (
+                <GitGraphIcon size={14} strokeWidth={1.8} />
+              )}
+            </button>
+          </div>
         </div>
-      )}
-      <div className="git-control-header">
-        <BranchSelector
-          repoPath={repoPath}
-          currentBranch={status.currentBranch}
-          onBranchChanged={handleStatusChange}
-        />
-        <div className="git-control-actions">
-          <button
-            type="button"
-            className="icon-btn git-action-btn"
-            onClick={handlePull}
-            disabled={actionInProgress !== null}
-            title={
-              status.behind > 0
-                ? t("git.pullBehind", { values: { count: status.behind } })
-                : t("git.pull")
-            }
-          >
-            {actionInProgress === "pull" ? (
-              <Loader2 size={14} strokeWidth={1.8} className="spin" />
-            ) : (
-              <ArrowDownToLine size={14} strokeWidth={1.8} />
+
+        {(status.ahead > 0 || status.behind > 0) && (
+          <div className="git-sync-status">
+            {status.ahead > 0 && (
+              <span className="git-sync-ahead">
+                {t("git.ahead", { values: { count: status.ahead } })}
+              </span>
             )}
             {status.behind > 0 && (
-              <span className="git-pull-badge" aria-hidden="true" />
+              <span className="git-sync-behind">
+                {t("git.behind", { values: { count: status.behind } })}
+              </span>
             )}
-          </button>
-          <button
-            type="button"
-            className="icon-btn git-action-btn"
-            onClick={handlePush}
-            disabled={actionInProgress !== null}
-            title={t("git.push")}
-          >
-            {actionInProgress === "push" ? (
-              <Loader2 size={14} strokeWidth={1.8} className="spin" />
-            ) : (
-              <ArrowUpFromLine size={14} strokeWidth={1.8} />
-            )}
-          </button>
-          <button
-            type="button"
-            className={`icon-btn git-action-btn${
-              viewMode === "graph" ? " active" : ""
-            }`}
-            onClick={() =>
-              setViewMode(viewMode === "graph" ? "changes" : "graph")
-            }
-            title={viewMode === "graph" ? t("git.changes") : t("git.graph")}
-          >
-            {viewMode === "graph" ? (
-              <Diff size={14} strokeWidth={1.8} />
-            ) : (
-              <GitGraphIcon size={14} strokeWidth={1.8} />
-            )}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
 
-      {(status.ahead > 0 || status.behind > 0) && (
-        <div className="git-sync-status">
-          {status.ahead > 0 && (
-            <span className="git-sync-ahead">
-              {t("git.ahead", { values: { count: status.ahead } })}
-            </span>
-          )}
-          {status.behind > 0 && (
-            <span className="git-sync-behind">
-              {t("git.behind", { values: { count: status.behind } })}
-            </span>
-          )}
-        </div>
-      )}
-
+      <div className="git-control-scroll" ref={scrollRef}>
       {viewMode === "changes" ? (
         <>
           <GitFileList
@@ -682,8 +744,14 @@ export const GitControl = ({
           </div>
         </>
       ) : (
-        <GitGraph repoPath={repoPath} />
+        <GitGraph
+          repoPath={repoPath}
+          refreshKey={graphRefreshKey}
+          onLoaded={handleGraphLoaded}
+        />
       )}
+
+      </div>
 
       <ConfirmDialog
         open={discardTarget.length > 0}

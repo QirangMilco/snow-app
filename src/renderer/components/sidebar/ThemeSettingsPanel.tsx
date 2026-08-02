@@ -9,6 +9,7 @@ import { getPresetById } from "./themeSettings/themePresets";
 import {
   applyFontFamilyToDocument,
   applyPaletteToDocument,
+  applyThemePresetToDocument,
   applyStreamCursorToDocument,
   applyThemeModeToDocument,
   DEFAULT_THEME_SETTINGS,
@@ -130,6 +131,7 @@ export function ThemeSettingsPanel({
     const effectiveDark =
       form.mode === "system" ? systemDark : form.mode === "dark";
     applyThemeModeToDocument(form.mode);
+    applyThemePresetToDocument(form.presetId);
     const palette = resolveActivePalette(form, effectiveDark);
     applyPaletteToDocument(palette);
 

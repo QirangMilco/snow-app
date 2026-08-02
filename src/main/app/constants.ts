@@ -5,6 +5,17 @@ export const isWindows = process.platform === "win32";
 export const macTrafficLightPosition = { x: 18, y: 28 };
 export const APP_ICON_PATH = join(__dirname, "../../resources/icon.png");
 
+// 托盘图标用的小尺寸源图：16px（100% DPI）与 32px（200% DPI @2x 表示），
+// 直接使用设计好的 favicon，避免从大图缩放导致的模糊。
+export const APP_FAVICON_16_PATH = join(
+  __dirname,
+  "../../resources/web/favicon-16.png"
+);
+export const APP_FAVICON_32_PATH = join(
+  __dirname,
+  "../../resources/web/favicon-32.png"
+);
+
 /**
  * Windows 应用用户模型 ID (AppUserModelID)。
  *

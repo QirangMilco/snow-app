@@ -55,6 +55,15 @@ export const conversationApi = {
       conversationId,
       emoji
     ),
+  updateConversationApiProfile: (
+    conversationId: string,
+    profileName: string
+  ): Promise<void> =>
+    ipcRenderer.invoke(
+      "chat-conversations:update-api-profile",
+      conversationId,
+      profileName
+    ),
   deleteConversation: (conversationId: string): Promise<void> =>
     ipcRenderer.invoke("chat-conversations:delete", conversationId),
   appendToolMessage: (conversationId: string, content: string): Promise<void> =>

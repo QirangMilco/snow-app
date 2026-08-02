@@ -42,7 +42,7 @@ fn is_valid_key(key: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '`')
 }
 
-/// 完整快捷键设置：6 个快捷键各自的配置。
+/// 完整快捷键设置：7 个快捷键各自的配置。
 /// 序列化为 JSON 存储在 system_settings 表中。
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -53,16 +53,24 @@ pub struct KeyboardShortcutsSettings {
     pub open_todo: KeyboardShortcutConfig,
     pub cycle_project: KeyboardShortcutConfig,
     pub open_project_explorer: KeyboardShortcutConfig,
+    pub cycle_api_profile: KeyboardShortcutConfig,
 }
 
-/// 6 个快捷键的默认按键绑定（与渲染层 useKeyboardShortcuts 原始硬编码一致）。
+/// 7 个快捷键的默认按键绑定（与渲染层 useKeyboardShortcuts 原始硬编码一致）。
 /// `mod` 为平台主修饰键占位符（macOS=Cmd，其他=Ctrl）。
+/// cycleApiProfile 平台相关：macOS 用 Ctrl+P（Option/Alt 会输入特殊字符），
+/// 其他平台用 Alt+P。
 const DEFAULT_CANCEL_SESSION_KEY: &str = "escape";
 const DEFAULT_OPEN_SEARCH_KEY: &str = "mod+f";
 const DEFAULT_OPEN_MEMO_KEY: &str = "mod+b";
 const DEFAULT_OPEN_TODO_KEY: &str = "mod+t";
 const DEFAULT_CYCLE_PROJECT_KEY: &str = "mod+backtick";
 const DEFAULT_OPEN_PROJECT_EXPLORER_KEY: &str = "mod+d";
+const DEFAULT_CYCLE_API_PROFILE_KEY: &str = if cfg!(target_os = "macos") {
+    "ctrl+p"
+} else {
+    "alt+p"
+};
 
 impl KeyboardShortcutsSettings {
     /// 规范化：对每个配置校验 key 合法性，不合法时回退到默认按键绑定。
@@ -86,12 +94,24 @@ impl KeyboardShortcutsSettings {
         if !is_valid_key(&self.open_project_explorer.key) {
             self.open_project_explorer.key = DEFAULT_OPEN_PROJECT_EXPLORER_KEY.to_string();
         }
+        // macOS 上旧默认值 alt+p 不适用（Option+P 会输入特殊字符），
+        // 视为未自定义，迁移到 ctrl+p。
+        if cfg!(target_os = "macos") && self.cycle_api_profile.key == "alt+p" {
+            self.cycle_api_profile.key = DEFAULT_CYCLE_API_PROFILE_KEY.to_string();
+        }
+        if !is_valid_key(&self.cycle_api_profile.key) {
+            self.cycle_api_profile.key = DEFAULT_CYCLE_API_PROFILE_KEY.to_string();
+        }
     }
 }
 
-/// 默认值常量：6 个快捷键各自默认 key + enabled=true + foreground_only=true。
-/// 与 DEFAULT_*_KEY 常量保持一致。
-const DEFAULT_KEYBOARD_SHORTCUTS_VALUE: &str = "{\"cancelSession\":{\"key\":\"escape\",\"enabled\":true,\"foregroundOnly\":true},\"openSearch\":{\"key\":\"mod+f\",\"enabled\":true,\"foregroundOnly\":true},\"openMemo\":{\"key\":\"mod+b\",\"enabled\":true,\"foregroundOnly\":true},\"openTodo\":{\"key\":\"mod+t\",\"enabled\":true,\"foregroundOnly\":true},\"cycleProject\":{\"key\":\"mod+backtick\",\"enabled\":true,\"foregroundOnly\":true},\"openProjectExplorer\":{\"key\":\"mod+d\",\"enabled\":true,\"foregroundOnly\":true}}";
+/// 默认值：7 个快捷键各自默认 key + enabled=true + foreground_only=true。
+/// 与 DEFAULT_*_KEY 常量保持一致；cycleApiProfile 的 key 平台相关，动态构造。
+fn default_keyboard_shortcuts_value() -> String {
+    format!(
+        r#"{{"cancelSession":{{"key":"escape","enabled":true,"foregroundOnly":true}},"openSearch":{{"key":"mod+f","enabled":true,"foregroundOnly":true}},"openMemo":{{"key":"mod+b","enabled":true,"foregroundOnly":true}},"openTodo":{{"key":"mod+t","enabled":true,"foregroundOnly":true}},"cycleProject":{{"key":"mod+backtick","enabled":true,"foregroundOnly":true}},"openProjectExplorer":{{"key":"mod+d","enabled":true,"foregroundOnly":true}},"cycleApiProfile":{{"key":"{DEFAULT_CYCLE_API_PROFILE_KEY}","enabled":true,"foregroundOnly":true}}}}"#
+    )
+}
 
 pub fn get_keyboard_shortcuts_settings(database_path: &Path) -> Result<KeyboardShortcutsSettings> {
     let raw_value =
@@ -180,7 +200,7 @@ pub fn seed_default_keyboard_shortcuts(connection: &Connection) -> rusqlite::Res
             database::create_snowflake_id(),
             KEYBOARD_SHORTCUTS_SETTING_NAME,
             KEYBOARD_SHORTCUTS_SETTING_CODE,
-            DEFAULT_KEYBOARD_SHORTCUTS_VALUE,
+            default_keyboard_shortcuts_value(),
         ),
     )?;
 

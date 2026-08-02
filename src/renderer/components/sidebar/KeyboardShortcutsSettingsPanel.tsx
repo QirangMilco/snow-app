@@ -18,12 +18,14 @@ import {
   SHORTCUT_META,
   eventToKey,
   findConflicts,
+  isMacOS,
   keyToDisplay,
 } from "../../utils/shortcutUtils";
 
 /**
  * 默认按键绑定：用于"恢复默认"操作。
  * 与 Rust seed 默认值保持一致。
+ * cycleApiProfile 平台相关：macOS 用 Ctrl+P，其他平台用 Alt+P。
  */
 const DEFAULT_KEYS: Record<KeyboardShortcutAction, string> = {
   cancelSession: "escape",
@@ -32,6 +34,7 @@ const DEFAULT_KEYS: Record<KeyboardShortcutAction, string> = {
   openTodo: "mod+t",
   cycleProject: "mod+backtick",
   openProjectExplorer: "mod+d",
+  cycleApiProfile: isMacOS() ? "ctrl+p" : "alt+p",
 };
 
 type KeyboardShortcutsSettingsPanelProps = {

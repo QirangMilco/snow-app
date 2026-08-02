@@ -15,6 +15,7 @@ import { useI18n } from "../i18n";
 import { GitPanelContent } from "./rightPanel/GitPanelContent";
 import { DiffViewer } from "./rightPanel/DiffViewer";
 import { FileDiffPreview } from "./common/FileDiffPreview";
+import { RightPanelTabContextMenu } from "./rightPanel/RightPanelTabContextMenu";
 import {
   useBrowserMcpCommandBridge,
   type BrowserMcpTabCallbacks,
@@ -123,6 +124,12 @@ export const RightPanel = forwardRef<RightPanelRef, RightPanelProps>(
     ]);
     const [activeTabId, setActiveTabId] = useState<string>(GIT_TAB_ID);
     const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
+    // tab 右键菜单：记录触发位置与目标 tab（Git 固定 tab 无关闭项）。
+    const [tabContextMenu, setTabContextMenu] = useState<{
+      x: number;
+      y: number;
+      tabId: string;
+    } | null>(null);
 
     const handleOpenDiffTab = useCallback<OpenDiffTabCallback>(
       (file, diffResult, diffLoading) => {
@@ -730,6 +737,15 @@ export const RightPanel = forwardRef<RightPanelRef, RightPanelProps>(
                     activeTabId === tab.id ? "active" : ""
                   }`}
                   onClick={() => setActiveTabId(tab.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setActiveTabId(tab.id);
+                    setTabContextMenu({
+                      x: event.clientX,
+                      y: event.clientY,
+                      tabId: tab.id,
+                    });
+                  }}
                 >
                   {getTabFileIcon(tab)}
                   <span className="right-panel-tab-title" title={tab.title}>
@@ -771,6 +787,26 @@ export const RightPanel = forwardRef<RightPanelRef, RightPanelProps>(
             </div>
           ))}
         </div>
+        {tabContextMenu && (
+          <RightPanelTabContextMenu
+            x={tabContextMenu.x}
+            y={tabContextMenu.y}
+            isClosable={tabContextMenu.tabId !== GIT_TAB_ID}
+            onNewTerminal={() => {
+              setTabContextMenu(null);
+              handleOpenTerminalTab(activeDirectory?.path ?? "");
+            }}
+            onNewBrowser={() => {
+              setTabContextMenu(null);
+              handleOpenBrowserTab();
+            }}
+            onCloseTab={() => {
+              setTabContextMenu(null);
+              handleCloseTab(tabContextMenu.tabId);
+            }}
+            onClose={() => setTabContextMenu(null)}
+          />
+        )}
       </aside>
     );
   }

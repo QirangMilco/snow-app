@@ -491,6 +491,12 @@ export const loadNativeBridge = (): NativeBridge => {
             "Rust native bridge is required to update conversation emoji"
           )
         ),
+      updateConversationApiProfile: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to update conversation API profile"
+          )
+        ),
       deleteConversation: () =>
         Promise.reject(
           new Error("Rust native bridge is required to delete conversation")

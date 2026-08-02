@@ -13,6 +13,7 @@ import type {
   McpProjectToolStatus,
 } from "../../../../preload";
 import { useI18n } from "../../../i18n";
+import { formatMcpError } from "../../sidebar/mcpSettings/mcpErrorMessages";
 import { Modal } from "../../common/Modal";
 
 type ProjectMcpPanelProps = {
@@ -137,7 +138,7 @@ export const ProjectMcpPanel = ({
         if (catalogGenerationRef.current === generation) {
           setToolErrorsByServerId((current) => ({
             ...current,
-            [server.id]: error instanceof Error ? error.message : String(error),
+            [server.id]: formatMcpError(error, t),
           }));
         }
       } finally {

@@ -9,12 +9,29 @@ import {
 } from "electron";
 import type { NativeBridge } from "../../native/types";
 import { markCloseConfirmed } from "../../app/mainWindow";
+import { refreshTrayStats } from "../../app/tray";
 import { clearWindowState } from "../../app/windowState";
 
 export const registerWindowHandlers = (_native: NativeBridge): void => {
   // ===== Window Controls (Windows custom titlebar) =====
   ipcMain.handle("window:minimize", (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+
+  // 关闭提醒中的"最小化"选项：隐藏窗口而非退出。
+  // Windows/Linux 隐藏到系统托盘；macOS 同时移除 Dock 图标（仅保留菜单栏托盘），
+  // 从托盘恢复时（tray.ts showMainWindow）会重新显示 Dock 图标。
+  ipcMain.handle("window:hide-to-tray", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) {
+      return;
+    }
+    win.hide();
+    if (process.platform === "darwin") {
+      app.dock?.hide();
+    }
+    // 隐藏后立即刷新托盘悬停信息，保证用户第一时间看到最新状态。
+    refreshTrayStats();
   });
 
   ipcMain.handle("window:maximize-toggle", (event) => {

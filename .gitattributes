@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# 行尾规范：仓库统一使用 LF（Unix）换行。
+# Windows 编辑器（记事本/部分 IDE）默认把文本文件保存为 CRLF，
+# 会导致 git 把整个文件当作"每行都改过"，产生 4 万+ 行假 diff
+# （例如 styles.css 曾被保存为 CRLF）。此文件强制 checkout 时转回 LF。
+# ---------------------------------------------------------------------------
+* text=auto
+
+# 源码与配置文件强制 LF
+*.css text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.html text eol=lf
+*.cjs text eol=lf
+
+# 二进制文件不进行行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.pdf binary

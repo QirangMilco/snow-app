@@ -9,6 +9,7 @@ import {
 import { BrainCircuit } from "lucide-react";
 import type { ApiConfigRecord, Model } from "../../../../preload";
 import { useI18n } from "../../../i18n";
+import { shortcutEvents } from "../../shortcutEvents";
 import {
   DEFAULT_TEXTAREA_ROWS,
   DEFAULT_THINKING_VALUE,
@@ -19,9 +20,13 @@ import {
   getThinkingValueFromConfig,
   normalizeRequestMethod,
   toConfigUpdatePayload,
-  toModelUpdatePayload,
 } from "./configThinking";
-import type { ChatInputActions, ChatInputState } from "./types";
+import type {
+  ChatInputActions,
+  ChatInputSendOptions,
+  ChatInputState,
+  ModelMenuView,
+} from "./types";
 import {
   createChangeChipHtml,
   createChipHtml,
@@ -32,7 +37,7 @@ import {
 } from "./fileTagUtils";
 type UseChatInputControllerParams = {
   conversationId?: string;
-  onSend?: (message: string, options: { model?: string }) => void;
+  onSend?: (message: string, options: ChatInputSendOptions) => void;
   isStreaming?: boolean;
   isAborting?: boolean;
   onAbort?: () => void;
@@ -75,6 +80,12 @@ export const useChatInputController = ({
   const [manualValue, setManualValue] = useState("");
   const [runtimeApiConfig, setRuntimeApiConfig] =
     useState<ApiConfigRecord | null>(null);
+  // All available API config profiles. The selected one is conversation-
+  // scoped: switching it here never mutates the global profile settings.
+  const [apiConfigs, setApiConfigs] = useState<ApiConfigRecord[]>([]);
+  const [selectedApiProfile, setSelectedApiProfile] = useState<string>("");
+  const [modelMenuView, setModelMenuView] = useState<ModelMenuView>("root");
+  const [isSubAgentConversation, setIsSubAgentConversation] = useState(false);
   const [isLoadingApiConfig, setIsLoadingApiConfig] = useState(true);
   const [thinkingValue, setThinkingValue] = useState(DEFAULT_THINKING_VALUE);
   const [isSavingThinking, setIsSavingThinking] = useState(false);
@@ -84,6 +95,9 @@ export const useChatInputController = ({
   const labels = useMemo(
     () => ({
       selectModel: t("chat.selectModel", { defaultValue: "Select model" }),
+      selectApiProfile: t("chat.selectApiProfile", {
+        defaultValue: "Provider",
+      }),
       loadModelsError: t("chat.loadModelsError", {
         defaultValue: "Failed to load models",
       }),
@@ -129,8 +143,17 @@ export const useChatInputController = ({
           return;
         }
 
+        setApiConfigs(configs);
+
+        // Resolve the conversation-scoped profile:
+        //   - sub-agent conversations always use their agent's configProfile
+        //   - main conversations use their persisted apiProfileName binding
+        //   - a brand-new conversation (no conversationId yet) follows the
+        //     global active profile until the user switches it in the input
         let requestedProfile = "";
+        let subAgentConversation = false;
         if (conversation?.conversationType === "sub_agent") {
+          subAgentConversation = true;
           const subAgentId = conversation.subAgentId.trim();
           if (!subAgentId) {
             throw new Error("Sub-agent configuration is not available");
@@ -146,22 +169,43 @@ export const useChatInputController = ({
             throw new Error(`Sub-agent configuration not found: ${subAgentId}`);
           }
           requestedProfile = subAgentConfig.configProfile.trim();
+        } else {
+          requestedProfile = conversation?.apiProfileName?.trim() ?? "";
         }
+        setIsSubAgentConversation(subAgentConversation);
 
-        const runtimeConfig = requestedProfile
-          ? configs.find((config) => config.profileName === requestedProfile) ??
-            null
-          : configs.find((config) => config.isActive) ?? configs[0] ?? null;
+        // Sub-agent conversations are strictly bound to the agent's
+        // configProfile: if the profile is missing, fail fast instead of
+        // silently routing to the global active profile (which could send a
+        // sub-agent task to the wrong provider/model).
+        const runtimeConfig = subAgentConversation
+          ? (configs.find(
+              (config) => config.profileName === requestedProfile
+            ) ?? null)
+          : requestedProfile
+            ? (configs.find(
+                (config) => config.profileName === requestedProfile
+              ) ??
+              configs.find((config) => config.isActive) ??
+              configs[0] ??
+              null)
+            : configs.find((config) => config.isActive) ?? configs[0] ?? null;
         if (!runtimeConfig) {
           throw new Error(
             requestedProfile
-              ? `Sub-agent API profile is not available: ${requestedProfile}`
+              ? `API profile is not available: ${requestedProfile}`
               : "No API configuration found"
           );
         }
 
+        setSelectedApiProfile(runtimeConfig.profileName);
         setRuntimeApiConfig(runtimeConfig);
-        setSelectedModel(runtimeConfig.advancedModel || "");
+        // Prefer the model remembered on the conversation; fall back to the
+        // profile's default advanced model for new conversations.
+        const rememberedModel = conversation?.model?.trim() ?? "";
+        setSelectedModel(
+          rememberedModel || runtimeConfig.advancedModel || ""
+        );
         setThinkingValue(getThinkingValueFromConfig(runtimeConfig));
       } catch (error) {
         if (cancelled) {
@@ -173,6 +217,7 @@ export const useChatInputController = ({
             ? error.message
             : "Failed to load API configuration";
         setRuntimeApiConfig(null);
+        setSelectedApiProfile("");
         setSelectedModel("");
         setThinkingValue(DEFAULT_THINKING_VALUE);
         setModelError(message);
@@ -247,6 +292,13 @@ export const useChatInputController = ({
       setIsManualMode(false);
     }
   }, [isStreaming, isModelMenuOpen]);
+
+  // 菜单关闭时重置二级视图
+  useEffect(() => {
+    if (!isModelMenuOpen) {
+      setModelMenuView("root");
+    }
+  }, [isModelMenuOpen]);
 
   useEffect(() => {
     if (!isModelMenuOpen) {
@@ -409,7 +461,14 @@ export const useChatInputController = ({
       return;
     }
 
-    onSend?.(trimmed, { model: selectedModel || undefined });
+    // The selected profile is conversation-scoped: for a brand-new
+    // conversation it is carried on the request so the backend binds the
+    // created conversation to this provider; for existing conversations the
+    // binding is already persisted and the backend resolves it automatically.
+    onSend?.(trimmed, {
+      model: selectedModel || undefined,
+      apiProfile: selectedApiProfile || undefined,
+    });
     setValue("");
 
     if (textareaRef.current) {
@@ -419,7 +478,7 @@ export const useChatInputController = ({
         adjustHeight();
       });
     }
-  }, [adjustHeight, onSend, selectedModel, value]);
+  }, [adjustHeight, onSend, selectedModel, selectedApiProfile, value]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -445,25 +504,12 @@ export const useChatInputController = ({
       setSelectedModel(modelId);
       setIsModelMenuOpen(false);
       setIsManualMode(false);
-
-      if (!runtimeApiConfig) {
-        return;
-      }
-
-      try {
-        const updatedConfigs = await window.snow.upsertApiConfig(
-          toModelUpdatePayload(runtimeApiConfig, modelId)
-        );
-        const nextRuntimeConfig =
-          updatedConfigs.find(
-            (config) => config.profileName === runtimeApiConfig.profileName
-          ) ?? null;
-        setRuntimeApiConfig(nextRuntimeConfig);
-      } catch {
-        // 保存失败时保留用户选择，不回退
-      }
+      // Conversation-scoped model selection: the model is remembered on the
+      // conversation row by the backend on the next exchange. It intentionally
+      // does NOT mutate the profile's global advanced_model — that default
+      // stays editable in the API settings panel.
     },
-    [runtimeApiConfig]
+    []
   );
 
   const handleOpenManualMode = useCallback(() => {
@@ -478,24 +524,7 @@ export const useChatInputController = ({
     }
     setIsManualMode(false);
     setIsModelMenuOpen(false);
-
-    if (!runtimeApiConfig || !trimmed) {
-      return;
-    }
-
-    try {
-      const updatedConfigs = await window.snow.upsertApiConfig(
-        toModelUpdatePayload(runtimeApiConfig, trimmed)
-      );
-      const nextRuntimeConfig =
-        updatedConfigs.find(
-          (config) => config.profileName === runtimeApiConfig.profileName
-        ) ?? null;
-      setRuntimeApiConfig(nextRuntimeConfig);
-    } catch {
-      // 保存失败时保留用户选择，不回退
-    }
-  }, [manualValue, runtimeApiConfig]);
+  }, [manualValue]);
 
   const handleManualKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -526,6 +555,65 @@ export const useChatInputController = ({
       return nextOpen;
     });
   }, [loadModels]);
+
+  // Switch the conversation-scoped API profile. Persists the binding on the
+  // conversation row so it survives reloads; for a brand-new conversation the
+  // choice is kept locally and carried on the first request instead.
+  const handleSelectApiProfile = useCallback(
+    async (profileName: string) => {
+      const nextConfig = apiConfigs.find(
+        (config) => config.profileName === profileName
+      );
+      if (!nextConfig) {
+        return;
+      }
+
+      setSelectedApiProfile(profileName);
+      setIsModelMenuOpen(false);
+      setModelMenuView("root");
+      setRuntimeApiConfig(nextConfig);
+      // Reset the model picker to the new provider's default.
+      setModels([]);
+      setModelError(null);
+      setSelectedModel(nextConfig.advancedModel || "");
+      setThinkingValue(getThinkingValueFromConfig(nextConfig));
+
+      if (conversationId && !isSubAgentConversation) {
+        try {
+          await window.snow.updateConversationApiProfile(
+            conversationId,
+            profileName
+          );
+        } catch (error) {
+          setModelError(
+            error instanceof Error
+              ? error.message
+              : "Failed to update conversation API profile"
+          );
+        }
+      }
+    },
+    [apiConfigs, conversationId, isSubAgentConversation]
+  );
+
+  // Open the API profile picker (a sub-view of the model menu). Driven by the
+  // Alt+P / Ctrl+P shortcut; no-op while a conversation is streaming, for
+  // sub-agent conversations (their provider is fixed by the agent config),
+  // or when no API profile exists.
+  const handleOpenApiProfileMenu = useCallback((): void => {
+    if (isStreaming || isSubAgentConversation || apiConfigs.length === 0) {
+      return;
+    }
+    setIsModelMenuOpen(true);
+    setModelMenuView("apiProfile");
+  }, [apiConfigs.length, isStreaming, isSubAgentConversation]);
+
+  useEffect(() => {
+    return shortcutEvents.on(
+      "open-api-profile-menu",
+      handleOpenApiProfileMenu
+    );
+  }, [handleOpenApiProfileMenu]);
 
   const requestMethod = normalizeRequestMethod(runtimeApiConfig?.requestMethod);
   const thinkingOptions = THINKING_OPTIONS_BY_METHOD[requestMethod];
@@ -588,6 +676,10 @@ export const useChatInputController = ({
   return {
     value,
     textareaRef,
+    apiConfigs,
+    selectedApiProfile,
+    modelMenuView,
+    isSubAgentConversation,
     models,
     selectedModel,
     displayModel,
@@ -621,6 +713,9 @@ export const useChatInputController = ({
     handleManualKeyDown,
     handleRetryFetchModels,
     handleToggleModelMenu,
+    setModelMenuView,
+    handleOpenApiProfileMenu,
+    handleSelectApiProfile,
     handleSelectThinking,
     restoreContent,
   };

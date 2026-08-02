@@ -393,7 +393,8 @@ export type KeyboardShortcutAction =
   | "openMemo"
   | "openTodo"
   | "cycleProject"
-  | "openProjectExplorer";
+  | "openProjectExplorer"
+  | "cycleApiProfile";
 
 export type KeyboardShortcutConfig = {
   /**
@@ -413,4 +414,5 @@ export type KeyboardShortcutsSettings = {
   openTodo: KeyboardShortcutConfig;
   cycleProject: KeyboardShortcutConfig;
   openProjectExplorer: KeyboardShortcutConfig;
+  cycleApiProfile: KeyboardShortcutConfig;
 };

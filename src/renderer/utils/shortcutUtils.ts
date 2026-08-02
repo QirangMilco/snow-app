@@ -28,13 +28,17 @@ const normalizeKeyName = (rawKey: string): string => {
  *
  * 规则：
  * - 主修饰键统一记为 `mod`（macOS=Cmd，其他=Ctrl）
+ * - Alt 修饰键记为 `alt`（如 `alt+p`）
+ * - macOS 的 Ctrl 修饰键记为 `ctrl`（如 `ctrl+p`）
  * - 单键（如 Escape）无修饰键
- * - 忽略 Shift/Alt 作为独立修饰（仅支持 mod+主键或单键两种形式）
+ * - 仅支持 mod/alt/ctrl 三类修饰组合，忽略纯 Shift
  *
- * 例如 Ctrl+F → "mod+f"，Escape → "escape"，Cmd+` → "mod+backtick"
+ * 例如 Ctrl+F → "mod+f"，Alt+P → "alt+p"，macOS Ctrl+P → "ctrl+p"，
+ * Escape → "escape"
  */
 export const eventToKey = (event: KeyboardEvent): string | null => {
-  const mod = isMacOS() ? event.metaKey : event.ctrlKey;
+  const isMac = isMacOS();
+  const mod = isMac ? event.metaKey : event.ctrlKey;
   // 纯修饰键按下不可绑定
   if (event.key === "Control" || event.key === "Meta" || event.key === "Shift" || event.key === "Alt") {
     return null;
@@ -47,12 +51,19 @@ export const eventToKey = (event: KeyboardEvent): string | null => {
     return "escape";
   }
 
-  // 其余按键必须有 mod 修饰，避免与普通输入冲突
-  if (!mod) {
-    return null;
+  // 其余按键必须有 mod、ctrl 或 alt 修饰，避免与普通输入冲突
+  if (mod) {
+    return `mod+${main}`;
+  }
+  // macOS 上 Ctrl 与 Cmd 是独立修饰键，单独记录
+  if (isMac && event.ctrlKey) {
+    return `ctrl+${main}`;
+  }
+  if (event.altKey) {
+    return `alt+${main}`;
   }
 
-  return `mod+${main}`;
+  return null;
 };
 
 /**
@@ -70,6 +81,10 @@ export const keyToDisplay = (key: string): string => {
   for (const part of parts) {
     if (part === "mod") {
       segments.push(modLabel);
+    } else if (part === "alt") {
+      segments.push("Alt");
+    } else if (part === "ctrl") {
+      segments.push("Ctrl");
     } else if (part === "backtick") {
       segments.push("`");
     } else if (part === "escape") {
@@ -98,19 +113,26 @@ const isModalOpen = (): boolean => {
 /**
  * 判断 KeyboardEvent 是否匹配给定的规范化 key。
  *
- * macOS 上 mod 对应 metaKey，其他平台对应 ctrlKey。
+ * macOS 上 mod 对应 metaKey，其他平台对应 ctrlKey；`alt` 对应 altKey，
+ * `ctrl` 对应 ctrlKey（主要用于 macOS 上的 Ctrl+P）。
  * ESC 仅在无 Modal 打开时触发，避免与 Modal ESC 关闭冲突。
  */
 export const matchKey = (event: KeyboardEvent, key: string): boolean => {
   const mod = isMacOS() ? event.metaKey : event.ctrlKey;
   const parts = key.split("+");
   const hasMod = parts.includes("mod");
-  const mainPart = parts.find((p) => p !== "mod");
+  const hasAlt = parts.includes("alt");
+  const hasCtrl = parts.includes("ctrl");
+  const mainPart = parts.find(
+    (p) => p !== "mod" && p !== "alt" && p !== "ctrl"
+  );
 
   if (mainPart === undefined) return false;
 
   // 修饰键状态必须精确匹配
   if (hasMod !== mod) return false;
+  if (hasAlt !== event.altKey) return false;
+  if (hasCtrl !== event.ctrlKey) return false;
 
   const main = normalizeKeyName(event.key);
 
@@ -133,7 +155,7 @@ export const shouldPreventDefault = (key: string): boolean => {
   return key !== "escape";
 };
 
-/** 6 个快捷键动作的有序列表。 */
+/** 7 个快捷键动作的有序列表。 */
 export const SHORTCUT_ACTIONS: KeyboardShortcutAction[] = [
   "cancelSession",
   "openSearch",
@@ -141,6 +163,7 @@ export const SHORTCUT_ACTIONS: KeyboardShortcutAction[] = [
   "openTodo",
   "cycleProject",
   "openProjectExplorer",
+  "cycleApiProfile",
 ];
 
 /**
@@ -175,6 +198,10 @@ export const SHORTCUT_META: Record<KeyboardShortcutAction, ShortcutMeta> = {
   openProjectExplorer: {
     descKey: "settings.shortcutOpenExplorer",
     descDefault: "Open current project explorer",
+  },
+  cycleApiProfile: {
+    descKey: "settings.shortcutCycleApiProfile",
+    descDefault: "Open API provider picker",
   },
 };
 

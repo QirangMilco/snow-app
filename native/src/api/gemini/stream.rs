@@ -135,7 +135,7 @@ pub(super) async fn collect_gemini_stream(
                             ThreadsafeFunctionCallMode::NonBlocking,
                         );
 
-                        match wait_before_retry(retry_options, cancel_token).await {
+                        match wait_before_retry(retry_options, cancel_token, attempt).await {
                             Ok(()) => { attempt += 1; continue; }
                             Err(e) => return Err(e),
                         }
@@ -164,7 +164,7 @@ pub(super) async fn collect_gemini_stream(
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
 
-                    match wait_before_retry(retry_options, cancel_token).await {
+                    match wait_before_retry(retry_options, cancel_token, attempt).await {
                         Ok(()) => { attempt += 1; continue; }
                         Err(e) => return Err(e),
                     }
@@ -360,7 +360,7 @@ pub(super) async fn collect_gemini_stream(
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
 
-            match wait_before_retry(retry_options, cancel_token).await {
+            match wait_before_retry(retry_options, cancel_token, attempt).await {
                 Ok(()) => {
                     attempt += 1;
                     continue;

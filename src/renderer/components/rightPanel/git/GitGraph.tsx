@@ -4,6 +4,10 @@ import { useI18n } from "../../../i18n";
 
 type GitGraphProps = {
   repoPath: string;
+  /** Bump to force a full reload of the history from the first page. */
+  refreshKey?: number;
+  /** Fired when an initial load (mount or external refresh) settles. */
+  onLoaded?: () => void;
 };
 
 // --- Types ---
@@ -35,6 +39,72 @@ const LANE_COLORS = [
   "#14b8a6",
 ];
 
+// --- Ordering ---
+
+/**
+ * Reorders commits so the first-parent chain is laid out first.
+ *
+ * `git log` guarantees children appear before parents, but its default
+ * date ordering can still list a merge's SECOND-parent branch before the
+ * first parent's continuation (side branches are often newer). The
+ * incremental lane algorithm assigns lanes as rows are consumed, so such
+ * a side branch colonizes the early lanes; when the mainline later
+ * reaches the same commits it bends into a side lane and the main axis
+ * ends up red instead of blue.
+ *
+ * This is Kahn's topological sort with a LIFO worklist: children always
+ * precede parents, and among the ready commits the one that became ready
+ * most recently wins — i.e. "keep following the first parent before
+ * backtracking into side branches". The newest tip pops first, so the
+ * whole main axis lands in lane 0 (blue) and branches fill the remaining
+ * lanes.
+ */
+function reorderFirstParentFirst(commits: GitLogEntry[]): GitLogEntry[] {
+  if (commits.length < 2) {
+    return commits;
+  }
+
+  const byHash = new Map<string, GitLogEntry>();
+  const childCount = new Map<string, number>();
+  for (const commit of commits) {
+    byHash.set(commit.hash, commit);
+    childCount.set(commit.hash, 0);
+  }
+  for (const commit of commits) {
+    for (const parent of commit.parents) {
+      if (byHash.has(parent)) {
+        childCount.set(parent, childCount.get(parent)! + 1);
+      }
+    }
+  }
+
+  // Seeds = commits no loaded row references (ref tips). Pushed in reverse
+  // so the newest one (row 0) pops first.
+  const stack: GitLogEntry[] = [];
+  for (let i = commits.length - 1; i >= 0; i--) {
+    if (childCount.get(commits[i].hash) === 0) {
+      stack.push(commits[i]);
+    }
+  }
+
+  const ordered: GitLogEntry[] = [];
+  while (stack.length > 0) {
+    const commit = stack.pop()!;
+    ordered.push(commit);
+    // Push parents in reverse so the FIRST parent pops next, keeping the
+    // first-parent chain contiguous.
+    for (let i = commit.parents.length - 1; i >= 0; i--) {
+      const remaining = childCount.get(commit.parents[i]);
+      if (remaining === undefined) continue; // parent beyond the loaded window
+      if (remaining === 1) {
+        stack.push(byHash.get(commit.parents[i])!);
+      }
+      childCount.set(commit.parents[i], remaining - 1);
+    }
+  }
+  return ordered;
+}
+
 // --- Lane computation ---
 
 function computeGraph(commits: GitLogEntry[]): {
@@ -44,6 +114,21 @@ function computeGraph(commits: GitLogEntry[]): {
   const hashToLane = new Map<string, number>();
   const lanes: (string | null)[] = [];
   const rows: GraphRow[] = [];
+
+  // The first-parent chain of the newest commit is the "main axis" and
+  // must stay in lane 0. A side branch can reference a mainline commit
+  // before the mainline reaches it (the branch's tail re-joins the
+  // mainline deep down), parking it in a side lane; the next mainline row
+  // that continues the chain then reclaims it below.
+  const commitByHash = new Map(commits.map((c) => [c.hash, c]));
+  const mainline = new Set<string>();
+  for (
+    let cur: GitLogEntry | undefined = commits[0];
+    cur;
+    cur = cur.parents[0] ? commitByHash.get(cur.parents[0]) : undefined
+  ) {
+    mainline.add(cur.hash);
+  }
 
   for (const commit of commits) {
     let dotLane: number;
@@ -76,6 +161,17 @@ function computeGraph(commits: GitLogEntry[]): {
       let parentLane: number;
       if (hashToLane.has(parentHash)) {
         parentLane = hashToLane.get(parentHash)!;
+        // The dot is on the main axis but its first parent is parked in a
+        // side lane (a branch tail referenced it earlier). Reclaim the
+        // parent into lane 0 so the main axis stays straight; the parked
+        // lane's line merges into lane 0 via a curve and the freed slot is
+        // released for reuse.
+        if (isFirstParent && mainline.has(commit.hash) && parentLane !== dotLane) {
+          curves.push({ from: parentLane, to: dotLane });
+          lanes[parentLane] = null;
+          hashToLane.set(parentHash, dotLane);
+          parentLane = dotLane;
+        }
       } else {
         if (isFirstParent) {
           parentLane = dotLane;
@@ -133,7 +229,11 @@ function getCommitFileLabel(status: string): string {
 
 // --- Component ---
 
-export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
+export const GitGraph = ({
+  repoPath,
+  refreshKey,
+  onLoaded,
+}: GitGraphProps): React.JSX.Element => {
   const { t } = useI18n();
   const [commits, setCommits] = useState<GitLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -179,7 +279,8 @@ export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
     [repoPath]
   );
 
-  // Initial load + reset when repoPath changes.
+  // Initial load + reset when repoPath changes or an external refresh
+  // (refreshKey bump) is requested.
   // Uses a cancelled flag to survive React Strict Mode double-invoke.
   useEffect(() => {
     let cancelled = false;
@@ -217,6 +318,7 @@ export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
         if (!cancelled) {
           loadingRef.current = false;
           setIsLoading(false);
+          onLoaded?.();
         }
       }
     };
@@ -227,7 +329,7 @@ export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
       cancelled = true;
       loadingRef.current = false;
     };
-  }, [repoPath]);
+  }, [repoPath, refreshKey, onLoaded]);
 
   const loadMore = useCallback(() => {
     if (loadingRef.current || !hasMore) return;
@@ -292,7 +394,10 @@ export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
     };
   }, [selectedHash, repoPath]);
 
-  const { rows, maxLanes } = useMemo(() => computeGraph(commits), [commits]);
+  const { rows, maxLanes } = useMemo(
+    () => computeGraph(reorderFirstParentFirst(commits)),
+    [commits]
+  );
   const graphWidth = Math.max(maxLanes * LANE_WIDTH, LANE_WIDTH);
 
   const handleRowClick = (hash: string) => {
@@ -441,7 +546,30 @@ export const GitGraph = ({ repoPath }: GitGraphProps): React.JSX.Element => {
               </div>
             </div>
             {isSelected && (
-              <div className="git-graph-detail">
+              <div
+                className="git-graph-detail"
+                style={{ paddingLeft: graphWidth + 20 }}
+              >
+                {/* Extend the lanes that continue below this row through the
+                    expanded detail area so the graph columns stay visually
+                    continuous instead of being cut off by the detail panel. */}
+                <svg
+                  className="git-graph-detail-lines"
+                  width={graphWidth}
+                  height="100%"
+                >
+                  {bottomLines.map((lane) => (
+                    <line
+                      key={`detail-${lane}`}
+                      x1={lane * LANE_WIDTH + LANE_WIDTH / 2}
+                      y1="0%"
+                      x2={lane * LANE_WIDTH + LANE_WIDTH / 2}
+                      y2="100%"
+                      stroke={LANE_COLORS[lane % LANE_COLORS.length]}
+                      strokeWidth={LINE_WIDTH}
+                    />
+                  ))}
+                </svg>
                 {commitFiles.length > 0 ? (
                   <div className="git-graph-detail-files">
                     {commitFiles.map((file, i) => (

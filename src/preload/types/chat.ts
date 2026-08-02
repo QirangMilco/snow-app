@@ -5,6 +5,7 @@ export type ChatConversationRecord = {
   lastMessagePreview: string;
   messageCount: number;
   model: string;
+  apiProfileName: string;
   status: string;
   directoryId: string;
   forkedFromConversationId: string;

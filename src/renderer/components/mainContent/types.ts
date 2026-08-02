@@ -5,6 +5,7 @@ export type MainContentView =
   | "codebase-settings"
   | "system-prompt-settings"
   | "feature-prompts-settings"
+  | "personalization-settings"
   | "custom-headers-settings"
   | "mcp-settings"
   | "skills-settings"

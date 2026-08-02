@@ -72,6 +72,13 @@ const BuiltinServicesPanel = lazy(() =>
     default: m.BuiltinServicesPanel,
   }))
 );
+const PersonalizationSettingsPanel = lazy(() =>
+  import("./sidebar/personalization/PersonalizationSettingsPanel").then(
+    (m) => ({
+      default: m.PersonalizationSettingsPanel,
+    })
+  )
+);
 const TerminalSettingsPanel = lazy(() =>
   import("./sidebar/TerminalSettingsPanel").then((m) => ({
     default: m.TerminalSettingsPanel,
@@ -142,6 +149,8 @@ export const MainContent = ({
             <FeaturePromptsSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "builtin-services-settings" ? (
             <BuiltinServicesPanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "personalization-settings" ? (
+            <PersonalizationSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "custom-headers-settings" ? (
             <CustomHeadersSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "mcp-settings" ? (

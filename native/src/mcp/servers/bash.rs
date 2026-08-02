@@ -185,6 +185,10 @@ impl McpService for BashService {
                         "type": "boolean",
                         "description": "Set to true if the command requires user input (e.g., password prompts, y/n confirmations, interactive installers). Default: false.",
                         "default": false
+                    },
+                    "sessionId": {
+                        "type": "string",
+                        "description": "System-injected session identifier (do not supply). Exposed to the child process as SNOW_SESSION_ID so Trellis scripts can track the active task."
                     }
                 },
                 "required": ["command", "description", "workingDirectory", "timeout"]
@@ -257,6 +261,16 @@ impl BashService {
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_TIMEOUT_MS);
         let executed_at = chrono::Local::now().to_rfc3339();
+
+        // Optional session identity injected by the renderer (never supplied by
+        // the model). Exposed to child processes as SNOW_SESSION_ID /
+        // TRELLIS_CONTEXT_ID so Trellis scripts (active_task.py) can resolve
+        // the current session — matching the Snow CLI contract.
+        let session_id = args
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().to_string());
 
         // When isInteractive is true the command expects to receive user
         // input at runtime (password prompts, y/n confirmations, etc.).
@@ -356,6 +370,16 @@ impl BashService {
             .kill_on_drop(true)
             .env("LANG", "en_US.UTF-8")
             .env("LC_ALL", "en_US.UTF-8");
+
+        // Snow platform contract: expose the current session identity and
+        // workspace to child processes so Trellis scripts can track the active
+        // task per session (see .trellis/scripts/common/active_task.py).
+        if let Some(ref session_id) = session_id {
+            process.env("SNOW_SESSION_ID", session_id);
+            process.env("TRELLIS_CONTEXT_ID", format!("snow-{session_id}"));
+        }
+        process.env("SNOW_PLATFORM", "snow");
+        process.env("SNOW_CWD", &working_directory);
 
         if let Some(ref path) = login_path {
             process.env("PATH", path);

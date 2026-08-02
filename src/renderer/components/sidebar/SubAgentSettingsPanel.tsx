@@ -4,6 +4,7 @@ import type { ApiConfigRecord, SubAgentConfigRecord } from "../../../preload";
 import { AutoDismissNotice } from "../AutoDismissNotice";
 import { Modal } from "../common/Modal";
 import { useI18n } from "../../i18n";
+import { formatMcpError } from "./mcpSettings/mcpErrorMessages";
 import { SubAgentEditor, SubAgentEditorActions } from "./subAgent/SubAgentEditor";
 import { SubAgentList } from "./subAgent/SubAgentList";
 import { SubAgentSummary } from "./subAgent/SubAgentSummary";
@@ -108,13 +109,7 @@ export function SubAgentSettingsPanel({
       }
     } catch (catalogError) {
       if (toolCatalogGenerationRef.current === generation) {
-        setToolCatalogError(
-          catalogError instanceof Error
-            ? catalogError.message
-            : t("settings.subAgentToolsLoadError", {
-                defaultValue: "Failed to load project MCP tools",
-              })
-        );
+        setToolCatalogError(formatMcpError(catalogError, t));
       }
     } finally {
       if (toolCatalogGenerationRef.current === generation) {

@@ -1,4 +1,4 @@
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, Eye, Loader2, Square } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -12,8 +12,10 @@ import { useI18n } from "../../i18n";
 import { ChatInput } from "./ChatInput";
 import { EmptyChatGreeting } from "./EmptyChatGreeting";
 import { ChatMessageList, useChatConversationContext } from "./chatMessages";
+import { FileChangeStatsPanel } from "./chatMessages/components/FileChangeStatsPanel";
 import { RollbackConfirmDialog } from "./chatMessages/dialogs/RollbackConfirmDialog";
 import { CompactionStream } from "./chatMessages/components/CompactionStream";
+import { StreamMetrics } from "./chatInput/StreamMetrics";
 import type { ChatInputSendOptions } from "./chatInput/types";
 import type { MainContentView } from "./types";
 import type { RollbackMode } from "./chatMessages/utils/conversationTypes";
@@ -40,6 +42,7 @@ const ChatContentBody = ({
   const {
     messages,
     activeConversationId,
+    activeConversationType,
     isLoadingOlderMessages,
     hasMoreMessages,
     isInitialHistoryLoaded,
@@ -48,7 +51,14 @@ const ChatContentBody = ({
     handleSendMessage,
     isStreaming,
     isAborting,
+    isPaused,
     handleAbort,
+    handlePause,
+    handleResume,
+    streamTokenCount,
+    streamElapsedMs,
+    streamTtftMs,
+    streamStartedAt,
     tokenUsage,
     draftToRestore,
     autoSendToken,
@@ -85,6 +95,7 @@ const ChatContentBody = ({
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const hasMessages = messages.length > 0;
   const hasHistoryContent = hasMessages || isLoadingInitialHistory;
+  const isSubAgentConversation = activeConversationType === "sub_agent";
   // Compaction state is global, but the preview/error UI must only appear in
   // the conversation that is actually compacting — otherwise it bleeds into
   // other conversations after a switch.
@@ -636,6 +647,7 @@ const ChatContentBody = ({
                 <div className="chat-history-skeleton-line" />
               </div>
             ) : null}
+            <FileChangeStatsPanel conversationId={activeConversationId} />
             <ChatMessageList
               messages={messages}
               isStreaming={isStreaming}
@@ -670,40 +682,90 @@ const ChatContentBody = ({
             <ArrowDown size={20} strokeWidth={2} aria-hidden="true" />
           </button>
         ) : null}
-        <ChatInput
-          projectId={activeDirectory?.directoryId}
-          projectName={activeDirectory?.name}
-          conversationId={activeConversationId}
-          onSend={handleSendWithScroll}
-          isStreaming={isStreaming}
-          isAborting={isAborting}
-          onAbort={handleAbort}
-          tokenUsage={tokenUsage}
-          draftToRestore={draftToRestore}
-          autoSendToken={autoSendToken}
-          onDraftRestored={clearDraftToRestore}
-          pendingMessages={pendingMessages}
-          onWithdrawPendingMessage={withdrawPendingMessage}
-          onSendPendingMessageNow={sendPendingMessageNow}
-          onCompactConversation={compactConversation}
-          yoloMode={yoloMode}
-          isUpdatingYoloMode={isUpdatingYoloMode}
-          onYoloModeChange={setYoloMode}
-          onRefreshYoloMode={refreshYoloMode}
-          planMode={planMode}
-          isUpdatingPlanMode={isUpdatingPlanMode}
-          onPlanModeChange={setPlanMode}
-          onRefreshPlanMode={refreshPlanMode}
-          goalMode={goalMode}
-          isUpdatingGoalMode={isUpdatingGoalMode}
-          onGoalModeChange={setGoalMode}
-          onRefreshGoalMode={refreshGoalMode}
-          goalModeTokenBudget={goalModeTokenBudget}
-          onGoalModeTokenBudgetChange={setGoalModeTokenBudget}
-          autoScrollEnabled={autoScrollEnabled}
-          onAutoScrollChange={setAutoScrollEnabled}
-          isCompacting={isCompactingActive}
-        />
+        {isLoadingInitialHistory ? null : isSubAgentConversation ? (
+          <div className="sub-agent-monitor">
+            <div
+              className="sub-agent-monitor-status"
+              role="status"
+              aria-live="polite"
+            >
+              <Eye size={14} aria-hidden="true" />
+              <span>{t("chat.subAgentReadOnly")}</span>
+            </div>
+            {isStreaming || isAborting ? (
+              <div className="sub-agent-monitor-controls">
+                {isStreaming ? (
+                  <StreamMetrics
+                    tokenCount={streamTokenCount}
+                    elapsedMs={streamElapsedMs}
+                    ttftMs={streamTtftMs}
+                    startedAt={streamStartedAt}
+                    isPaused={isPaused}
+                    onPause={handlePause}
+                    onResume={handleResume}
+                  />
+                ) : null}
+                <button
+                  className={`abort-btn ${isAborting ? "is-aborting" : ""}`}
+                  aria-label={
+                    isAborting
+                      ? t("chat.subAgentStopping")
+                      : t("chat.subAgentStop")
+                  }
+                  title={
+                    isAborting
+                      ? t("chat.subAgentStopping")
+                      : t("chat.subAgentStop")
+                  }
+                  onClick={handleAbort}
+                  disabled={isAborting}
+                  type="button"
+                >
+                  {isAborting ? (
+                    <Loader2 size={14} className="spin" aria-hidden="true" />
+                  ) : (
+                    <Square size={14} fill="currentColor" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <ChatInput
+            projectId={activeDirectory?.directoryId}
+            projectName={activeDirectory?.name}
+            conversationId={activeConversationId}
+            onSend={handleSendWithScroll}
+            isStreaming={isStreaming}
+            isAborting={isAborting}
+            onAbort={handleAbort}
+            tokenUsage={tokenUsage}
+            draftToRestore={draftToRestore}
+            autoSendToken={autoSendToken}
+            onDraftRestored={clearDraftToRestore}
+            pendingMessages={pendingMessages}
+            onWithdrawPendingMessage={withdrawPendingMessage}
+            onSendPendingMessageNow={sendPendingMessageNow}
+            onCompactConversation={compactConversation}
+            yoloMode={yoloMode}
+            isUpdatingYoloMode={isUpdatingYoloMode}
+            onYoloModeChange={setYoloMode}
+            onRefreshYoloMode={refreshYoloMode}
+            planMode={planMode}
+            isUpdatingPlanMode={isUpdatingPlanMode}
+            onPlanModeChange={setPlanMode}
+            onRefreshPlanMode={refreshPlanMode}
+            goalMode={goalMode}
+            isUpdatingGoalMode={isUpdatingGoalMode}
+            onGoalModeChange={setGoalMode}
+            onRefreshGoalMode={refreshGoalMode}
+            goalModeTokenBudget={goalModeTokenBudget}
+            onGoalModeTokenBudgetChange={setGoalModeTokenBudget}
+            autoScrollEnabled={autoScrollEnabled}
+            onAutoScrollChange={setAutoScrollEnabled}
+            isCompacting={isCompactingActive}
+          />
+        )}
       </div>
 
       {rollbackPreview ? (

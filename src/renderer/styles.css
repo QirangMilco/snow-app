@@ -4823,6 +4823,67 @@ input {
   flex-shrink: 0;
 }
 
+.sub-agent-monitor {
+  display: flex;
+  width: calc(100% - 24px);
+  max-width: 1120px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 8px auto 12px;
+  padding: 0 2px;
+  flex-wrap: wrap;
+}
+
+.sub-agent-monitor-status,
+.sub-agent-monitor-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sub-agent-monitor-status {
+  min-height: 24px;
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-island);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.sub-agent-monitor-status svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sub-agent-monitor-controls {
+  min-width: 0;
+}
+
+.sub-agent-monitor-controls .stream-metrics {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .sub-agent-monitor {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sub-agent-monitor-status,
+  .sub-agent-monitor-controls {
+    justify-content: center;
+  }
+
+  .sub-agent-monitor-controls {
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+}
+
 .chat-scroll-to-bottom {
   position: absolute;
   z-index: 3;
@@ -4920,6 +4981,37 @@ input {
   overflow: visible;
   justify-content: flex-start;
 }
+
+/* Keep the composer in the viewport on short windows. The greeting remains
+   reachable by scrolling in the upper area instead of pushing the composer
+   below the window. */
+@media (max-height: 800px) {
+  .chat-content.is-empty {
+    overflow: hidden;
+    padding-top: clamp(12px, 6vh, 48px);
+    padding-bottom: 0;
+  }
+
+  .chat-content.is-empty .chat-area {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .chat-empty-greeting-title {
+    margin-top: 20px;
+  }
+
+  .chat-empty-quick-actions {
+    gap: 8px;
+    margin-top: 28px;
+  }
+
+  .chat-empty-quick-card {
+    padding: 12px 14px;
+  }
+}
+
 /* Has-messages state: chat-area grows to fill, pushing input to bottom */
 .chat-content.has-messages {
   padding-bottom: 0;
@@ -5464,6 +5556,178 @@ input {
   /* Contain layout/paint so that resizing panels doesn't reflow the
      entire document — only this subtree is affected. */
   contain: layout paint;
+}
+
+/* File-change stats panel: collapsible summary of files modified by the
+   main agent and its sub-agents during this conversation session. */
+.file-change-stats {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--surface-island-muted);
+  overflow: hidden;
+  max-width: 760px;
+  margin: 0 auto 4px;
+  width: 100%;
+}
+
+.file-change-stats-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary, inherit);
+  cursor: pointer;
+  font-size: 12.5px;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.file-change-stats-header:hover {
+  background: var(--surface-island-strong);
+}
+
+.file-change-stats-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.file-change-stats-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-change-stats-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.file-change-stats-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.file-change-stats-badge.is-main {
+  background: var(--accent-blue-bg);
+  color: var(--accent-blue-text);
+}
+
+.file-change-stats-badge.is-sub {
+  background: var(--accent-green-bg);
+  color: var(--accent-green-text);
+}
+
+.file-change-stats-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--border-color);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.file-change-stats-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.file-change-stats-item:hover {
+  background: var(--surface-island-strong);
+}
+
+.file-change-stats-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.file-change-stats-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-change-stats-path {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, "Cascadia Code", Consolas,
+    "Courier New", monospace);
+  font-size: 11.5px;
+}
+
+.file-change-stats-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.file-change-stats-kind.is-create {
+  background: var(--accent-green-bg);
+  color: var(--accent-green-text);
+}
+
+.file-change-stats-kind.is-edit {
+  background: var(--accent-blue-bg);
+  color: var(--accent-blue-text);
+}
+
+.file-change-stats-agent {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: var(--surface-island-strong);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.file-change-stats-agent.is-sub {
+  background: var(--accent-green-bg);
+  color: var(--accent-green-text);
+  border-color: transparent;
 }
 
 .chat-message-group {
@@ -12947,6 +13211,17 @@ input {
   position: relative;
 }
 
+.model-dropdown-item-model {
+  margin-left: auto;
+  flex-shrink: 0;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 /* ===== Token Usage Ring ===== */
 .token-usage-ring-wrapper {
   position: relative;
@@ -14780,8 +15055,26 @@ input {
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* Dedicated scroll container for the file list / graph. Keeping the
+   scrollable content separate from the header means the header needs no
+   background of its own: it sits directly on the panel's frosted surface
+   instead of stacking another semi-transparent layer on top (which made
+   it visibly darker than the rest of the panel). */
+.git-control-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
+}
+
+/* Header block (repo selector, toolbar, sync status). Stays above the
+   scroll container; transparent so the panel surface shows through
+   with no colour mismatch. */
+.git-control-top {
+  flex-shrink: 0;
 }
 
 .git-control-header {
@@ -16826,6 +17119,107 @@ input {
   gap: 14px;
 }
 
+/* ===== MCP JSON 编辑 / 导入模式 ===== */
+
+.mcp-editor-mode-switch {
+  display: inline-flex;
+  gap: 6px;
+  padding: 3px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-secondary, #1e293b) 70%, transparent);
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+  align-self: flex-start;
+}
+
+.mcp-editor-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mcp-editor-mode-btn:hover:not(:disabled) {
+  color: var(--text-primary, #e2e8f0);
+}
+
+.mcp-editor-mode-btn.active {
+  background: var(--accent-blue, #3b82f6);
+  color: #fff;
+}
+
+.mcp-editor-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mcp-editor-json-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mcp-editor-json-textarea,
+.mcp-json-import-textarea {
+  width: 100%;
+  min-height: 260px;
+  padding: 12px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-code, rgba(15, 23, 42, 0.6));
+  color: var(--text-primary, #e2e8f0);
+  font-family: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+  tab-size: 2;
+}
+
+.mcp-editor-json-textarea:focus,
+.mcp-json-import-textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue, #3b82f6);
+}
+
+.mcp-editor-json-error,
+.mcp-json-import-error {
+  padding: 8px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md, 8px);
+  background: color-mix(in srgb, var(--accent-red-bg, rgba(239, 68, 68, 0.12)) 90%, transparent);
+  color: var(--accent-red-text, #f87171);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mcp-editor-json-hint {
+  color: var(--text-secondary, #94a3b8);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.mcp-json-import-modal .app-modal-dialog {
+  width: min(640px, calc(100vw - 48px));
+}
+
+.mcp-json-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mcp-json-import-textarea {
+  min-height: 320px;
+}
+
 @media (max-width: 640px) {
   .app-modal-overlay {
     align-items: stretch;
@@ -17833,6 +18227,7 @@ input {
 }
 
 .git-graph-detail {
+  position: relative;
   padding: 4px 12px 8px 40px;
   border-bottom: 1px solid var(--border-light);
   background: var(--bg-secondary);
@@ -17840,6 +18235,17 @@ input {
      not jump when the file list arrives, which would shift all following
      rows in the scroll container and cause visible jitter. */
   min-height: 30px;
+}
+
+/* Extends the graph lanes through the expanded detail area (see
+   GitGraph.tsx) so branch columns stay continuous across the detail panel.
+   Aligned with the row SVG: 12px left padding + lane columns. */
+.git-graph-detail-lines {
+  position: absolute;
+  left: 12px;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
 }
 
 .git-graph-detail-loading,
@@ -18038,6 +18444,45 @@ input {
 .right-panel-tab-close:hover {
   background: var(--bg-hover-strong);
   color: var(--text-primary);
+}
+
+/* Right panel tab context menu */
+.right-panel-tab-context-menu {
+  position: fixed;
+  z-index: 9999;
+  width: 170px;
+  padding: 4px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--island-shadow);
+}
+
+.right-panel-tab-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+.right-panel-tab-context-menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.right-panel-tab-context-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-light);
 }
 
 /* Diff Viewer Actions */
@@ -21990,6 +22435,240 @@ input {
 .feature-prompt-card-title {
   font-size: 13px;
   line-height: 1.3;
+/* ===== Personalization (global & project rules) ===== */
+.personalization-page {
+  gap: 12px;
+  padding-bottom: 32px;
+}
+
+.personalization-page .api-settings-page-header,
+.personalization-rule-chain {
+  flex-shrink: 0;
+}
+
+.personalization-workspace {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+/* 编辑器区域独立滚动：scope 切换栏固定，内容超高时在 tabpanel 内滚动，
+   避免 flex 压缩导致 textarea 被 overflow 截断。 */
+.personalization-tabpanel:not([hidden]) {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.personalization-scope-bar {
+  display: flex;
+  min-height: 48px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+}
+
+.personalization-scope-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  background: var(--bg-primary);
+}
+
+.personalization-scope-tabs button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.personalization-scope-tabs button:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.personalization-scope-tabs button.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-light);
+}
+
+.personalization-scope-tabs button.active svg {
+  color: var(--text-secondary);
+}
+
+.personalization-scope-summary {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.personalization-section {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.personalization-section:hover {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.personalization-section-header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.personalization-section-title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.personalization-section-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.personalization-section-icon svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
+.personalization-section-title strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.personalization-section-title > span:last-child {
+  flex-basis: 100%;
+  margin-left: 40px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.personalization-project-select-row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.personalization-project-select-label {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+}
+
+.personalization-project-select-label > span {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.personalization-project-select-wrap {
+  min-width: 0;
+  max-width: 340px;
+  flex: 1;
+}
+
+.personalization-project-kind {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+/* --- Personalization: 作用域提示条 --- */
+.personalization-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  font-size: 11.5px;
+}
+
+.personalization-toolbar-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+}
+
+.personalization-toolbar-main > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.personalization-toolbar-info {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.personalization-toolbar-info > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -22122,4 +22801,629 @@ input {
 
 .builtin-service-toggle.on .builtin-service-toggle-knob {
   left: 20px;
+.personalization-toolbar .project-skills-path {
+  font-size: 10.5px;
+}
+
+/* --- Personalization: 保存按钮（与其他界面主按钮一致） --- */
+.personalization-save-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 16px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--text-primary);
+  color: var(--on-solid);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.personalization-save-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 22%, transparent);
+}
+
+.personalization-save-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.personalization-save-btn:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.personalization-save-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+/* --- Personalization: 规则编辑器 --- */
+.personalization-textarea {
+  flex: 1;
+  min-height: 360px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  outline: none;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.personalization-textarea:hover {
+  border-color: var(--border-color);
+}
+
+.personalization-textarea:focus {
+  border-color: var(--text-muted);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* --- Personalization: 空状态 --- */
+.personalization-empty {
+  display: flex;
+  min-height: 200px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 24px;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.55;
+}
+
+.personalization-empty > svg {
+  width: 42px;
+  height: 42px;
+  padding: 11px;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  box-sizing: border-box;
+}
+
+.personalization-inheritance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-tertiary) 72%, transparent);
+}
+
+.personalization-inheritance-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.personalization-inheritance-copy strong {
+  color: var(--text-primary);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.personalization-inheritance-copy span {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.personalization-rule-chain {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px 16px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-muted);
+}
+
+.personalization-rule-chain-label,
+.personalization-rule-chain-steps {
+  display: flex;
+  align-items: center;
+}
+
+.personalization-rule-chain-label {
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.personalization-rule-chain-label svg {
+  color: var(--text-muted);
+}
+
+.personalization-rule-chain-steps {
+  min-width: 0;
+  gap: 7px;
+  font-size: 11px;
+}
+
+.personalization-rule-chain-steps span {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.personalization-rule-chain-steps svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.personalization-rule-chain small {
+  grid-column: 2;
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+@media (max-width: 640px) {
+  .personalization-scope-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .personalization-scope-tabs {
+    align-self: flex-start;
+  }
+
+  .personalization-rule-chain {
+    grid-template-columns: 1fr;
+  }
+
+  .personalization-rule-chain-steps {
+    overflow-x: auto;
+  }
+
+  .personalization-rule-chain small {
+    grid-column: 1;
+  }
+
+  .personalization-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .personalization-save-btn {
+    align-self: flex-end;
+  }
+
+  .personalization-section-title > span:last-child {
+    margin-left: 0;
+/* ===== Cream system-wide refinement =====
+   Keep the preset recognizable across the whole workspace instead of only
+   changing the empty-chat greeting. The app remains dense and operational,
+   while surfaces, type roles, controls, and state colors share one visual
+   language. */
+:root[data-theme-preset="cream"] {
+  --font-sans: "Poppins", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  --font-brand-body: var(--font-sans);
+  --font-brand-display: "Lora", Georgia, serif;
+  --accent: #d97757;
+  --accent-primary: #d97757;
+  --accent-secondary: #788c5d;
+  --accent-color: #d97757;
+  --accent-orange: #d97757;
+  --accent-orange-bg: rgba(217, 119, 87, 0.14);
+  --accent-orange-text: #8c4533;
+  --color-primary: #d97757;
+  --color-success: #788c5d;
+  --color-error: #c35d45;
+  --success: #788c5d;
+  --warning: #b96b4f;
+  --danger: #c35d45;
+  --text-link: #4f7da8;
+  --border-focus: #d97757;
+  --surface-hover: rgba(217, 119, 87, 0.1);
+  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.06);
+  --shadow-md: 0 8px 24px rgba(20, 20, 19, 0.12);
+  --backdrop-blur-lg: none;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+:root[data-theme-preset="cream"][data-theme="light"] {
+  --surface-island: #faf9f5;
+  --surface-island-strong: #faf9f5;
+  --surface-island-muted: #f2f0e8;
+  --island-shadow: 0 1px 3px rgba(20, 20, 19, 0.08);
+}
+
+:root[data-theme-preset="cream"][data-theme="dark"] {
+  --surface-island: #1f1f1c;
+  --surface-island-strong: #1f1f1c;
+  --surface-island-muted: #191917;
+  --island-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+}
+
+/* The outer frame is the subtle light-gray brand field, not a blue-gray app
+   shell. `!important` is needed because palette values are applied inline. */
+:root[data-theme-preset="cream"][data-theme="light"] {
+  --app-bg: #e8e6dc !important;
+}
+
+:root[data-theme-preset="cream"][data-theme="dark"] {
+  --app-bg: #141413 !important;
+}
+
+:root[data-theme-preset="cream"] body,
+:root[data-theme-preset="cream"] button,
+:root[data-theme-preset="cream"] input,
+:root[data-theme-preset="cream"] select,
+:root[data-theme-preset="cream"] textarea {
+  font-family: var(--app-font-family, var(--font-sans));
+}
+
+:root[data-theme-preset="cream"] h1,
+:root[data-theme-preset="cream"] h2,
+:root[data-theme-preset="cream"] h3,
+:root[data-theme-preset="cream"] h4,
+:root[data-theme-preset="cream"] h5,
+:root[data-theme-preset="cream"] h6,
+:root[data-theme-preset="cream"] .api-settings-title-group strong {
+  font-family: var(--font-brand-display);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.sidebar-content-title, .header-title, .section-title,
+    .settings-item-title, .chat-empty-quick-card-title, strong) {
+  font-family: var(--font-sans);
+}
+
+:root[data-theme-preset="cream"] .ai-message,
+:root[data-theme-preset="cream"] .ai-message p,
+:root[data-theme-preset="cream"] .ai-message li,
+:root[data-theme-preset="cream"] .user-message-bubble,
+:root[data-theme-preset="cream"] .context-compaction-markdown,
+:root[data-theme-preset="cream"] .chat-empty-quick-card-desc {
+  font-family: var(--font-brand-body);
+}
+
+:root[data-theme-preset="cream"] .ai-message h1,
+:root[data-theme-preset="cream"] .ai-message h2,
+:root[data-theme-preset="cream"] .ai-message h3,
+:root[data-theme-preset="cream"] .ai-message h4,
+:root[data-theme-preset="cream"] .context-compaction-markdown h1,
+:root[data-theme-preset="cream"] .context-compaction-markdown h2,
+:root[data-theme-preset="cream"] .context-compaction-markdown h3,
+:root[data-theme-preset="cream"] .context-compaction-markdown h4 {
+  font-family: var(--font-brand-display);
+}
+
+/* Flat, warm chrome replaces the default translucent blue workspace shell. */
+:root[data-theme-preset="cream"] .app-shell,
+:root[data-theme-preset="cream"] .app-layout,
+:root[data-theme-preset="cream"] .top-bar {
+  background: var(--app-bg);
+}
+
+:root[data-theme-preset="cream"] .app-layout {
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+:root[data-theme-preset="cream"] .top-bar {
+  gap: 8px;
+  height: calc(var(--header-height) + 16px);
+  min-height: calc(var(--header-height) + 16px);
+  padding: 8px 12px;
+}
+
+:root[data-theme-preset="cream"] .top-bar-left,
+:root[data-theme-preset="cream"] .top-bar-main,
+:root[data-theme-preset="cream"] .top-bar-right,
+:root[data-theme-preset="cream"] .sidebar,
+:root[data-theme-preset="cream"] .main-content,
+:root[data-theme-preset="cream"] .right-panel {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--island-shadow);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="cream"] .top-bar-left,
+:root[data-theme-preset="cream"] .top-bar-right,
+:root[data-theme-preset="cream"] .sidebar,
+:root[data-theme-preset="cream"] .right-panel {
+  background: var(--surface-island-muted);
+}
+
+:root[data-theme-preset="cream"] .top-bar-main,
+:root[data-theme-preset="cream"] .main-content {
+  background: var(--surface-island-strong);
+}
+
+:root[data-theme-preset="cream"] .main-content {
+  padding: 20px 14px;
+}
+
+:root[data-theme-preset="cream"] .main-header,
+:root[data-theme-preset="cream"] .panel-tabs {
+  background: var(--surface-island-muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Shared interactive states make menus, navigation, tables, and icon buttons
+   feel like the same product rather than independent component kits. */
+:root[data-theme-preset="cream"]
+  :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: 2px;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.icon-btn, .nav-item, .list-item, .settings-item, .panel-tab,
+    .panel-tab-btn, .toolbar-btn, .chat-item, .codebase-panel-view-btn,
+    .file-viewer-action-btn, .git-action-btn, .browser-nav-btn):hover {
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.nav-item, .list-item, .settings-item, .chat-item, .panel-tab).active {
+  border-color: color-mix(in srgb, var(--accent-orange) 38%, var(--border-color));
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"] .settings-item.active,
+:root[data-theme-preset="cream"] .chat-item.active {
+  box-shadow: inset 2px 0 var(--accent-orange);
+}
+
+:root[data-theme-preset="cream"] .sidebar-content-header,
+:root[data-theme-preset="cream"] .section-header,
+:root[data-theme-preset="cream"] .api-settings-page-header,
+:root[data-theme-preset="cream"] .codebase-panel-header,
+:root[data-theme-preset="cream"] .file-viewer-header,
+:root[data-theme-preset="cream"] .git-control-header {
+  border-bottom-color: var(--border-light);
+}
+
+/* Inputs, selects, toggles and the primary action all use the orange brand
+   accent, while status colors retain the official green/blue/red roles. */
+:root[data-theme-preset="cream"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea,
+    .custom-select-trigger,
+    .model-manual-field,
+    .search-modal-input,
+    .browser-address-input,
+    .browser-find-input,
+    .git-commit-input,
+    .file-viewer-search-input,
+    .branch-create-input) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea,
+    .custom-select-trigger,
+    .model-manual-field,
+    .search-modal-input,
+    .browser-address-input,
+    .browser-find-input,
+    .git-commit-input,
+    .file-viewer-search-input,
+    .branch-create-input):focus {
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+:root[data-theme-preset="cream"] .toggle-switch input:checked + .toggle-slider,
+:root[data-theme-preset="cream"] .toggle-slider {
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme-preset="cream"] .toggle-switch input:checked + .toggle-slider {
+  background: var(--accent-orange);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn.primary) {
+  border-color: var(--accent-orange);
+  background: var(--accent-orange);
+  color: #fffaf5;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn.primary):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-orange) 88%, var(--text-primary));
+}
+
+/* Dropdowns and dialogs are warm, opaque surfaces so text remains legible on
+   top of optional user background images. */
+:root[data-theme-preset="cream"]
+  :is(.top-bar-plus-dropdown, .top-bar-todo-dropdown, .plus-menu-dropdown,
+    .model-dropdown, .file-mention-popup, .chat-command-panel,
+    .custom-select-dropdown, .custom-select-dropdown-portal,
+    .browser-menu-dropdown, .branch-dropdown, .app-modal-dialog,
+    .confirm-dialog, .search-modal, .explorer-entry-context-menu) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.top-bar-plus-dropdown-item, .top-bar-todo-item, .plus-menu-item,
+    .model-dropdown-item, .custom-select-item, .browser-menu-item,
+    .branch-dropdown-item, .chat-command-item, .mention-entry,
+    .explorer-entry-context-menu-item):hover {
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+/* Chat is the primary surface: prose is serif, controls are sans, and the
+   input is a quiet orange-edged editor instead of a rainbow effect. */
+:root[data-theme-preset="cream"] .chat-empty-greeting-logo {
+  color: var(--accent-orange);
+  filter: none;
+}
+
+:root[data-theme-preset="cream"] .app-shell::after {
+  z-index: 0;
+}
+
+:root[data-theme-preset="cream"] .app-shell > .top-bar,
+:root[data-theme-preset="cream"] .app-shell > .app-layout {
+  position: relative;
+  z-index: 1;
+}
+
+/* The app layout follows the top bar in the DOM. Keep the top-bar stacking
+   context above it so its New Tab dropdown can extend into the layout. */
+:root[data-theme-preset="cream"] .app-shell > .top-bar {
+  z-index: 2;
+}
+
+:root[data-theme-preset="cream"] .pixel-logo.is-frozen {
+  filter: none;
+}
+
+:root[data-theme-preset="cream"] .pixel-logo-pixel-frost {
+  opacity: 0 !important;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-greeting-title {
+  color: var(--text-primary);
+  font-family: var(--font-brand-display);
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-quick-card {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-quick-card:hover:not(:disabled),
+:root[data-theme-preset="cream"] .chat-empty-quick-card:focus-visible {
+  border-color: var(--accent-orange);
+  background: var(--accent-orange-bg);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .user-message-bubble {
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 26%, var(--border-color));
+  border-radius: var(--radius-lg);
+  background: var(--accent-orange-bg);
+}
+
+:root[data-theme-preset="cream"] .input-box {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme-preset="cream"] .input-box::before {
+  display: none;
+}
+
+:root[data-theme-preset="cream"] .input-box:focus-within {
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 3px var(--accent-orange-bg), var(--shadow-sm);
+}
+
+:root[data-theme-preset="cream"] .input-field {
+  font-family: var(--font-brand-body);
+}
+
+:root[data-theme-preset="cream"] .chat-message-tool,
+:root[data-theme-preset="cream"] .context-compaction-message,
+:root[data-theme-preset="cream"] .context-compaction-stream,
+:root[data-theme-preset="cream"] .file-changes-card,
+:root[data-theme-preset="cream"] .tool-call-bash-terminal {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .tool-call-status-running,
+:root[data-theme-preset="cream"] .tool-call-browser-pending-running,
+:root[data-theme-preset="cream"] .tool-call-grep-pending-running {
+  color: var(--accent-orange-text);
+  background: var(--accent-orange-bg);
+}
+
+/* Tables and code surfaces stay utilitarian, but inherit the warm panel
+   hierarchy and orange focus/selection details. */
+:root[data-theme-preset="cream"]
+  :is(.ai-message .code-block-wrapper, .context-compaction-markdown .code-block-wrapper,
+    .file-viewer, .diff-viewer, .git-diff-view, .terminal-container,
+    .browser-panel, .codebase-panel-table-wrap) {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.ai-message .code-block-header, .context-compaction-markdown .code-block-header,
+    .codebase-panel-table th, .api-settings-table th, .file-changes-header) {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.ai-message a, .context-compaction-markdown a, .chat-fork-divider-link,
+    .codebase-sphere-tooltip-neighbor span:last-child) {
+  color: var(--accent-blue-text);
+}
+
+:root[data-theme-preset="cream"] ::selection {
+  background: var(--selection-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="cream"] * {
+    transition-duration: 0.01ms !important;
+  }
 }

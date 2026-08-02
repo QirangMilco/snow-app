@@ -9,6 +9,7 @@ import {
 import { APP_ICON_PATH, APP_USER_MODEL_ID, isMacOS } from "./constants";
 import { initializeApplicationServices } from "./applicationServices";
 import { createWindow } from "./mainWindow";
+import { initTray } from "./tray";
 import { registerIpcHandlers } from "../ipc/registerIpcHandlers";
 import { native, getRawNative } from "../native/nativeBridge";
 import { installGuestViewErrorFilter } from "../utils/guestViewErrorFilter";
@@ -22,6 +23,7 @@ import {
   registerImageProxySchemePrivilege,
 } from "./imageProxyProtocol";
 import { applySessionProxy } from "./sessionProxy";
+import { ensureBuiltinDocs, ensureBuiltinSkills } from "./ensureBuiltinSkills";
 
 export const bootstrapApplication = (): void => {
   // ─── Chromium 启动加速开关（必须在 whenReady 之前）─────────────────────
@@ -100,6 +102,14 @@ export const bootstrapApplication = (): void => {
     // 窗口使用 show:false + ready-to-show，确保用户看到的第一帧就是
     // 完整的 loading 动画，而非空白/黑屏过渡。
     const mainWindow = createWindow();
+
+    // 初始化系统托盘（黑白脱色图标 + 悬停快速信息 + 右键菜单）。
+    initTray(native);
+
+    // 首次启动安装内置 skills 并同步内置文档（供 snow-app-docs 技能阅读），
+    // 均为幂等操作。
+    ensureBuiltinSkills();
+    ensureBuiltinDocs();
 
     snowLog.info({
       module: "app/bootstrap",

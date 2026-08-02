@@ -21,12 +21,14 @@ import {
   type McpSettingsListItem,
 } from "./mcpSettings/McpSettingsList";
 import { McpSettingsSummary } from "./mcpSettings/McpSettingsSummary";
+import { formatMcpError } from "./mcpSettings/mcpErrorMessages";
 import {
   EMPTY_MCP_SERVER_DRAFT,
   createMcpPair,
   createMcpStringItem,
   getMcpServerEndpoint,
   hasDuplicatePairKey,
+  parseMcpServersImportJson,
   toDraft,
   toInput,
   toProjectInput,
@@ -70,6 +72,10 @@ export function McpSettingsPanel({
   >(() => new Set());
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [jsonImportOpen, setJsonImportOpen] = useState(false);
+  const [jsonImportText, setJsonImportText] = useState("");
+  const [jsonImportError, setJsonImportError] = useState("");
+  const [isJsonImporting, setIsJsonImporting] = useState(false);
   const loadGenerationRef = useRef(0);
 
   const isBusy = isLoading || isSaving;
@@ -171,6 +177,37 @@ export function McpSettingsPanel({
       );
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleJsonImport = async (): Promise<void> => {
+    setJsonImportError("");
+    setIsJsonImporting(true);
+    try {
+      const inputs = parseMcpServersImportJson(jsonImportText);
+      for (const input of inputs) {
+        await window.snow.upsertMcpServerConfig(input);
+      }
+      const items = await window.snow.listMcpServerConfigs();
+      setServers(items);
+      setStatus(
+        t("settings.mcpJsonImportSuccess", {
+          defaultValue: "Imported {{count}} MCP server(s).",
+          values: { count: inputs.length },
+        })
+      );
+      setJsonImportOpen(false);
+      setJsonImportText("");
+    } catch (importError) {
+      setJsonImportError(
+        importError instanceof Error
+          ? importError.message
+          : t("settings.mcpJsonImportError", {
+              defaultValue: "Failed to import MCP servers",
+            })
+      );
+    } finally {
+      setIsJsonImporting(false);
     }
   };
 
@@ -460,13 +497,7 @@ export function McpSettingsPanel({
         })
       );
     } catch (e) {
-      setError(
-        e instanceof Error
-          ? e.message
-          : t("settings.mcpFetchToolsError", {
-              defaultValue: "Failed to fetch MCP tools",
-            })
-      );
+      setError(formatMcpError(e, t));
     } finally {
       setFetchingToolServerIds((previous) => {
         const next = new Set(previous);
@@ -669,13 +700,7 @@ export function McpSettingsPanel({
       );
     } catch (fetchError) {
       if (loadGenerationRef.current === generation) {
-        setError(
-          fetchError instanceof Error
-            ? fetchError.message
-            : t("settings.mcpFetchToolsError", {
-                defaultValue: "Failed to fetch MCP tools",
-              })
-        );
+        setError(formatMcpError(fetchError, t));
       }
     } finally {
       if (loadGenerationRef.current === generation) {
@@ -867,6 +892,21 @@ export function McpSettingsPanel({
                 {t("settings.mcpAddNew", { defaultValue: "Add server" })}
               </span>
             </button>
+            <button
+              className="api-settings-action-btn secondary"
+              onClick={() => {
+                setJsonImportText("");
+                setJsonImportError("");
+                setJsonImportOpen(true);
+              }}
+              type="button"
+              disabled={isBusy}
+            >
+              <Download size={15} />
+              <span>
+                {t("settings.mcpJsonImport", { defaultValue: "Import JSON" })}
+              </span>
+            </button>
           </>
         ) : (
           <>
@@ -1047,6 +1087,86 @@ export function McpSettingsPanel({
             onSave={() => void saveDraft()}
           />
         )}
+      </Modal>
+
+      <Modal
+        open={jsonImportOpen}
+        title={t("settings.mcpJsonImportTitle", {
+          defaultValue: "Import MCP servers from JSON",
+        })}
+        description={t("settings.mcpJsonImportInfo", {
+          defaultValue:
+            "Paste a Snow CLI settings.json mcpServers block, a Claude-style mcp.json, or a plain server map. Servers are added to the global scope.",
+        })}
+        closeLabel={t("settings.cancel", { defaultValue: "Cancel" })}
+        onClose={() => setJsonImportOpen(false)}
+        closeDisabled={isJsonImporting}
+        size="large"
+        className="mcp-json-import-modal"
+        footer={
+          <>
+            <button
+              className="api-settings-form-btn secondary"
+              onClick={() => setJsonImportOpen(false)}
+              type="button"
+              disabled={isJsonImporting}
+            >
+              <X size={15} strokeWidth={1.9} />
+              <span>{t("settings.cancel", { defaultValue: "Cancel" })}</span>
+            </button>
+            <button
+              className="api-settings-form-btn primary"
+              onClick={() => void handleJsonImport()}
+              type="button"
+              disabled={isJsonImporting || !jsonImportText.trim()}
+            >
+              {isJsonImporting ? (
+                <Loader2 size={15} className="spin" />
+              ) : (
+                <Download size={15} strokeWidth={1.9} />
+              )}
+              <span>
+                {t("settings.mcpJsonImportButton", {
+                  defaultValue: "Import",
+                })}
+              </span>
+            </button>
+          </>
+        }
+      >
+        <div className="mcp-json-import-body">
+          <textarea
+            className="mcp-json-import-textarea"
+            value={jsonImportText}
+            onChange={(event) => {
+              setJsonImportText(event.target.value);
+              setJsonImportError("");
+            }}
+            disabled={isJsonImporting}
+            spellCheck={false}
+            placeholder={JSON.stringify(
+              {
+                mcpServers: {
+                  example: {
+                    type: "stdio",
+                    command: "npx",
+                    args: ["-y", "@modelcontextprotocol/server-filesystem"],
+                    env: {},
+                    enabled: true,
+                  },
+                },
+              },
+              null,
+              2
+            )}
+            aria-label={t("settings.mcpJsonImportTextarea", {
+              defaultValue: "MCP servers JSON",
+            })}
+          />
+          {jsonImportError && (
+            <div className="mcp-json-import-error">{jsonImportError}</div>
+          )}
+        </div>
       </Modal>
     </div>
   );

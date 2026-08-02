@@ -273,19 +273,20 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
            title TEXT NOT NULL DEFAULT '',
            summary TEXT NOT NULL DEFAULT '',
            last_message_preview TEXT NOT NULL DEFAULT '',
-           message_count INTEGER NOT NULL DEFAULT 0,
-           model TEXT NOT NULL DEFAULT '',
-           last_response_id TEXT NOT NULL DEFAULT '',
-           status TEXT NOT NULL DEFAULT 'active',
-           input_tokens INTEGER NOT NULL DEFAULT 0,
-           output_tokens INTEGER NOT NULL DEFAULT 0,
-           cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
-           cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
-           total_duration_ms INTEGER NOT NULL DEFAULT 0,
-           directory_id TEXT NOT NULL DEFAULT '',
-           forked_from_conversation_id TEXT NOT NULL DEFAULT '',
-           fork_message_count INTEGER NOT NULL DEFAULT 0,
-           emoji TEXT NOT NULL DEFAULT '',
+            message_count INTEGER NOT NULL DEFAULT 0,
+            model TEXT NOT NULL DEFAULT '',
+            api_profile_name TEXT NOT NULL DEFAULT '',
+            last_response_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+            total_duration_ms INTEGER NOT NULL DEFAULT 0,
+            directory_id TEXT NOT NULL DEFAULT '',
+            forked_from_conversation_id TEXT NOT NULL DEFAULT '',
+            fork_message_count INTEGER NOT NULL DEFAULT 0,
+            emoji TEXT NOT NULL DEFAULT '',
            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
          );
@@ -415,7 +416,35 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
     // module so the schema lives next to its CRUD functions.
     services::codebase_embed_sessions::ensure_sessions_table(connection)?;
 
-    connection.pragma_update(None, "user_version", 21)?;
+    // Migrate existing databases that were created before per-conversation
+    // API profile binding existed. Idempotent: no-op when the column is
+    // already present (fresh databases get it from CREATE TABLE above).
+    migrate_chat_conversations_api_profile(connection)?;
+
+    connection.pragma_update(None, "user_version", 22)?;
+
+    Ok(())
+}
+
+/// Adds the `api_profile_name` column to `chat_conversations` for databases
+/// created by older app versions. The column binds a conversation to a
+/// specific API config profile so different conversations can route to
+/// different providers/models. Empty string means "follow the global active
+/// profile" (the legacy behaviour).
+fn migrate_chat_conversations_api_profile(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(chat_conversations)")?;
+    let mut columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let has_api_profile_column = columns.try_fold(false, |found, column| {
+        Ok::<bool, rusqlite::Error>(found || column? == "api_profile_name")
+    })?;
+
+    if !has_api_profile_column {
+        connection.execute(
+            "ALTER TABLE chat_conversations
+                ADD COLUMN api_profile_name TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
 
     Ok(())
 }

@@ -4,6 +4,7 @@ import { useI18n } from "../../../i18n";
 import { CustomSelect } from "../../common/CustomSelect";
 import { McpKeyValueEditor } from "./McpKeyValueEditor";
 import { McpStringListEditor } from "./McpStringListEditor";
+import { draftToJson, parseDraftJson } from "./mcpSettingsUtils";
 import type { McpServerDraft, McpServerTool } from "./types";
 
 const TRANSPORT_OPTIONS = [
@@ -11,35 +12,35 @@ const TRANSPORT_OPTIONS = [
   { value: "http", label: "http" },
 ];
 
-type McpSettingsEditorProps = {
-  draft: McpServerDraft;
-  isBusy: boolean;
-  isSaving: boolean;
-  tools?: readonly McpServerTool[];
-  isFetchingTools: boolean;
-  onFetchTools: () => void;
-  onDraftChange: (patch: Partial<McpServerDraft>) => void;
-  onUpdatePair: (
-    group: "env" | "headers",
-    pairId: string,
-    field: "key" | "value",
-    value: string
-  ) => void;
-  onAddPair: (group: "env" | "headers") => void;
-  onRemovePair: (group: "env" | "headers", pairId: string) => void;
-  onUpdateArg: (argId: string, value: string) => void;
-  onAddArg: () => void;
-  onRemoveArg: (argId: string) => void;
-  onCancel: () => void;
-  onSave: () => void;
-};
-
 const formatInputSchema = (inputSchemaJson: string): string => {
   try {
     return JSON.stringify(JSON.parse(inputSchemaJson), null, 2);
   } catch {
     return inputSchemaJson || "{}";
   }
+};
+
+type McpSettingsEditorProps = {
+  draft: McpServerDraft;
+  isBusy: boolean;
+  isSaving: boolean;
+  tools?: McpServerTool[];
+  isFetchingTools?: boolean;
+  onFetchTools?: () => void;
+  onDraftChange: (patch: Partial<McpServerDraft>) => void;
+  onUpdatePair: (
+    field: "env" | "headers",
+    pairId: string,
+    fieldName: "key" | "value",
+    value: string
+  ) => void;
+  onAddPair: (field: "env" | "headers") => void;
+  onRemovePair: (field: "env" | "headers", pairId: string) => void;
+  onUpdateArg: (argId: string, value: string) => void;
+  onAddArg: () => void;
+  onRemoveArg: (argId: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
 };
 
 export function McpSettingsEditor({
@@ -62,6 +63,9 @@ export function McpSettingsEditor({
   const { t } = useI18n();
   const isHttp = draft.transportType === "http";
   const [toolFilter, setToolFilter] = useState("");
+  const [editMode, setEditMode] = useState<"form" | "json">("form");
+  const [jsonText, setJsonText] = useState(() => draftToJson(draft));
+  const [jsonError, setJsonError] = useState("");
 
   const filteredTools = useMemo(() => {
     if (!tools) return undefined;
@@ -74,15 +78,110 @@ export function McpSettingsEditor({
     );
   }, [tools, toolFilter]);
 
+  const switchToJson = (): void => {
+    setJsonText(draftToJson(draft));
+    setJsonError("");
+    setEditMode("json");
+  };
+
+  const switchToForm = (): void => {
+    try {
+      const parsed = parseDraftJson(jsonText, draft);
+      onDraftChange(parsed);
+      setJsonError("");
+      setEditMode("form");
+    } catch (error) {
+      setJsonError(
+        error instanceof Error
+          ? error.message
+          : t("settings.mcpJsonInvalid", {
+              defaultValue: "Invalid JSON",
+            })
+      );
+    }
+  };
+
+  const handleJsonTextChange = (value: string): void => {
+    setJsonText(value);
+    setJsonError("");
+  };
+
+  const handleSubmit = (event: React.FormEvent): void => {
+    event.preventDefault();
+    if (editMode === "json") {
+      try {
+        const parsed = parseDraftJson(jsonText, draft);
+        onDraftChange(parsed);
+        setJsonError("");
+      } catch (error) {
+        setJsonError(
+          error instanceof Error
+            ? error.message
+            : t("settings.mcpJsonInvalid", {
+                defaultValue: "Invalid JSON",
+              })
+        );
+        return;
+      }
+    }
+    onSave();
+  };
+
   return (
     <form
       id="mcp-settings-editor-form"
       className="api-settings-form-section mcp-settings-editor-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onSave();
-      }}
+      onSubmit={handleSubmit}
     >
+      <div className="mcp-editor-mode-switch">
+        <button
+          type="button"
+          className={`mcp-editor-mode-btn ${editMode === "form" ? "active" : ""}`}
+          onClick={() => {
+            if (editMode === "json") {
+              switchToForm();
+            }
+          }}
+          disabled={isBusy}
+        >
+          {t("settings.mcpEditForm", { defaultValue: "Form" })}
+        </button>
+        <button
+          type="button"
+          className={`mcp-editor-mode-btn ${editMode === "json" ? "active" : ""}`}
+          onClick={switchToJson}
+          disabled={isBusy}
+        >
+          JSON
+        </button>
+      </div>
+
+      {editMode === "json" ? (
+        <div className="mcp-editor-json-section">
+          <textarea
+            className="mcp-editor-json-textarea"
+            value={jsonText}
+            onChange={(event) => handleJsonTextChange(event.target.value)}
+            disabled={isBusy}
+            spellCheck={false}
+            aria-label={t("settings.mcpJsonEditorLabel", {
+              defaultValue: "MCP server JSON configuration",
+            })}
+          />
+          {jsonError && <div className="mcp-editor-json-error">{jsonError}</div>}
+          <div className="mcp-editor-json-hint">
+            {t("settings.mcpJsonHint", {
+              defaultValue:
+                "Edit the server configuration as JSON. name, command (stdio) or url (http) are required.",
+            })}
+          </div>
+        </div>
+      ) : (
+        <></>
+      )}
+
+      {editMode === "form" && (
+        <>
       <div className="api-settings-form-grid">
         <label className="api-settings-field">
           <span>
@@ -301,6 +400,8 @@ export function McpSettingsEditor({
             </div>
           ))}
       </div>
+      </>
+      )}
     </form>
   );
 }

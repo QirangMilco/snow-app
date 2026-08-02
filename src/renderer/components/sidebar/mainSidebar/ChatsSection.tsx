@@ -374,6 +374,7 @@ export function ChatsSection({
           lastMessagePreview: "",
           messageCount: 0,
           model: "",
+          apiProfileName: "",
           status: "active",
           directoryId: "",
           forkedFromConversationId: "",

@@ -73,8 +73,16 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     (enabled: boolean): void => {
       ctx.planModeRef.current = enabled;
       ctx.setPlanModeState(enabled);
+      if (!enabled) {
+        // Plan Mode off = every approval is invalidated (user toggle, Goal
+        // Mode mutual exclusion, or external sync). Switching conversations
+        // restores the target session's mode without going through
+        // applyPlanMode, so it never clears approvals here — an approved plan
+        // survives navigating away and back.
+        ctx.planApprovedSessionKeysRef.current.clear();
+      }
     },
-    [ctx.planModeRef, ctx.setPlanModeState]
+    [ctx.planModeRef, ctx.setPlanModeState, ctx.planApprovedSessionKeysRef]
   );
 
   const refreshPlanMode = useCallback(async (): Promise<boolean> => {

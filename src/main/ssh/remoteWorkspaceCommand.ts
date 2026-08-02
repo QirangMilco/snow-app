@@ -204,6 +204,68 @@ const writeRemoteText = async (
   );
 };
 
+/**
+ * Read the project ROLE.md from a remote SSH workspace.
+ *
+ * Mirrors RoleEditorPanel's SSH access path (`<remotePath>/ROLE.md`) so the
+ * Rust prompt builder can inject the project role even for `ssh://`
+ * workspaces. Returns `null` when the file does not exist, is binary, or SSH
+ * is unavailable — callers then fall back to the global ROLE.md.
+ */
+export type RemoteRoleContext = {
+  content: string | null;
+  includeGlobalRules: boolean;
+};
+
+export const readRemoteRoleContext = async (
+  workspacePath: string
+): Promise<RemoteRoleContext> => {
+  try {
+    return await withSshSession(
+      workspacePath,
+      async (sessionId, remotePath) => {
+        const projectRoot = remotePath.replace(/\/+$/, "");
+        const rolePath = `${projectRoot}/ROLE.md`;
+        let content: string | null = null;
+        try {
+          const file = processFileContent(
+            rolePath,
+            await readSshFile(sessionId, rolePath)
+          );
+          if (!file.isBinary && !file.isImage) {
+            content = file.content.trim() || null;
+          }
+        } catch {
+          content = null;
+        }
+
+        let includeGlobalRules = true;
+        try {
+          const settingsPath = `${projectRoot}/.snow/settings.json`;
+          const settingsFile = processFileContent(
+            settingsPath,
+            await readSshFile(sessionId, settingsPath)
+          );
+          if (!settingsFile.isBinary && !settingsFile.isImage) {
+            const settings = JSON.parse(settingsFile.content) as {
+              role?: { includeGlobalRules?: unknown };
+            };
+            if (typeof settings.role?.includeGlobalRules === "boolean") {
+              includeGlobalRules = settings.role.includeGlobalRules;
+            }
+          }
+        } catch {
+          includeGlobalRules = true;
+        }
+
+        return { content, includeGlobalRules };
+      }
+    );
+  } catch {
+    return { content: null, includeGlobalRules: true };
+  }
+};
+
 const buildRemoteMkdirCommand = (remotePath: string): string =>
   `mkdir -p -- ${shellQuote(remotePath)}`;
 

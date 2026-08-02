@@ -5,7 +5,11 @@ import type {
   ThemeMode,
   ThemeStreamCursor,
 } from "./types";
-import { DEFAULT_THEME_PRESET_ID, getPresetById } from "./themePresets";
+import {
+  DEFAULT_THEME_PRESET_ID,
+  getPresetById,
+  resolvePresetId,
+} from "./themePresets";
 import { themeBgUrl } from "../../../utils/themeBgUrl";
 
 export const THEME_SETTING_NAME = "Theme settings";
@@ -392,6 +396,15 @@ export function applyThemeModeToDocument(mode: ThemeMode): "light" | "dark" {
   return effective;
 }
 
+/** Apply the active preset id so preset-specific typography and surface styling can react. */
+export function applyThemePresetToDocument(presetId: string): void {
+  const root = document.documentElement;
+  const normalizedPresetId = resolvePresetId(
+    presetId.trim() || DEFAULT_THEME_PRESET_ID
+  );
+  root.setAttribute("data-theme-preset", normalizedPresetId);
+}
+
 /**
  * 将自定义字体应用到 document 根元素。传入空字符串时移除自定义字体，
  * 回退到 CSS 中定义的默认字体栈。
@@ -526,6 +539,7 @@ export const applyThemeCacheToDocument = (): "light" | "dark" | null => {
     settings.mode === "system" ? systemDark : settings.mode === "dark";
 
   applyThemeModeToDocument(settings.mode);
+  applyThemePresetToDocument(settings.presetId);
   const palette = resolveActivePalette(settings, isDark);
   applyPaletteToDocument(palette);
 

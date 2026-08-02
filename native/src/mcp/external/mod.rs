@@ -434,21 +434,28 @@ macro_rules! impl_client_handle {
 impl_client_handle!(stdio::StdioMcpClient);
 impl_client_handle!(http::HttpMcpClient);
 
-/// Returns true when an `Auto`-mode negotiation failed with a JSON-RPC error
-/// that the rmcp SDK could not negotiate around on its own (anything other
-/// than -32601 Method Not Found / -32022 Unsupported Protocol Version, which
-/// the SDK already handles internally by falling back or retrying versions).
-/// Legacy servers such as deepwiki reply -32600 "Unsupported protocol version"
-/// here, so retrying with the legacy `initialize` handshake is worthwhile.
+/// Returns true when an `Auto`-mode negotiation failed in a way that a retry
+/// with the legacy `initialize` handshake is worthwhile:
+/// - JSON-RPC errors the rmcp SDK could not negotiate around on its own
+///   (anything other than -32601 Method Not Found / -32022 Unsupported
+///   Protocol Version, which the SDK already handles internally by falling
+///   back or retrying versions). Legacy servers such as deepwiki reply
+///   -32600 "Unsupported protocol version" here.
+/// - A connection closed during the `discover` phase. Legacy servers built
+///   with pre-2026 SDKs (e.g. DBX 0.4.51) exit the process on `discover`
+///   instead of replying with a JSON-RPC error, so a closed connection is a
+///   strong signal that the server only understands the legacy handshake.
 pub(super) fn should_retry_with_legacy_handshake(
     error: &rmcp::service::ClientInitializeError,
 ) -> bool {
-    matches!(
-        error,
-        rmcp::service::ClientInitializeError::JsonRpcError(error_data)
-            if error_data.code != rmcp::model::ErrorCode::METHOD_NOT_FOUND
+    match error {
+        rmcp::service::ClientInitializeError::JsonRpcError(error_data) => {
+            error_data.code != rmcp::model::ErrorCode::METHOD_NOT_FOUND
                 && error_data.code != rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION
-    )
+        }
+        rmcp::service::ClientInitializeError::ConnectionClosed(_) => true,
+        _ => false,
+    }
 }
 
 /// A transport-agnostic external MCP client. The underlying connection is

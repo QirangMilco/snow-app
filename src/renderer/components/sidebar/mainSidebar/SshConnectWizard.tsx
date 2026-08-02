@@ -43,12 +43,18 @@ type CredentialOption = {
   hasSecret: boolean;
 };
 
+const normalizeRemotePath = (path: string): string => {
+  const segments = path.split("/").filter(Boolean);
+  return segments.length > 0 ? `/${segments.join("/")}` : "/";
+};
+
 const buildSshUrl = (
   host: string,
   port: number,
   username: string,
   remotePath: string
-): string => `ssh://${username}@${host}:${port}${remotePath}`;
+): string =>
+  `ssh://${username}@${host}:${port}${normalizeRemotePath(remotePath)}`;
 
 export function SshConnectWizard({
   onConfirm,
@@ -84,6 +90,8 @@ export function SshConnectWizard({
     []
   );
   const [showSavedList, setShowSavedList] = useState(false);
+  const directoryRequestIdRef = useRef(0);
+  const pendingNavigationPathRef = useRef<string | null>(null);
   const wizardRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -102,17 +110,34 @@ export function SshConnectWizard({
   }, []);
 
   const loadEntries = useCallback(
-    async (path: string): Promise<void> => {
+    async (path: string): Promise<boolean> => {
       if (!sessionId) {
-        return;
+        return false;
       }
+      const normalizedPath = normalizeRemotePath(path);
+      const requestId = ++directoryRequestIdRef.current;
       setIsLoadingEntries(true);
       setEntriesError(null);
       try {
-        const result = await window.snow.sshListDirectory(sessionId, path);
-        setEntries(result);
-        setRemotePath(path);
+        const result = await window.snow.sshListDirectory(
+          sessionId,
+          normalizedPath
+        );
+        if (requestId !== directoryRequestIdRef.current) {
+          return false;
+        }
+        setEntries(
+          result.map((entry) => ({
+            ...entry,
+            path: normalizeRemotePath(entry.path),
+          }))
+        );
+        setRemotePath(normalizedPath);
+        return true;
       } catch (err) {
+        if (requestId !== directoryRequestIdRef.current) {
+          return false;
+        }
         setEntriesError(
           err instanceof Error
             ? err.message
@@ -121,8 +146,11 @@ export function SshConnectWizard({
               })
         );
         setEntries([]);
+        return false;
       } finally {
-        setIsLoadingEntries(false);
+        if (requestId === directoryRequestIdRef.current) {
+          setIsLoadingEntries(false);
+        }
       }
     },
     [sessionId, t]
@@ -245,27 +273,67 @@ export function SshConnectWizard({
     }
   };
 
-  const handleEntryClick = (entry: SshDirectoryEntry): void => {
+  const handleEntryClick = (
+    entry: SshDirectoryEntry,
+    event: React.MouseEvent<HTMLDivElement>
+  ): void => {
+    // The first click already opens a directory. Ignore the second click from
+    // a double-click so a fast response cannot navigate into a same-named child.
+    if (event.detail > 1) {
+      return;
+    }
+
+    const entryPath = normalizeRemotePath(entry.path);
     if (entry.isDirectory) {
-      const newPath = entry.path;
-      setSelectedPath(newPath);
-      setPathHistory((prev) => [...prev, newPath]);
-      void loadEntries(newPath);
+      if (
+        entryPath === remotePath ||
+        pendingNavigationPathRef.current === entryPath
+      ) {
+        setSelectedPath(entryPath);
+        return;
+      }
+
+      pendingNavigationPathRef.current = entryPath;
+      setSelectedPath(entryPath);
+      void loadEntries(entryPath)
+        .then((loaded) => {
+          if (loaded) {
+            setPathHistory((prev) =>
+              prev[prev.length - 1] === entryPath ? prev : [...prev, entryPath]
+            );
+          }
+        })
+        .finally(() => {
+          if (pendingNavigationPathRef.current === entryPath) {
+            pendingNavigationPathRef.current = null;
+          }
+        });
     } else {
-      setSelectedPath(entry.path);
+      setSelectedPath(entryPath);
     }
   };
 
   const handleBreadcrumbClick = (path: string): void => {
-    const index = pathHistory.indexOf(path);
-    if (index >= 0) {
-      setPathHistory((prev) => prev.slice(0, index + 1));
-    }
-    void loadEntries(path);
+    const normalizedPath = normalizeRemotePath(path);
+    pendingNavigationPathRef.current = normalizedPath;
+    void loadEntries(normalizedPath)
+      .then((loaded) => {
+        if (loaded) {
+          setPathHistory((prev) => {
+            const index = prev.indexOf(normalizedPath);
+            return index >= 0 ? prev.slice(0, index + 1) : prev;
+          });
+        }
+      })
+      .finally(() => {
+        if (pendingNavigationPathRef.current === normalizedPath) {
+          pendingNavigationPathRef.current = null;
+        }
+      });
   };
 
   const handleRefresh = (): void => {
-    void loadEntries(remotePath);
+    void loadEntries(normalizeRemotePath(remotePath));
   };
 
   const handleConfirm = (): void => {
@@ -293,6 +361,8 @@ export function SshConnectWizard({
   };
 
   const handleBack = (): void => {
+    directoryRequestIdRef.current += 1;
+    pendingNavigationPathRef.current = null;
     if (sessionId) {
       void window.snow.sshDisconnect(sessionId);
       setSessionId(null);
@@ -691,7 +761,7 @@ export function SshConnectWizard({
                         isSelected ? " selected" : ""
                       }${!entry.isDirectory ? " file" : ""}`}
                       key={entry.path}
-                      onClick={() => handleEntryClick(entry)}
+                      onClick={(event) => handleEntryClick(entry, event)}
                       title={entry.path}
                     >
                       {entry.isDirectory ? (

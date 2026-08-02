@@ -232,6 +232,35 @@ export const TerminalPanelContent = ({
     return () => cancelAnimationFrame(raf);
   }, [isActive]);
 
+  // 右键粘贴：阻止默认菜单，将剪贴板文本通过 xterm 的 paste 送入 PTY。
+  // term.paste 会正确触发 onData（含 bracketed paste 处理），无需直接写 pty。
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+    const handleContextMenu = (event: MouseEvent): void => {
+      event.preventDefault();
+      const term = termRef.current;
+      if (!term) {
+        return;
+      }
+      term.focus();
+      void navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (text) {
+            term.paste(text);
+          }
+        })
+        .catch(() => {
+          // 剪贴板读取失败时静默忽略（如无权限或无可读文本）。
+        });
+    };
+    container.addEventListener("contextmenu", handleContextMenu);
+    return () => container.removeEventListener("contextmenu", handleContextMenu);
+  }, []);
+
   return (
     <div className="terminal-panel">
       <div

@@ -56,6 +56,12 @@ pub struct ResponsesApiMessage {
 pub struct ResponsesApiRequest {
     pub messages: Vec<ResponsesApiMessage>,
     pub model: Option<String>,
+    /// API config profile that should serve this request. When present it
+    /// wins over the conversation's bound profile; when absent the backend
+    /// falls back to the conversation's `api_profile_name` and finally to
+    /// the global active profile. Used to bind a brand-new conversation to a
+    /// provider on its first message.
+    pub api_profile: Option<String>,
     pub conversation_id: Option<String>,
     pub previous_response_id: Option<String>,
     pub directory_id: Option<String>,
@@ -73,6 +79,11 @@ pub struct ResponsesApiRequest {
     /// When true, replace the built-in system prompt with the Goal Mode prompt
     /// that instructs the AI to work autonomously toward a defined objective.
     pub goal_mode: Option<bool>,
+    /// Project ROLE.md content of an SSH (`ssh://`) workspace, resolved by the
+    /// Electron main process over SSH (mirrors RoleEditorPanel's access path).
+    /// Absent for local workspaces — Rust reads the file itself.
+    pub remote_role_content: Option<String>,
+    pub remote_include_global_rules: Option<bool>,
 }
 
 #[napi(object)]
@@ -209,6 +220,8 @@ async fn create_response_async(
         plan_mode: request.plan_mode.unwrap_or(false),
         goal_mode: request.goal_mode.unwrap_or(false),
         system_prompt_ids_json: &api_config.system_prompt_ids_json,
+        remote_role_content: request.remote_role_content.as_deref(),
+        remote_include_global_rules: request.remote_include_global_rules,
     })?;
 
     // Inject conversation_id and session_id as request headers for prompt
@@ -312,6 +325,7 @@ async fn create_response_async(
                 response_id: &streamed_response.id,
                 checkpoint_id: request.checkpoint_id.as_deref().unwrap_or(""),
                 model: &streamed_response.model,
+                api_profile_name: &api_config.profile_name,
                 status: &streamed_response.status,
                 raw_response_json: &raw_response_json,
                 token_usage: streamed_response.token_usage,

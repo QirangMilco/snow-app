@@ -58,6 +58,10 @@ export const ChatInputView = ({
   projectName,
   value,
   textareaRef,
+  apiConfigs,
+  selectedApiProfile,
+  modelMenuView,
+  isSubAgentConversation,
   models,
   selectedModel,
   displayModel,
@@ -103,6 +107,7 @@ export const ChatInputView = ({
   isCompacting,
   setManualValue,
   setIsManualMode,
+  setModelMenuView,
   handleChange,
   handleSend,
   handleAbort,
@@ -113,6 +118,7 @@ export const ChatInputView = ({
   handleManualKeyDown,
   handleRetryFetchModels,
   handleToggleModelMenu,
+  handleSelectApiProfile,
   handleSelectThinking,
   restoreContent,
 }: ChatInputViewProps): React.JSX.Element => {
@@ -146,13 +152,10 @@ export const ChatInputView = ({
   const [isRoleEditorOpen, setIsRoleEditorOpen] = useState(false);
   const [isCustomThinkingMode, setIsCustomThinkingMode] = useState(false);
   const [customThinkingValue, setCustomThinkingValue] = useState("");
-  const [modelMenuView, setModelMenuView] = useState<
-    "root" | "model" | "thinking"
-  >("root");
 
+  // 菜单关闭时退出自定义思考强度输入
   useEffect(() => {
     if (!isModelMenuOpen) {
-      setModelMenuView("root");
       setIsCustomThinkingMode(false);
     }
   }, [isModelMenuOpen]);
@@ -1138,7 +1141,75 @@ export const ChatInputView = ({
                             <ChevronRight size={12} />
                           </span>
                         </button>
+                        {!isSubAgentConversation && apiConfigs.length > 0 && (
+                          <button
+                            className="model-dropdown-item"
+                            onClick={() => setModelMenuView("apiProfile")}
+                            type="button"
+                          >
+                            <span className="model-dropdown-item-name">
+                              {labels.selectApiProfile}
+                            </span>
+                            <span className="model-menu-value">
+                              <span
+                                className="model-menu-value-text"
+                                title={runtimeApiConfig?.displayName}
+                              >
+                                {runtimeApiConfig?.displayName ||
+                                  labels.selectApiProfile}
+                              </span>
+                              <ChevronRight size={12} />
+                            </span>
+                          </button>
+                        )}
                       </div>
+                    )}
+                    {modelMenuView === "apiProfile" && (
+                      <>
+                        <div className="model-menu-header">
+                          <button
+                            aria-label={t("common.back")}
+                            className="model-menu-back"
+                            onClick={() => setModelMenuView("root")}
+                            type="button"
+                          >
+                            <ChevronLeft size={14} />
+                          </button>
+                          <span>{labels.selectApiProfile}</span>
+                        </div>
+                        <div className="model-dropdown-list">
+                          {apiConfigs.map((config) => (
+                            <button
+                              key={config.profileName}
+                              className={`model-dropdown-item ${
+                                config.profileName === selectedApiProfile
+                                  ? "active"
+                                  : ""
+                              }`}
+                              onClick={() => {
+                                void handleSelectApiProfile(config.profileName);
+                              }}
+                              type="button"
+                              title={config.displayName}
+                            >
+                              <span className="model-dropdown-item-name">
+                                {config.displayName}
+                              </span>
+                              <span className="model-dropdown-item-model">
+                                {config.advancedModel ||
+                                  config.basicModel ||
+                                  "-"}
+                              </span>
+                              {config.profileName === selectedApiProfile && (
+                                <Check
+                                  size={14}
+                                  className="model-dropdown-check"
+                                />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </>
                     )}
                     {modelMenuView === "model" &&
                       (isManualMode ? (

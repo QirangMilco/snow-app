@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import type { ApiConfigRecord, Model, TokenUsage } from "../../../../preload";
 export type ChatInputSendOptions = {
   model?: string;
+  apiProfile?: string;
 };
 export type ChatInputProps = {
   placeholder?: string;
@@ -42,6 +43,9 @@ export type ChatInputProps = {
 
 export type RequestMethod = "chat" | "responses" | "gemini" | "anthropic";
 
+/** 模型选择菜单的二级视图。 */
+export type ModelMenuView = "root" | "model" | "thinking" | "apiProfile";
+
 export type ThinkingOption = {
   value: string;
   label: string;
@@ -51,6 +55,10 @@ export type ThinkingOption = {
 export type ChatInputState = {
   value: string;
   textareaRef: RefObject<HTMLDivElement | null>;
+  apiConfigs: ApiConfigRecord[];
+  selectedApiProfile: string;
+  modelMenuView: ModelMenuView;
+  isSubAgentConversation: boolean;
   models: Model[];
   selectedModel: string;
   displayModel: string;
@@ -76,6 +84,7 @@ export type ChatInputState = {
 
 export type ChatInputLabels = {
   selectModel: string;
+  selectApiProfile: string;
   loadModelsError: string;
   loadingModels: string;
   refreshModels: string;
@@ -100,6 +109,9 @@ export type ChatInputActions = {
   handleManualKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
   handleRetryFetchModels: () => Promise<void>;
   handleToggleModelMenu: () => void;
+  setModelMenuView: (view: ModelMenuView) => void;
+  handleOpenApiProfileMenu: () => void;
+  handleSelectApiProfile: (profileName: string) => Promise<void>;
   handleSelectThinking: (nextValue: string) => Promise<void>;
   restoreContent: (content: string) => void;
 };

@@ -699,6 +699,10 @@ export const ptyApi = {
 
 export const windowApi = {
   minimizeWindow: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
+  hideWindowToTray: (): Promise<void> =>
+    ipcRenderer.invoke("window:hide-to-tray"),
+  setTrayActiveSessions: (count: number): Promise<void> =>
+    ipcRenderer.invoke("tray:set-active-sessions", count),
   toggleMaximizeWindow: (): Promise<void> =>
     ipcRenderer.invoke("window:maximize-toggle"),
   closeWindow: (): Promise<void> => ipcRenderer.invoke("window:close"),

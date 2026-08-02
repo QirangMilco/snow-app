@@ -18,7 +18,8 @@ export type ShortcutAction =
   | "toggle-memo"
   | "toggle-todo"
   | "cycle-project"
-  | "open-project-explorer";
+  | "open-project-explorer"
+  | "open-api-profile-menu";
 
 type ListenerMap = {
   "toggle-search": Set<() => void>;
@@ -26,6 +27,7 @@ type ListenerMap = {
   "toggle-todo": Set<() => void>;
   "cycle-project": Set<() => void>;
   "open-project-explorer": Set<() => void>;
+  "open-api-profile-menu": Set<() => void>;
 };
 
 const listeners: ListenerMap = {
@@ -34,6 +36,7 @@ const listeners: ListenerMap = {
   "toggle-todo": new Set(),
   "cycle-project": new Set(),
   "open-project-explorer": new Set(),
+  "open-api-profile-menu": new Set(),
 };
 
 export const shortcutEvents = {

@@ -122,6 +122,23 @@ export type UpsertedConversation = {
   timestamp: number;
 };
 
+/** A file that was modified (created or edited) by the main agent or a
+ *  sub-agent during a conversation session. Recorded at tool-execution time
+ *  and surfaced by the file-change stats panel. */
+export type FileChangeRecord = {
+  /** The filePath argument passed to the filesystem tool (as the model
+   *  supplied it, e.g. relative to the workspace root). */
+  filePath: string;
+  kind: "create" | "edit";
+  /** Whether the change was made by the main agent loop or by a sub-agent
+   *  running inside this conversation. */
+  agent: "main" | "sub";
+  /** Sub-agent display name, present when agent === "sub". */
+  subAgentName?: string;
+  /** Epoch milliseconds when the tool call completed successfully. */
+  timestamp: number;
+};
+
 export type SubAgentSessionEvent = {
   parentConversationId: string;
   conversationId: string;
@@ -135,10 +152,13 @@ export type SubAgentSessionEvent = {
   toolCallInteractionId?: string;
 };
 
+export type ConversationType = "main" | "sub_agent";
+
 export type ConversationSessionState = {
   messages: ChatConversationMessage[];
   messageRecords: ChatMessageRecord[];
   summary: string;
+  conversationType: ConversationType;
   isStreaming: boolean;
   isAborting: boolean;
   /** True when the user paused the agent loop. The loop checks this at the
@@ -297,6 +317,11 @@ export type ConversationContextValue = {
    *  parallel sub-agents each keep their own entry so the UI can match every
    *  SubAgentToolCall to the correct live session. */
   subAgentSessionEvents: Record<string, SubAgentSessionEvent>;
+  /** File changes recorded during this renderer session, keyed by
+   *  conversationId. The main conversation collects both its own changes
+   *  (agent: "main") and — via childSubAgentIds — every sub-agent's changes
+   *  (agent: "sub"). */
+  fileChangeStats: Record<string, FileChangeRecord[]>;
   streamingConversationIds: Set<string>;
   completedConversationIds: Set<string>;
   isLoadingInitialHistory: boolean;
@@ -353,6 +378,11 @@ export type ConversationContextValue = {
   planModeRef: RefValue<boolean>;
   goalModeRef: RefValue<boolean>;
   alwaysApprovedToolsRef: RefValue<Set<string>>;
+  /** Per-conversation Plan Mode approval keys. Cleared only when Plan Mode is
+   *  genuinely turned off (user toggle, Goal Mode mutual exclusion, new chat)
+   *  — NOT on conversation switches, so an approved plan survives switching
+   *  away and back. */
+  planApprovedSessionKeysRef: RefValue<Set<string>>;
   pendingToolAuthorizationRef: RefValue<Map<string, PendingToolAuthorization>>;
   pendingUserQuestionRef: RefValue<Map<string, PendingUserQuestion>>;
   pendingHookDecisionRef: RefValue<Map<string, PendingHookDecision>>;
@@ -378,6 +408,11 @@ export type ConversationContextValue = {
     SetStateAction<UpsertedConversation | null>
   >;
   setSubAgentSessionEvent: (event: SubAgentSessionEvent) => void;
+  /** Record a successful file modification (filesystem-create /
+   *  filesystem-replace_edit) against a conversation's stats. The main agent
+   *  records with agent: "main"; sub-agents record with agent: "sub" under
+   *  their own conversationId so the parent can merge them. */
+  recordFileChange: (conversationId: string, record: FileChangeRecord) => void;
   setStreamingConversationIds: Dispatch<SetStateAction<Set<string>>>;
   setCompletedConversationIds: Dispatch<SetStateAction<Set<string>>>;
   setIsLoadingInitialHistory: Dispatch<SetStateAction<boolean>>;
@@ -427,11 +462,17 @@ export type UseChatConversationResult = {
   upsertedConversation: UpsertedConversation | null;
   /** All sub-agent session events keyed by sub-agent conversationId. */
   subAgentSessionEvents: Record<string, SubAgentSessionEvent>;
+  /** File changes recorded during this renderer session, keyed by
+   *  conversationId. See FileChangeRecord for the shape. */
+  fileChangeStats: Record<string, FileChangeRecord[]>;
+  /** Records a successful file modification for a conversation. */
+  recordFileChange: (conversationId: string, record: FileChangeRecord) => void;
   /** All conversation sessions, keyed by conversation id. Used by tool-call
    *  UIs (e.g. sub-agent activation) to inspect the live state of other
    *  sessions such as streaming sub-agent conversations. */
   sessions: Record<string, ConversationSessionState>;
   activeConversationId: string | undefined;
+  activeConversationType: ConversationType;
   conversationDirectoryId: string | undefined;
   tokenUsage: TokenUsage | null;
   /** Real-time token probe for the current agent-loop iteration.

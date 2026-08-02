@@ -48,6 +48,7 @@ fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest 
         ],
         // Force the basic model for this lightweight task.
         model: None, // will be set after resolving context
+        api_profile: None,
         conversation_id: None,
         previous_response_id: None,
         directory_id: None,
@@ -58,6 +59,8 @@ fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest 
         skip_context: Some(true),
         plan_mode: None,
         goal_mode: None,
+        remote_role_content: None,
+        remote_include_global_rules: None,
     }
 }
 
@@ -114,8 +117,30 @@ pub async fn generate_commit_message_stream(
     // the end of each provider will persist a conversation, but that is
     // acceptable — it is a lightweight single exchange.
     let request_method = context.api_config.request_method.clone();
-    let api_config = context.api_config;
+    let mut api_config = context.api_config;
     let custom_headers = context.custom_headers;
+
+    // Disable thinking/reasoning for all providers — commit message
+    // generation is a lightweight task that does not need extended thinking.
+    {
+        let mut config_value: serde_json::Value =
+            serde_json::from_str(&api_config.config_json).unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(snowcfg) = config_value
+            .as_object_mut()
+            .and_then(|obj| {
+                obj.entry("snowcfg")
+                    .or_insert_with(|| serde_json::json!({}))
+                    .as_object_mut()
+            })
+        {
+            snowcfg.insert("chatThinking".into(), serde_json::json!({"enabled": false}));
+            snowcfg.insert("responsesReasoning".into(), serde_json::json!({"enabled": false}));
+            snowcfg.insert("thinking".into(), serde_json::json!({"enabled": false}));
+            snowcfg.insert("geminiThinking".into(), serde_json::json!({"enabled": false}));
+        }
+        api_config.config_json = serde_json::to_string(&config_value)
+            .unwrap_or(api_config.config_json);
+    }
 
     let result = match request_method.as_str() {
         "chat" => {

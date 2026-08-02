@@ -51,6 +51,11 @@ pub struct StoreChatExchangeInput<'a> {
     pub response_id: &'a str,
     pub checkpoint_id: &'a str,
     pub model: &'a str,
+    /// API config profile that served this exchange. Persisted on the
+    /// conversation row at creation time so the conversation stays bound to
+    /// its provider for subsequent turns. Empty string means "follow the
+    /// global active profile" (legacy behaviour).
+    pub api_profile_name: &'a str,
     pub status: &'a str,
     pub raw_response_json: &'a str,
     pub token_usage: ChatTokenUsage,
@@ -199,6 +204,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                    last_message_preview,
                    message_count,
                    model,
+                   api_profile_name,
                    last_response_id,
                    status,
                    directory_id,
@@ -207,7 +213,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                    created_at,
                    updated_at
                  ) VALUES (
-                   ?1, ?2, ?3, ?3, '', 0, ?4, ?5, 'active', ?6, '', 0, datetime('now', 'localtime'), datetime('now', 'localtime')
+                   ?1, ?2, ?3, ?3, '', 0, ?4, ?5, ?6, 'active', ?7, '', 0, datetime('now', 'localtime'), datetime('now', 'localtime')
                  )
                  ON CONFLICT(conversation_id) DO NOTHING",
                 params![
@@ -215,6 +221,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                     input.conversation_id,
                     title,
                     input.model,
+                    input.api_profile_name,
                     input.response_id,
                     input.directory_id,
                 ],
@@ -349,6 +356,7 @@ pub fn store_failed_chat_exchange(
     request_messages: &[ChatContextMessage],
     checkpoint_id: &str,
     model: &str,
+    api_profile_name: &str,
     directory_id: &str,
     error_message: &str,
 ) -> Result<String> {
@@ -391,6 +399,7 @@ pub fn store_failed_chat_exchange(
             response_id: "",
             checkpoint_id,
             model,
+            api_profile_name,
             status: "error",
             raw_response_json: "{}",
             token_usage: ChatTokenUsage::default(),
@@ -506,7 +515,8 @@ pub fn list_chat_conversations(
                        '',
                        '',
                        0,
-                       COALESCE(emoji, '')
+                       COALESCE(emoji, ''),
+                       api_profile_name
                   FROM chat_conversations AS conversation
                  WHERE directory_id = ?1
                    AND status = 'active'
@@ -573,7 +583,8 @@ pub fn list_chat_conversations_paginated(
                        '',
                        '',
                        0,
-                       COALESCE(emoji, '')
+                       COALESCE(emoji, ''),
+                       api_profile_name
                   FROM chat_conversations AS conversation
                  WHERE directory_id = ?1
                    AND status = 'active'
@@ -719,7 +730,8 @@ pub fn list_pinned_conversations(
                        '',
                        '',
                        0,
-                       COALESCE(emoji, '')
+                       COALESCE(emoji, ''),
+                       api_profile_name
                   FROM chat_conversations AS conversation
                  WHERE directory_id = ?1
                    AND status = 'pin'
@@ -768,7 +780,8 @@ pub fn get_chat_conversation(
                             COALESCE(sub_agent.run_status, ''),
                             COALESCE(sub_agent.error_message, ''),
                             COALESCE(conversation.total_duration_ms, 0),
-                            COALESCE(conversation.emoji, '')
+                            COALESCE(conversation.emoji, ''),
+                            COALESCE(conversation.api_profile_name, '')
                        FROM chat_conversations AS conversation
                        LEFT JOIN sub_agent_sessions AS sub_agent
                          ON sub_agent.conversation_id = conversation.conversation_id
@@ -812,7 +825,8 @@ pub fn list_sub_agent_conversations(
                         sub_agent.run_status,
                         sub_agent.error_message,
                         COALESCE(conversation.total_duration_ms, 0),
-                        COALESCE(conversation.emoji, '')
+                        COALESCE(conversation.emoji, ''),
+                        COALESCE(conversation.api_profile_name, '')
                    FROM sub_agent_sessions AS sub_agent
                    JOIN chat_conversations AS conversation
                      ON conversation.conversation_id = sub_agent.conversation_id
@@ -1284,7 +1298,7 @@ pub fn fork_conversation(
     // Load source conversation metadata
     let source = transaction
         .query_row(
-            "SELECT conversation_id, title, summary, directory_id, model, last_message_preview
+            "SELECT conversation_id, title, summary, directory_id, model, last_message_preview, api_profile_name
                FROM chat_conversations
               WHERE conversation_id = ?1
               LIMIT 1",
@@ -1297,6 +1311,7 @@ pub fn fork_conversation(
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
@@ -1305,7 +1320,9 @@ pub fn fork_conversation(
     let new_conversation_id = create_chat_id("conv");
     let new_id = database::create_snowflake_id();
 
-    // Insert new conversation row, marking it as forked
+    // Insert new conversation row, marking it as forked. The forked
+    // conversation inherits the source conversation's API profile binding so
+    // the continuation keeps routing to the same provider/model.
     transaction.execute(
         "INSERT INTO chat_conversations (
            id,
@@ -1315,6 +1332,7 @@ pub fn fork_conversation(
            last_message_preview,
            message_count,
            model,
+           api_profile_name,
            last_response_id,
            status,
            directory_id,
@@ -1323,7 +1341,7 @@ pub fn fork_conversation(
            created_at,
            updated_at
          ) VALUES (
-           ?1, ?2, ?3, ?4, ?8, 0, ?5, '', 'active', ?6, ?7, 0, datetime('now', 'localtime'), datetime('now', 'localtime')
+           ?1, ?2, ?3, ?4, ?8, 0, ?5, ?9, '', 'active', ?6, ?7, 0, datetime('now', 'localtime'), datetime('now', 'localtime')
          )",
         params![
             new_id,
@@ -1334,6 +1352,7 @@ pub fn fork_conversation(
             source.3,  // directory_id
             source_conversation_id,
             source.5,  // last_message_preview
+            source.6,  // api_profile_name
         ],
     )
     .map_err(|error| database::database_error(database_path, "fork conversation", error))?;
@@ -1667,6 +1686,7 @@ fn map_chat_conversation_row(row: &Row<'_>) -> rusqlite::Result<ChatConversation
         last_message_preview: row.get(3)?,
         message_count: row.get(4)?,
         model: row.get(5)?,
+        api_profile_name: row.get(24)?,
         status: row.get(6)?,
         directory_id: row.get(7)?,
         forked_from_conversation_id: row.get(8)?,
@@ -1686,6 +1706,60 @@ fn map_chat_conversation_row(row: &Row<'_>) -> rusqlite::Result<ChatConversation
         total_duration_ms: row.get(22)?,
         emoji: row.get(23)?,
     })
+}
+
+/// Re-binds a conversation to a different API config profile at runtime.
+/// The new profile takes effect from the next AI request onward. Passing an
+/// empty profile name unbinds the conversation so it follows the global
+/// active profile again.
+pub fn update_conversation_api_profile(
+    database_path: &Path,
+    conversation_id: &str,
+    profile_name: &str,
+) -> Result<()> {
+    let trimmed_profile_name = profile_name.trim();
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            connection.execute(
+                "UPDATE chat_conversations
+                    SET api_profile_name = ?2,
+                        updated_at = datetime('now', 'localtime')
+                  WHERE conversation_id = ?1",
+                params![conversation_id, trimmed_profile_name],
+            )
+        })
+        .map_err(|error| {
+            database::database_error(database_path, "update conversation API profile", error)
+        })
+        .map(|_| ())
+}
+
+/// Reads the API profile bound to a conversation, if any. Used by the
+/// request router to resolve which provider should serve a conversation's
+/// next message when the request itself does not carry an explicit profile.
+/// Returns `Ok(None)` when the conversation does not exist or was never
+/// bound (meaning "follow the global active profile").
+pub fn get_conversation_api_profile(
+    database_path: &Path,
+    conversation_id: &str,
+) -> Result<Option<String>> {
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            connection
+                .query_row(
+                    "SELECT api_profile_name
+                       FROM chat_conversations
+                      WHERE conversation_id = ?1
+                      LIMIT 1",
+                    params![conversation_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map(|profile_name| profile_name.filter(|value| !value.trim().is_empty()))
+        })
+        .map_err(|error| {
+            database::database_error(database_path, "get conversation API profile", error)
+        })
 }
 
 fn create_title(messages: &[ChatContextMessage]) -> String {

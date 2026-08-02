@@ -60,6 +60,59 @@ pub fn get_api_request_context_for_profile(
     })
 }
 
+/// Resolves the API request context for a conversation-scoped profile with
+/// graceful degradation:
+///
+/// 1. When `profile_name` is provided and exists, it is used.
+/// 2. When `profile_name` is provided but no longer exists (e.g. the profile
+///    was deleted while the conversation kept its binding), a warning is
+///    logged and the global active profile is used as a fallback so the
+///    conversation keeps working instead of failing hard.
+/// 3. When `profile_name` is absent, the global active profile is used.
+pub fn get_api_request_context_with_fallback(
+    profile_name: Option<&str>,
+) -> Result<ActiveApiRequestContext> {
+    let trimmed_profile = profile_name.map(str::trim).filter(|value| !value.is_empty());
+
+    if let Some(trimmed_profile) = trimmed_profile {
+        match get_api_request_context_for_profile(Some(trimmed_profile)) {
+            Ok(context) => return Ok(context),
+            Err(error) => {
+                // Fall back to the global active profile and record the
+                // degradation so the app log shows why the requested profile
+                // was skipped.
+                let fallback_result = get_api_request_context_for_profile(None);
+                if fallback_result.is_ok() {
+                    if let Ok(storage_info) = initialize_app_storage() {
+                        let database_path = PathBuf::from(storage_info.database_path);
+                        let _ = crate::storage::services::app_logs::insert_app_log(
+                            &database_path,
+                            &crate::storage::services::app_logs::AppLogInput {
+                                level: "WARN".to_string(),
+                                module: "api".to_string(),
+                                func: "get_api_request_context_with_fallback".to_string(),
+                                line: None,
+                                message: format!(
+                                    "Requested API profile '{trimmed_profile}' is unavailable; fell back to the global active profile"
+                                ),
+                                input: None,
+                                output: None,
+                                duration: None,
+                                context: Some(format!("requested_profile={trimmed_profile}")),
+                                error: Some(error.reason.clone()),
+                                source: "main".to_string(),
+                            },
+                        );
+                    }
+                }
+                return fallback_result;
+            }
+        }
+    }
+
+    get_api_request_context_for_profile(None)
+}
+
 pub fn get_active_custom_headers(
     schemes: &[CustomHeaderSchemeRecord],
 ) -> HashMap<String, String> {

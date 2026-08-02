@@ -111,6 +111,8 @@ async fn create_gemini_response_async(
         plan_mode: request.plan_mode.unwrap_or(false),
         goal_mode: request.goal_mode.unwrap_or(false),
         system_prompt_ids_json: &api_config.system_prompt_ids_json,
+        remote_role_content: request.remote_role_content.as_deref(),
+        remote_include_global_rules: request.remote_include_global_rules,
     })?;
 
     let client = crate::api::http_client::build_proxied_client()
@@ -204,6 +206,7 @@ async fn create_gemini_response_async(
                 response_id: &streamed_response.id,
                 checkpoint_id: request.checkpoint_id.as_deref().unwrap_or(""),
                 model: &streamed_response.model,
+                api_profile_name: &api_config.profile_name,
                 status: &streamed_response.status,
                 raw_response_json: &raw_response_json,
                 token_usage: streamed_response.token_usage,

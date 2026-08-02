@@ -9,7 +9,7 @@ type UseGitStatusResult = {
   status: GitStatusResult | null;
   isLoading: boolean;
   error: string | null;
-  refresh: () => void;
+  refresh: () => Promise<void>;
 };
 
 export const useGitStatus = (
@@ -125,7 +125,7 @@ export const useGitStatus = (
     };
   }, [repoPath, fetchStatus]);
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback((): Promise<void> => {
     // Cancel any pending watcher-debounced refresh so the explicit
     // refresh (e.g. after stage/unstage/commit completes) takes precedence.
     if (watcherDebounceRef.current) {
@@ -136,7 +136,7 @@ export const useGitStatus = (
     // the cooldown window are suppressed (they are caused by our own
     // git operations and would produce stale/intermediate status).
     lastExplicitRefreshRef.current = Date.now();
-    void fetchStatus();
+    return fetchStatus();
   }, [fetchStatus]);
 
   return { status, isLoading, error, refresh };

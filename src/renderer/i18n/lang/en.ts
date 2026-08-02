@@ -221,6 +221,9 @@ export const en = {
   "chat.greetingWithProject": "What would you like to work on in {{name}}?",
   "chat.greetingNoProject": "Select a workspace project to get started.",
   "chat.scrollToBottom": "Scroll to bottom",
+  "chat.subAgentReadOnly": "Sub-agent view is read-only",
+  "chat.subAgentStop": "Stop sub-agent task",
+  "chat.subAgentStopping": "Stopping sub-agent task",
   "chat.quickActionAddProject": "Add a project",
   "chat.quickActionAddProjectDesc": "Open a local workspace directory",
   "chat.quickActionConfigApi": "Configure AI API",
@@ -228,6 +231,7 @@ export const en = {
   "chat.quickActionCustomizeTheme": "Customize appearance",
   "chat.quickActionCustomizeThemeDesc": "Choose theme, light or dark mode",
   "chat.selectModel": "Select model",
+  "chat.selectApiProfile": "Select API provider",
   "chat.model": "Model",
   "chat.manualModel": "Enter model manually",
   "chat.manualModelPlaceholder": "e.g. gpt-4.1",
@@ -788,6 +792,10 @@ export const en = {
   "settings.systemPromptNameRequired": "Prompt name is required.",
   "settings.systemPromptDeleteSuccess": "Deleted system prompt.",
   "settings.systemPromptDeleteError": "Failed to delete system prompt",
+  "settings.personalizationSettings": "Personalization & rules",
+  "settings.personalizationTitle": "Personalization & rules",
+  "settings.personalizationSettingsInfo":
+    "Manage global and project-level behavior rules for the AI assistant.",
   "settings.customHeadersSettings": "Custom headers",
   "settings.customHeadersSettingsInfo": "Add headers for API requests.",
   "settings.customHeadersTitle": "Custom headers",
@@ -954,6 +962,36 @@ export const en = {
   "settings.mcpSaveBeforeFetchTools": "Save this server before fetching tools",
   "settings.mcpFetchToolsSuccess": "Fetched {{count}} tool(s) from {{name}}.",
   "settings.mcpFetchToolsError": "Failed to fetch MCP tools",
+  "settings.mcpErrorProtocolIncompatible":
+    "The MCP server may not support the current protocol. Try updating the server or its SDK.",
+  "settings.mcpErrorStartFailed":
+    "Failed to start the MCP server process. Check the command and arguments.",
+  "settings.mcpErrorInitializeFailed":
+    "Failed to initialize the MCP server connection. The server may not be compatible with the current protocol.",
+  "settings.mcpErrorHttpConnectFailed":
+    "Failed to connect to the MCP HTTP server. Check the URL and network.",
+  "settings.mcpErrorMissingCommand": "This MCP server has no command configured.",
+  "settings.mcpErrorMissingUrl": "This MCP server has no URL configured.",
+  "settings.mcpErrorNotConfigured":
+    "This MCP server is no longer configured. Re-add it and try again.",
+  "settings.mcpErrorListToolsFailed": "Failed to fetch the tool list from the MCP server.",
+  "settings.mcpErrorLoadConfigsFailed": "Failed to load MCP server configurations.",
+  "settings.mcpErrorInvalidConfigJson":
+    "The MCP server configuration contains invalid JSON values.",
+  "settings.mcpFetchToolsErrorDetail": "Failed to fetch MCP tools: {{detail}}",
+  "settings.mcpEditForm": "Form",
+  "settings.mcpJsonInvalid": "Invalid JSON",
+  "settings.mcpJsonEditorLabel": "MCP server JSON configuration",
+  "settings.mcpJsonHint":
+    "Edit the server configuration as JSON. name is required; stdio needs command, http needs url.",
+  "settings.mcpJsonImport": "Import JSON",
+  "settings.mcpJsonImportTitle": "Import MCP servers from JSON",
+  "settings.mcpJsonImportInfo":
+    "Paste a Snow CLI settings.json mcpServers block, a Claude-style mcp.json, or a plain server map. Imported servers are added to the global scope.",
+  "settings.mcpJsonImportButton": "Import",
+  "settings.mcpJsonImportTextarea": "MCP servers JSON",
+  "settings.mcpJsonImportSuccess": "Imported {{count}} MCP server(s).",
+  "settings.mcpJsonImportError": "Failed to import MCP servers",
   "settings.mcpToolDetailsTitle": "Server tools",
   "settings.mcpToolDetailsCount": "{{count}} tool(s) fetched",
   "settings.mcpToolDetailsNotFetched": "Tool list has not been fetched",
@@ -1173,6 +1211,7 @@ export const en = {
   "settings.themePresetsInfo":
     "Pick a built-in color scheme. Light and dark variants are bundled together.",
   "settings.themePresetSnow": "Snow",
+  "settings.themePresetCream": "Cream",
   "settings.themePresetMidnightBlue": "Midnight Blue",
   "settings.themePresetForestGreen": "Forest Green",
   "settings.themePresetRosePink": "Rose Pink",
@@ -1330,6 +1369,7 @@ export const en = {
   "settings.shortcutOpenTodo": "Open todo list",
   "settings.shortcutCycleProject": "Cycle through projects",
   "settings.shortcutOpenExplorer": "Open current project explorer",
+  "settings.shortcutCycleApiProfile": "Open API provider picker",
   "settings.shortcutEnabled": "Enabled",
   "settings.shortcutForegroundOnly": "Foreground only",
   "settings.shortcutForegroundOnlyNote":
@@ -1562,6 +1602,56 @@ export const en = {
     "After saving, the new role definition takes effect on the next conversation.",
   "roleEditor.sshCredentialMissing":
     "Unable to retrieve SSH credentials. Please save them in the SSH connection wizard first.",
+  "personalization.close": "Close personalization settings",
+  "personalization.save": "Save",
+  "personalization.globalTitle": "Global rules",
+  "personalization.globalInfo":
+    "Rules and role definitions that apply to all projects and conversations.",
+  "personalization.globalScopeNote":
+    "Global rules are saved to ~/.snow/ROLE.md and apply to every project and conversation.",
+  "personalization.globalPlaceholder":
+    "Enter global rules here, e.g. role definition, output style, coding conventions...",
+  "personalization.globalSaved": "Global rules saved.",
+  "personalization.globalHint":
+    "Changes take effect in the next conversation.",
+  "personalization.projectTitle": "Project rules",
+  "personalization.projectInfo":
+    "Project-specific rules are loaded after global rules.",
+  "personalization.projectSelect": "Project",
+  "personalization.projectSelectPlaceholder": "Select a project...",
+  "personalization.projectNotFound":
+    "Project directory not found. Add projects from the sidebar first.",
+  "personalization.projectEmpty":
+    "Select a project to edit its ROLE.md. Add projects from the sidebar first.",
+  "personalization.projectScopeNote":
+    "Project rules are appended after global rules and win when instructions conflict.",
+  "personalization.includeGlobalTitle": "Load global rules",
+  "personalization.includeGlobalDesc":
+    "Keep shared preferences active in this project, then add project-specific rules.",
+  "personalization.projectSaved": "Project rules saved.",
+  "personalization.projectPlaceholder":
+    "Enter rules for this project here, e.g. code style, architecture conventions, tech stack notes...",
+  "personalization.projectKindLocal": "Local",
+  "personalization.priorityTitle": "Rule priority",
+  "personalization.priorityInfo":
+    "Every enabled scope is loaded; later instructions win only when they conflict:",
+  "personalization.scopeSummary":
+    "Global and project rules are loaded together by default",
+  "personalization.loadOrder": "Load order",
+  "personalization.prioritySession": "Conversation instructions",
+  "personalization.prioritySessionDesc":
+    "Temporary instructions given in the current conversation.",
+  "personalization.priorityProject": "Project rules",
+  "personalization.priorityProjectDesc":
+    "ROLE.md at the selected project root, applied when a project is active.",
+  "personalization.priorityGlobal": "Global rules",
+  "personalization.priorityGlobalDesc":
+    "~/.snow/ROLE.md, applied to every project and conversation.",
+  "personalization.priorityDefault": "Built-in default prompt",
+  "personalization.priorityDefaultDesc":
+    "Used when no project or global rules are defined.",
+  "personalization.priorityNote":
+    "Every enabled scope is loaded; later rules take priority only when instructions conflict.",
   "projectSkills.location.global": "Global",
   "projectSkills.location.project": "Project",
   "projectSkills.source.snow": "Snow",
@@ -1668,6 +1758,14 @@ export const en = {
   "chat.compactionCollapse": "Hide summary",
   "chat.contextCompacted":
     "Context compacted. Earlier messages are excluded from future AI context.",
+  "chat.fileChanges.summary": "{{count}} file(s) modified in this session",
+  "chat.fileChanges.toggle": "Toggle file changes",
+  "chat.fileChanges.agentMain": "Agent {{count}}",
+  "chat.fileChanges.agentSub": "Sub-agents {{count}}",
+  "chat.fileChanges.kindCreate": "Created",
+  "chat.fileChanges.kindEdit": "Modified",
+  "chat.fileChanges.agentMainName": "Main agent",
+  "chat.fileChanges.agentSubName": "Sub-agent",
   "chatInput.pendingLabel": "Queued",
   "chatInput.withdraw": "Withdraw",
   "chatInput.sendNow": "Send now",
@@ -1702,6 +1800,8 @@ export const en = {
   "rightPanel.browserTab": "Browser",
   "rightPanel.codebaseTab": "Codebase",
   "rightPanel.closeTab": "Close tab",
+  "rightPanel.tabContextNewTerminal": "New Terminal",
+  "rightPanel.tabContextNewBrowser": "New Browser",
   "rightPanel.closeDiff": "Close diff",
   "rightPanel.selectFileToViewDiff": "Select a file to view its diff",
   "rightPanel.noRepositorySelected": "No repository selected",
@@ -1759,6 +1859,7 @@ export const en = {
   "git.loadingStatus": "Loading git status...",
   "git.notARepo": "Not a git repository",
   "git.selectRepo": "Select repository",
+  "git.refresh": "Refresh",
   "git.pull": "Pull",
   "git.pullBehind": "Pull ({{count}} commits behind)",
   "git.push": "Push",
@@ -1806,6 +1907,8 @@ export const en = {
   "app.closeConfirmMessage": "Are you sure you want to quit the application?",
   "app.closeConfirm": "Quit",
   "app.closeCancel": "Cancel",
+  "app.closeMinimize": "Minimize to Tray",
+  "app.closeMinimizeMac": "Menu Bar Only",
   "settings.usageSettings": "Usage statistics",
   "settings.usageSettingsInfo":
     "Track token usage across all API calls, including input, output, and cache statistics.",

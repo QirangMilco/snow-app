@@ -5,6 +5,10 @@ import type {
   ResponsesApiRequest,
   ResponsesApiStreamChunk,
 } from "../../native/types";
+import {
+  readRemoteRoleContext,
+  type RemoteRoleContext,
+} from "../../ssh/remoteWorkspaceCommand";
 import { snowLog } from "../../../utils/snowLogger";
 
 const CHAT_CREATE_RESPONSE_CHUNK_CHANNEL = "chat:create-response:chunk";
@@ -66,6 +70,8 @@ const normalizeResponsesApiRequest = (value: unknown): ResponsesApiRequest => {
   return {
     messages,
     model: typeof source.model === "string" ? source.model : undefined,
+    apiProfile:
+      typeof source.apiProfile === "string" ? source.apiProfile : undefined,
     conversationId:
       typeof source.conversationId === "string"
         ? source.conversationId
@@ -99,6 +105,36 @@ const normalizeResponsesApiRequest = (value: unknown): ResponsesApiRequest => {
   };
 };
 
+/**
+ * Resolve the project ROLE.md content for an SSH workspace so the Rust prompt
+ * builder can inject the project role even when the working directory is a
+ * remote `ssh://` path. Local workspaces are handled entirely inside Rust
+ * (it reads `<workspace>/ROLE.md` and `.snow/settings.json` directly).
+ *
+ * Any failure (no directory, SSH unavailable, missing file) silently falls
+ * back to `null` — the global ROLE.md remains the fallback.
+ */
+const resolveRemoteRoleContext = async (
+  directoryId: string | undefined,
+  native: NativeBridge
+): Promise<RemoteRoleContext | null> => {
+  if (!directoryId) {
+    return null;
+  }
+  try {
+    const directories = await native.listWorkspaceDirectories();
+    const matched = directories.find(
+      (directory) => directory.directoryId === directoryId
+    );
+    if (!matched || !matched.path.startsWith("ssh://")) {
+      return null;
+    }
+    return readRemoteRoleContext(matched.path);
+  } catch {
+    return null;
+  }
+};
+
 export const registerChatHandlers = (native: NativeBridge): void => {
   ipcMain.handle(
     "chat:create-response-stream",
@@ -107,8 +143,23 @@ export const registerChatHandlers = (native: NativeBridge): void => {
       const normalizedStreamId = normalizeCreateResponseStreamId(streamId);
 
       try {
+        const remoteRoleContext = await resolveRemoteRoleContext(
+          normalizedRequest.directoryId,
+          native
+        );
         return await native.createResponseStream(
-          normalizedRequest,
+          {
+            ...normalizedRequest,
+            ...(remoteRoleContext?.content
+              ? { remoteRoleContent: remoteRoleContext.content }
+              : {}),
+            ...(remoteRoleContext
+              ? {
+                  remoteIncludeGlobalRules:
+                    remoteRoleContext.includeGlobalRules,
+                }
+              : {}),
+          },
           (chunk: ResponsesApiStreamChunk) => {
             if (event.sender.isDestroyed()) {
               return;

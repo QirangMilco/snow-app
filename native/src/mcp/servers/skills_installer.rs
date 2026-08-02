@@ -259,6 +259,16 @@ struct ShaInfo {
     r#ref: String,
 }
 
+/// Commit SHA as an option: an empty SHA (degraded mode, when the GitHub API
+/// was unavailable and the archive was downloaded by ref name) becomes `None`.
+fn commit_sha_opt(sha: &str) -> Option<String> {
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha.to_string())
+    }
+}
+
 /// Resolve the commit SHA for the given GitHub ref via the GitHub REST API.
 fn resolve_commit_sha(parsed: &ParsedGitHubUrl) -> napi::Result<ShaInfo> {
     let ref_path = parsed.r#ref.clone().unwrap_or_else(|| "HEAD".to_string());
@@ -366,36 +376,58 @@ fn resolve_commit_sha(parsed: &ParsedGitHubUrl) -> napi::Result<ShaInfo> {
 }
 
 fn build_http_client() -> napi::Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .user_agent("snow-app")
-        .build()
-        .map_err(|e| {
-            Error::new(
-                Status::GenericFailure,
-                format!("Failed to build HTTP client: {e}"),
-            )
-        })
+    let mut builder = reqwest::blocking::Client::builder().user_agent("snow-app");
+    // Use a GitHub token when available to avoid unauthenticated API rate
+    // limits (60 requests/hour per IP). Reads GITHUB_TOKEN first, then
+    // GH_TOKEN (the environment variable used by the gh CLI, e.g. after
+    // `gh auth login`); the app inherits user-level environment variables,
+    // so a logged-in gh usually makes the installer authenticated too.
+    let token = std::env::var("GITHUB_TOKEN")
+        .or_else(|_| std::env::var("GH_TOKEN"))
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(token) = token {
+        if let Ok(header_value) =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
+        {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::AUTHORIZATION, header_value);
+            builder = builder.default_headers(headers);
+        }
+    }
+    builder.build().map_err(|e| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to build HTTP client: {e}"),
+        )
+    })
 }
 
-/// Download a tarball of a GitHub repo and extract it into the target
+/// Download a tar.gz archive of a GitHub repo and extract it into the target
 /// directory. The top-level "owner-repo-hash/" directory is stripped.
+///
+/// Uses codeload.github.com (GitHub's archive CDN) directly instead of the
+/// api.github.com tarball endpoint: codeload is not subject to the anonymous
+/// API rate limit, so installs keep working without authentication (e.g. no
+/// gh login / GITHUB_TOKEN). It accepts a branch, tag, commit SHA or `HEAD`.
 fn download_and_extract(parsed: &ParsedGitHubUrl, ref_name: &str, target_dir: &Path) -> napi::Result<()> {
     let download_url = format!(
-        "https://api.github.com/repos/{}/{}/tarball/{}",
+        "https://codeload.github.com/{}/{}/tar.gz/{}",
         parsed.owner, parsed.repo, ref_name
     );
     let client = build_http_client()?;
     let resp = client.get(&download_url).send().map_err(|e| {
         Error::new(
             Status::GenericFailure,
-            format!("Failed to download tarball: {e}"),
+            format!("Failed to download archive: {e}"),
         )
     })?;
     if !resp.status().is_success() {
         return Err(Error::new(
             Status::GenericFailure,
             format!(
-                "Failed to download tarball: {} {}",
+                "Failed to download archive: {} {}",
                 resp.status().as_u16(),
                 resp.status().canonical_reason().unwrap_or("")
             ),
@@ -405,7 +437,7 @@ fn download_and_extract(parsed: &ParsedGitHubUrl, ref_name: &str, target_dir: &P
     let bytes = resp.bytes().map_err(|e| {
         Error::new(
             Status::GenericFailure,
-            format!("Failed to read tarball bytes: {e}"),
+            format!("Failed to read archive bytes: {e}"),
         )
     })?;
 
@@ -663,7 +695,7 @@ fn install_single_skill_from_dir(
             sub_dir: sub_dir_override.map(|s| s.to_string()).or_else(|| parsed.sub_dir.clone()),
         },
         installed_at: installed_at.clone(),
-        commit_sha: Some(sha_info.sha.clone()),
+        commit_sha: commit_sha_opt(&sha_info.sha),
     };
     upsert_record(record)?;
 
@@ -672,7 +704,7 @@ fn install_single_skill_from_dir(
         skill_id,
         path: dest_dir.to_string_lossy().into_owned(),
         installed_at,
-        commit_sha: Some(sha_info.sha.clone()),
+        commit_sha: commit_sha_opt(&sha_info.sha),
         error: None,
     })
 }
@@ -698,19 +730,16 @@ fn install_skill_from_github_blocking(
         }
     };
 
-    // 1. Resolve commit SHA
+    // 1. Resolve commit SHA. When the GitHub API is unavailable or
+    // rate-limited (e.g. no gh login / GITHUB_TOKEN), degrade gracefully:
+    // download the requested ref (or `HEAD` = default branch) from codeload
+    // and leave commit_sha empty in the registry.
     let sha_info = match resolve_commit_sha(&parsed) {
         Ok(info) => info,
-        Err(e) => {
-            return Ok(SkillBatchInstallResult {
-                success: false,
-                results: Vec::new(),
-                installed_count: 0,
-                total_count: 0,
-                commit_sha: None,
-                error: Some(format!("Failed to resolve commit SHA: {e}")),
-            });
-        }
+        Err(_) => ShaInfo {
+            sha: String::new(),
+            r#ref: parsed.r#ref.clone().unwrap_or_else(|| "HEAD".to_string()),
+        },
     };
 
     // 2. Create temp directory
@@ -737,7 +766,7 @@ fn install_skill_from_github_blocking(
                 results: Vec::new(),
                 installed_count: 0,
                 total_count: 0,
-                commit_sha: Some(sha_info.sha.clone()),
+                commit_sha: commit_sha_opt(&sha_info.sha),
                 error: Some(format!(
                     "Directory \"{}\" not found in repository {}/{}. Make sure the path is correct.",
                     parsed.sub_dir.as_deref().unwrap_or(""),
@@ -755,7 +784,7 @@ fn install_skill_from_github_blocking(
                 results: Vec::new(),
                 installed_count: 0,
                 total_count: 0,
-                commit_sha: Some(sha_info.sha.clone()),
+                commit_sha: commit_sha_opt(&sha_info.sha),
                 error: Some(format!(
                     "SKILL.md not found in repository {}/{}{}. Make sure the repository contains a SKILL.md file (either at the root or inside a sub-directory).",
                     parsed.owner,
@@ -810,7 +839,7 @@ fn install_skill_from_github_blocking(
             results,
             installed_count,
             total_count: skill_dirs.len() as i64,
-            commit_sha: Some(sha_info.sha.clone()),
+            commit_sha: commit_sha_opt(&sha_info.sha),
             error: None,
         })
     })();

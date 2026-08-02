@@ -12,6 +12,8 @@ use super::servers::codebase::CodebaseService;
 use super::servers::codelens::CodeLensService;
 use super::servers::filesystem::FilesystemService;
 use super::servers::grep::GrepService;
+use super::servers::config::ConfigService;
+use super::servers::skills_config::SkillsConfigService;
 use super::servers::sub_agents::SubAgentsService;
 use super::servers::todo::TodoService;
 use super::servers::user_interaction::UserInteractionService;
@@ -36,6 +38,10 @@ fn builtin_services_in_order() -> Vec<Arc<dyn McpService>> {
         Arc::new(CodebaseService::new()),
         Arc::new(CodeLensService::new()),
         Arc::new(AppControlService::new()),
+        Arc::new(ConfigService::new()),
+        // NOTE: new services must be appended to the END of this list to keep
+        // the tool order stable (prompt cache); never insert in the middle.
+        Arc::new(SkillsConfigService::new()),
     ]
 }
 

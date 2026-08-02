@@ -374,6 +374,9 @@ export const killPty = (id: string): void => {
   sessions.delete(id);
 };
 
+/** 当前存活的终端会话数（供托盘 tooltip 等模块展示）。 */
+export const getActivePtyCount = (): number => sessions.size;
+
 export const killAllPtyForWebContents = (webContents: WebContents): void => {
   for (const [id, session] of sessions) {
     if (session.webContents === webContents) {

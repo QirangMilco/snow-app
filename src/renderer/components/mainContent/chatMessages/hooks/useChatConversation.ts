@@ -45,6 +45,24 @@ export const useChatConversation = (
     },
     []
   );
+  // File-change stats collected at tool-execution time, keyed by
+  // conversationId. Sub-agent changes are stored under the sub-agent's own
+  // conversationId; the parent merges them via childSubAgentIds for display.
+  const [fileChangeStats, setFileChangeStats] = useState<
+    ConversationContextValue["fileChangeStats"]
+  >({});
+  const recordFileChange = useCallback(
+    (
+      conversationId: string,
+      record: ConversationContextValue["fileChangeStats"][string][number]
+    ) => {
+      setFileChangeStats((prev) => ({
+        ...prev,
+        [conversationId]: [...(prev[conversationId] ?? []), record],
+      }));
+    },
+    []
+  );
   const [streamingConversationIds, setStreamingConversationIds] = useState<
     Set<string>
   >(new Set());
@@ -162,6 +180,11 @@ export const useChatConversation = (
   // `resolve` callback before proceeding to the next iteration.
   const pauseControllerRef = useRef<Map<string, PauseController>>(new Map());
 
+  // Per-conversation Plan Mode approval keys (see
+  // ConversationContextValue.planApprovedSessionKeysRef). Owned here so every
+  // mode-management hook can clear it when Plan Mode is genuinely turned off.
+  const planApprovedSessionKeysRef = useRef<Set<string>>(new Set());
+
   // --- Active API config accessor ---
   // Fetches the active config fresh from storage on every call so that user
   // edits (e.g. the auto-compress threshold) take effect immediately at the
@@ -197,6 +220,8 @@ export const useChatConversation = (
     conversationVersion,
     upsertedConversation,
     subAgentSessionEvents,
+    fileChangeStats,
+    recordFileChange,
     streamingConversationIds,
     completedConversationIds,
     isLoadingInitialHistory,
@@ -231,6 +256,7 @@ export const useChatConversation = (
     planModeRef,
     goalModeRef,
     alwaysApprovedToolsRef,
+    planApprovedSessionKeysRef,
     pendingToolAuthorizationRef,
     pendingUserQuestionRef,
     pendingHookDecisionRef,
@@ -397,8 +423,11 @@ export const useChatConversation = (
     conversationVersion,
     upsertedConversation,
     subAgentSessionEvents,
+    fileChangeStats,
+    recordFileChange,
     sessions,
     activeConversationId,
+    activeConversationType: activeSession?.conversationType ?? "main",
     conversationDirectoryId: activeSession?.directoryId,
     tokenUsage: activeSession?.tokenUsage ?? null,
     streamTokenCount: activeSession?.streamTokenCount ?? 0,

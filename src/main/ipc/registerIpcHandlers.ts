@@ -11,6 +11,7 @@ import { registerGitHandlers } from "./handlers/gitHandlers";
 import { registerWindowHandlers } from "./handlers/windowHandlers";
 import { registerNotificationHandlers } from "./handlers/notificationHandlers";
 import { registerMemoHandlers } from "./handlers/memoHandlers";
+import { registerPersonalizationHandlers } from "./handlers/personalizationHandlers";
 
 export const registerIpcHandlers = (native: NativeBridge): void => {
   registerPtyHandlers();
@@ -26,4 +27,5 @@ export const registerIpcHandlers = (native: NativeBridge): void => {
   registerWindowHandlers(native);
   registerNotificationHandlers();
   registerMemoHandlers(native);
+  registerPersonalizationHandlers();
 };

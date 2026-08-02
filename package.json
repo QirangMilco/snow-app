@@ -1,6 +1,6 @@
 {
   "name": "snow-app",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "High-performance cross-platform desktop app scaffold powered by Electron, React, TypeScript, and Rust.",
   "author": {
     "name": "Qirang",
@@ -86,7 +86,9 @@
       "!**/node_modules/node-pty/build/Release/*.lastbuildstate",
       "!**/node_modules/node-pty/build/Release/*.xml",
       "!**/node_modules/node-pty/prebuilds/win32-arm64/**",
-      "!**/node_modules/node-pty/third_party/conpty/**/win10-arm64/**"
+      "!**/node_modules/node-pty/third_party/conpty/**/win10-arm64/**",
+      "resources/skills/**",
+      "docs/**"
     ],
     "asarUnpack": [
       "native/*.node",

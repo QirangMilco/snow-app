@@ -171,6 +171,10 @@ export const useConversationManagement = (
                     messages: buildConversationMessages(page.items),
                     messageRecords: page.items,
                     summary: nextTitle,
+                    conversationType:
+                      conversationRecord?.conversationType === "sub_agent"
+                        ? "sub_agent"
+                        : "main",
                     isStreaming: false,
                     isAborting: false,
                     isPaused: false,
@@ -361,6 +365,11 @@ export const useConversationManagement = (
       void window.snow.setPlanMode(false);
     }
 
+    // A new chat starts a brand-new task: invalidate every Plan Mode
+    // approval, even when Plan Mode was already off but other conversations
+    // still hold an approved plan.
+    ctx.planApprovedSessionKeysRef.current.clear();
+
     // Reset Goal Mode so a new chat always starts with it disabled.
     if (ctx.goalModeRef.current) {
       ctx.goalModeRef.current = false;
@@ -391,6 +400,7 @@ export const useConversationManagement = (
     ctx.setPlanModeState,
     ctx.goalModeRef,
     ctx.setGoalModeState,
+    ctx.planApprovedSessionKeysRef,
   ]);
 
   const handleAbort = useCallback((): void => {

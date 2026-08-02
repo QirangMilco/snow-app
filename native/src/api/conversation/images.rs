@@ -115,6 +115,13 @@ fn parse_base64_image_data_url(data_url: &str) -> Option<ChatImage> {
         return None;
     }
 
+    // 校验 base64 内容合法性。非法的 base64 会导致上游 API 直接拒绝请求
+    // （例如 "Invalid 'input[0].content[1].image_url' ... invalid base64-encoded value"）。
+    // 这里与上游使用相同的标准解码器提前拦截，避免把脏数据发到视觉模型。
+    if base64::engine::general_purpose::STANDARD.decode(data).is_err() {
+        return None;
+    }
+
     Some(ChatImage {
         media_type: media_type.to_string(),
         data: data.to_string(),

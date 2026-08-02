@@ -27,6 +27,8 @@ use super::servers::codebase::CodebaseService;
 use super::servers::codelens::CodeLensService;
 use super::servers::filesystem::FilesystemService;
 use super::servers::grep::GrepService;
+use super::servers::config::ConfigService;
+use super::servers::skills_config::SkillsConfigService;
 use super::servers::remote_workspace::{
     is_ssh_path, resolve_remote_project_workspace, resolve_remote_workspace_path,
     RemoteWorkspaceCallback,
@@ -88,6 +90,7 @@ const REQUEST_APPROVAL_FULL_NAME: &str = "app-control-requestApproval";
 /// server_name 经 `sanitize_name` 后不含 `-`，可安全用第一个 `-` 分割。
 pub const BUILTIN_SERVER_IDS: &[&str] = &[
     "user-interaction",
+    "skills-config",
     "app-control",
     "filesystem",
     "sub-agents",
@@ -95,6 +98,7 @@ pub const BUILTIN_SERVER_IDS: &[&str] = &[
     "codebase",
     "codelens",
     "browser",
+    "config",
     "skills",
     "bash",
     "todo",
@@ -883,6 +887,14 @@ pub async fn call_mcp_tool(
     } else if let Some(app_control_tool) = tool_full_name.strip_prefix("app-control-") {
         AppControlService::new()
             .execute_async(app_control_tool, &args, &on_app_control, &on_user_question)
+            .await?
+    } else if let Some(config_tool) = tool_full_name.strip_prefix("config-") {
+        ConfigService::new()
+            .execute_async(config_tool, &args)
+            .await?
+    } else if let Some(skills_config_tool) = tool_full_name.strip_prefix("skills-config-") {
+        SkillsConfigService::new()
+            .execute_async(skills_config_tool, &args)
             .await?
     } else if tool_full_name == "skills-skill-execute" {
         SkillsService::new()

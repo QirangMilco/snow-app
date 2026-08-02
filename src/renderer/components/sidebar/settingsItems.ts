@@ -1,6 +1,7 @@
 import {
   Boxes,
   ChartColumn,
+  Database,
   EyeOff,
   Globe,
   FishingHook,
@@ -11,7 +12,6 @@ import {
   Plug,
   Puzzle,
   ScrollText,
-  Search,
   Sparkles,
   ShieldAlert,
   Terminal,
@@ -50,7 +50,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
   },
   {
     id: "codebase",
-    icon: Search,
+    icon: Database,
     labelKey: "settings.codebaseSettings",
     defaultLabel: "Codebase settings",
     view: "codebase-settings",
@@ -75,6 +75,13 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
     labelKey: "settings.builtinServicesSettings",
     defaultLabel: "Built-in services",
     view: "builtin-services-settings",
+  },
+  {
+    id: "personalization",
+    icon: ScrollText,
+    labelKey: "settings.personalizationSettings",
+    defaultLabel: "Personalization",
+    view: "personalization-settings",
   },
   {
     id: "customheaders",

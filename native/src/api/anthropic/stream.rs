@@ -158,7 +158,7 @@ pub(super) async fn collect_anthropic_stream(
                             ThreadsafeFunctionCallMode::NonBlocking,
                         );
 
-                        match wait_before_retry(retry_options, cancel_token).await {
+                        match wait_before_retry(retry_options, cancel_token, attempt).await {
                             Ok(()) => { attempt += 1; continue; }
                             Err(e) => return Err(e),
                         }
@@ -187,7 +187,7 @@ pub(super) async fn collect_anthropic_stream(
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
 
-                    match wait_before_retry(retry_options, cancel_token).await {
+                    match wait_before_retry(retry_options, cancel_token, attempt).await {
                         Ok(()) => { attempt += 1; continue; }
                         Err(e) => return Err(e),
                     }
@@ -245,7 +245,7 @@ pub(super) async fn collect_anthropic_stream(
                         ThreadsafeFunctionCallMode::NonBlocking,
                     );
 
-                    match wait_before_retry(retry_options, cancel_token).await {
+                    match wait_before_retry(retry_options, cancel_token, attempt).await {
                         Ok(()) => {
                             // Reset accumulated state so the retry starts fresh.
                             raw_events.clear();
@@ -394,7 +394,7 @@ pub(super) async fn collect_anthropic_stream(
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
 
-            match wait_before_retry(retry_options, cancel_token).await {
+            match wait_before_retry(retry_options, cancel_token, attempt).await {
                 Ok(()) => {
                     raw_events.clear();
                     content_chunks.clear();

@@ -260,6 +260,33 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
     }
   );
   ipcMain.handle(
+    "chat-conversations:update-api-profile",
+    async (_event, conversationId: unknown, profileName: unknown) => {
+      if (typeof conversationId !== "string" || !conversationId.trim()) {
+        throw new Error(
+          "Conversation ID is required to update API profile"
+        );
+      }
+      if (typeof profileName !== "string") {
+        throw new Error("Profile name is required to update API profile");
+      }
+
+      const normalizedProfileName = profileName.trim();
+      await native.updateConversationApiProfile(
+        conversationId.trim(),
+        normalizedProfileName
+      );
+      // Log only after the native update succeeded, so a failure is not
+      // misreported as an applied change.
+      snowLog.info({
+        module: "ipc/conversation",
+        func: "update-api-profile",
+        message: "Conversation API profile updated",
+        context: `conversation=${conversationId.trim()} profile=${normalizedProfileName || "(unbound)"}`,
+      });
+    }
+  );
+  ipcMain.handle(
     "chat-conversations:delete",
     async (_event, conversationId: unknown) => {
       if (typeof conversationId !== "string" || !conversationId.trim()) {

@@ -15,6 +15,7 @@ import {
   updateFirstMatchingToolCall,
 } from "../utils/conversationHelpers";
 import { appendHookExecutionToMessage, runHook } from "./hookOutcome";
+import { extractFileChangeFromTool } from "./fileChangeTracking";
 import {
   PARENT_PLAN_APPROVAL_REQUIRED,
   createStreamChunkHandler,
@@ -156,6 +157,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
 
       const subConvId = subConversationId!;
       ctx.ensureSession(subConvId, dirId);
+      ctx.updateSessionField(subConvId, "conversationType", "sub_agent");
       const subSessionRef = ctx.sessionsRefData.current.get(subConvId);
       if (subSessionRef) {
         subSessionRef.isSending = true;
@@ -669,6 +671,29 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
               };
             })
           );
+
+          // Record successful file modifications made by this sub-agent under
+          // its own conversationId AND the parent conversationId. Storing
+          // under the parent key lets the file-change stats panel show the
+          // full picture (main agent + sub-agents) without extra lookups;
+          // the sub-agent's own key keeps its per-session view accurate.
+          if (!subToolErrored && subResult !== undefined) {
+            const subFileChange = extractFileChangeFromTool(
+              subToolCall.name,
+              subToolCall.arguments,
+              subResult
+            );
+            if (subFileChange) {
+              const subChangeRecord = {
+                ...subFileChange,
+                agent: "sub" as const,
+                subAgentName: subAgentName ?? config?.name ?? agentId,
+                timestamp: Date.now(),
+              };
+              ctx.recordFileChange(subConvId, subChangeRecord);
+              ctx.recordFileChange(parentConversationId, subChangeRecord);
+            }
+          }
 
           const subModelResult = formatMcpToolResultForModel(subResult);
           subToolResults.push(subModelResult);
