@@ -1,10 +1,4 @@
-import {
-  AlertCircle,
-  FileCode2,
-  FolderOpen,
-  Loader2,
-  Save,
-} from "lucide-react";
+import { FileCode2, FolderOpen, Loader2, Save } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceDirectoryRecord } from "../../../../preload";
 import { CustomSelect } from "../../common/CustomSelect";
@@ -381,6 +375,22 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
         </div>
       ) : null}
 
+      <AutoDismissNotice
+        message={
+          error ||
+          (saveSuccess
+            ? t("personalization.projectSaved", {
+                defaultValue: "Project rules saved.",
+              })
+            : "")
+        }
+        tone={error ? "error" : "success"}
+        onDismiss={() => {
+          setError(null);
+          setSaveSuccess(false);
+        }}
+      />
+
       {!selectedProjectId ? (
         <div className="personalization-empty">
           <FolderOpen size={20} />
@@ -410,45 +420,26 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
                 ) : null}
               </div>
             </div>
-            <div>
-              <button
-                className="personalization-save-btn"
-                disabled={isSaving || isLoading || !hasChanges}
-                onClick={() => void handleSave()}
-                type="button"
-              >
-                {isSaving ? (
-                  <Loader2 className="spin" size={14} />
-                ) : (
-                  <Save size={14} />
-                )}
-                <span>
-                  {t("personalization.save", { defaultValue: "Save" })}
-                </span>
-              </button>
-            </div>
+            <button
+              className="api-settings-action-btn primary"
+              disabled={isSaving || isLoading || !hasChanges}
+              onClick={() => void handleSave()}
+              type="button"
+            >
+              {isSaving ? (
+                <Loader2 className="spin" size={14} />
+              ) : (
+                <Save size={14} />
+              )}
+              <span>
+                {t("personalization.save", { defaultValue: "Save" })}
+              </span>
+            </button>
           </div>
 
-          {error ? (
-            <div className="project-sensitive-command-error">
-              <AlertCircle size={15} />
-              <span>{error}</span>
-            </div>
-          ) : null}
-
-          {saveSuccess ? (
-            <AutoDismissNotice
-              message={t("personalization.projectSaved", {
-                defaultValue: "Project rules saved.",
-              })}
-              tone="success"
-              onDismiss={() => setSaveSuccess(false)}
-            />
-          ) : null}
-
           {isLoading ? (
-            <div className="project-sensitive-command-state">
-              <Loader2 className="spin" size={18} />
+            <div className="main-content-loading" role="status">
+              <Loader2 className="spin" size={22} aria-hidden="true" />
               <span>
                 {t("roleEditor.loading", {
                   defaultValue: "Loading ROLE.md...",

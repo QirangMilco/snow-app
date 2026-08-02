@@ -1,4 +1,4 @@
-import { AlertCircle, FileText, Globe, Loader2, Save } from "lucide-react";
+import { FileText, Globe, Loader2, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AutoDismissNotice } from "../../AutoDismissNotice";
 import { useI18n } from "../../../i18n";
@@ -100,45 +100,42 @@ export const GlobalRoleEditor = (): React.JSX.Element => {
             ) : null}
           </div>
         </div>
-        <div>
-          <button
-            className="personalization-save-btn"
-            disabled={isSaving || isLoading || !hasChanges}
-            onClick={() => void handleSave()}
-            type="button"
-          >
-            {isSaving ? (
-              <Loader2 className="spin" size={14} />
-            ) : (
-              <Save size={14} />
-            )}
-            <span>
-              {t("personalization.save", { defaultValue: "Save" })}
-            </span>
-          </button>
-        </div>
+        <button
+          className="api-settings-action-btn primary"
+          disabled={isSaving || isLoading || !hasChanges}
+          onClick={() => void handleSave()}
+          type="button"
+        >
+          {isSaving ? (
+            <Loader2 className="spin" size={14} />
+          ) : (
+            <Save size={14} />
+          )}
+          <span>
+            {t("personalization.save", { defaultValue: "Save" })}
+          </span>
+        </button>
       </div>
 
-      {error ? (
-        <div className="project-sensitive-command-error">
-          <AlertCircle size={15} />
-          <span>{error}</span>
-        </div>
-      ) : null}
-
-      {saveSuccess ? (
-        <AutoDismissNotice
-          message={t("personalization.globalSaved", {
-            defaultValue: "Global rules saved.",
-          })}
-          tone="success"
-          onDismiss={() => setSaveSuccess(false)}
-        />
-      ) : null}
+      <AutoDismissNotice
+        message={
+          error ||
+          (saveSuccess
+            ? t("personalization.globalSaved", {
+                defaultValue: "Global rules saved.",
+              })
+            : "")
+        }
+        tone={error ? "error" : "success"}
+        onDismiss={() => {
+          setError(null);
+          setSaveSuccess(false);
+        }}
+      />
 
       {isLoading ? (
-        <div className="project-sensitive-command-state">
-          <Loader2 className="spin" size={18} />
+        <div className="main-content-loading" role="status">
+          <Loader2 className="spin" size={22} aria-hidden="true" />
           <span>
             {t("roleEditor.loading", { defaultValue: "Loading ROLE.md..." })}
           </span>

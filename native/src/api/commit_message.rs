@@ -21,6 +21,26 @@ use crate::api::responses::{
     ResponsesApiStreamCallback,
 };
 
+/// 防止超长 diff 撑爆模型上下文（此前 1.68M tokens 的 diff 导致 400 错误）。
+/// 超过上限时按行截断并在末尾追加截断标记。
+const MAX_DIFF_CHARS: usize = 50_000;
+
+fn limit_diff(diff: &str) -> String {
+    if diff.len() <= MAX_DIFF_CHARS {
+        return diff.to_string();
+    }
+    let mut out = String::with_capacity(MAX_DIFF_CHARS + 64);
+    for line in diff.lines() {
+        if out.len() + line.len() + 1 > MAX_DIFF_CHARS {
+            break;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("\n... [truncated: diff exceeds 50,000 chars] ...\n");
+    out
+}
+
 /// Build a `ResponsesApiRequest` for commit-message generation, forcing the
 /// basic model.
 fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest {
@@ -107,7 +127,7 @@ pub async fn generate_commit_message_stream(
             &database_path,
             crate::storage::services::feature_prompts::PROMPT_KEY_COMMIT_MESSAGE,
         );
-    let mut request = build_request(&staged_diff, &commit_prompt);
+    let mut request = build_request(&limit_diff(&staged_diff), &commit_prompt);
     request.model = Some(basic_model.to_string());
 
     // --- 4. Dispatch to the correct provider ---
@@ -194,4 +214,49 @@ pub async fn generate_commit_message_stream(
     };
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{limit_diff, MAX_DIFF_CHARS};
+
+    #[test]
+    fn keeps_short_diff_unchanged() {
+        let diff = "diff --git a/a.txt b/a.txt\n+hello world\n";
+        assert_eq!(limit_diff(diff), diff);
+    }
+
+    #[test]
+    fn empty_diff_passes_through() {
+        assert_eq!(limit_diff(""), "");
+    }
+
+    #[test]
+    fn truncates_long_diff_by_lines() {
+        let line = "this is a fairly long diff line that repeats\n";
+        let diff = line.repeat(MAX_DIFF_CHARS / line.len() + 10);
+        let out = limit_diff(&diff);
+
+        assert!(out.len() < diff.len(), "output must be smaller than input");
+        assert!(
+            out.contains("[truncated"),
+            "output must carry the truncation marker"
+        );
+        // 截断标记之前是保留的 diff 内容，不应超过上限（+1 容忍行尾换行）。
+        let marker = out.find("[truncated").expect("marker present");
+        assert!(
+            marker <= MAX_DIFF_CHARS + 1,
+            "kept content exceeds limit: {marker}"
+        );
+    }
+
+    #[test]
+    fn single_giant_line_only_keeps_marker() {
+        // 注意：截断标记文本中 "exceeds" 含字母 x，因此这里用 z 检测被截断的行。
+        let diff = "z".repeat(MAX_DIFF_CHARS + 1000);
+        let out = limit_diff(&diff);
+
+        assert!(!out.contains('z'), "giant line must be dropped");
+        assert!(out.contains("[truncated"));
+    }
 }

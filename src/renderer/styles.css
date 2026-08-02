@@ -22435,6 +22435,8 @@ input {
 .feature-prompt-card-title {
   font-size: 13px;
   line-height: 1.3;
+}
+
 /* ===== Personalization (global & project rules) ===== */
 .personalization-page {
   gap: 12px;
@@ -22532,11 +22534,6 @@ input {
   border: 0;
   border-radius: 0;
   background: transparent;
-}
-
-.personalization-section:hover {
-  border-color: transparent;
-  box-shadow: none;
 }
 
 .personalization-section-header {
@@ -22801,47 +22798,17 @@ input {
 
 .builtin-service-toggle.on .builtin-service-toggle-knob {
   left: 20px;
+}
+
 .personalization-toolbar .project-skills-path {
   font-size: 10.5px;
 }
 
-/* --- Personalization: 保存按钮（与其他界面主按钮一致） --- */
-.personalization-save-btn {
-  display: inline-flex;
+/* --- Personalization: 工具栏内操作按钮（与设置页其他位置统一为
+   api-settings-action-btn，这里仅做紧凑尺寸微调） --- */
+.personalization-toolbar .api-settings-action-btn {
   flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 5px 16px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--text-primary);
-  color: var(--on-solid);
-  font-size: 12px;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
-  transition: filter 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
-}
-
-.personalization-save-btn:hover:not(:disabled) {
-  filter: brightness(1.15);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--text-primary) 22%, transparent);
-}
-
-.personalization-save-btn:active:not(:disabled) {
-  transform: translateY(1px);
-}
-
-.personalization-save-btn:focus-visible {
-  outline: 2px solid var(--text-primary);
-  outline-offset: 2px;
-}
-
-.personalization-save-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-  box-shadow: none;
+  padding: 6px 12px;
 }
 
 /* --- Personalization: 规则编辑器 --- */
@@ -22866,8 +22833,9 @@ input {
 }
 
 .personalization-textarea:focus {
-  border-color: var(--text-muted);
-  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+  border-color: var(--accent-blue, #3b82f6);
+  box-shadow: 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.2));
 }
 
 /* --- Personalization: 空状态 --- */
@@ -22933,9 +22901,10 @@ input {
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 7px 16px;
-  padding: 10px 12px;
-  border-top: 1px solid var(--border-light);
-  border-bottom: 1px solid var(--border-light);
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
   color: var(--text-muted);
 }
 
@@ -23009,12 +22978,15 @@ input {
     flex-direction: column;
   }
 
-  .personalization-save-btn {
+  .personalization-toolbar .api-settings-action-btn {
     align-self: flex-end;
   }
 
   .personalization-section-title > span:last-child {
     margin-left: 0;
+  }
+}
+
 /* ===== Cream system-wide refinement =====
    Keep the preset recognizable across the whole workspace instead of only
    changing the empty-chat greeting. The app remains dense and operational,
@@ -23258,7 +23230,6 @@ input {
     .model-manual-btn.primary, .project-codebase-embed-btn.primary,
     .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
     .tool-call-plan-approval-approve, .project-sensitive-command-save,
-    .personalization-save-btn,
     .branch-create-submit-btn, .git-commit-btn.primary) {
   border-color: var(--accent-orange);
   background: var(--accent-orange);
@@ -23270,7 +23241,6 @@ input {
     .model-manual-btn.primary, .project-codebase-embed-btn.primary,
     .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
     .tool-call-plan-approval-approve, .project-sensitive-command-save,
-    .personalization-save-btn,
     .branch-create-submit-btn, .git-commit-btn.primary):hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent-orange) 88%, var(--text-primary));
 }
