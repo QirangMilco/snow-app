@@ -110,6 +110,12 @@ const ShortcutHandlerBridge = (): null => {
 
 export const App = (): React.JSX.Element => {
   const rightPanelRef = useRef<RightPanelRef>(null);
+  // 拖拽期间直接操作 app-shell 的 CSS 变量，避免每个 pointermove 都触发
+  // React 重渲染（Windows 高回报率鼠标事件可达 500-1000Hz，全树渲染会卡顿）。
+  // ref 保存最新宽度，拖拽结束一次性提交 state。
+  const appShellRef = useRef<HTMLDivElement>(null);
+  const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
+  const rightPanelWidthRef = useRef(RIGHT_PANEL_DEFAULT_WIDTH);
   const [activeMainView, setActiveMainView] = useState<MainContentView>("chat");
   const [activeDirectory, setActiveDirectory] =
     useState<WorkspaceDirectoryRecord | null>(null);
@@ -120,6 +126,13 @@ export const App = (): React.JSX.Element => {
   const [rightPanelWidth, setRightPanelWidth] = useState(
     RIGHT_PANEL_DEFAULT_WIDTH
   );
+  // 保持 ref 与 state 同步（拖拽结束提交 state 后、或其它路径修改宽度时）。
+  useEffect(() => {
+    sidebarWidthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+  useEffect(() => {
+    rightPanelWidthRef.current = rightPanelWidth;
+  }, [rightPanelWidth]);
   const [activeResizeTarget, setActiveResizeTarget] =
     useState<ResizeTarget | null>(null);
   const [showSshWizard, setShowSshWizard] = useState(false);
@@ -255,13 +268,23 @@ export const App = (): React.JSX.Element => {
     .filter(Boolean)
     .join(" ");
   const panelSizeStyle: PanelSizeStyle = {
-    "--sidebar-width": `${sidebarWidth}px`,
-    "--right-panel-width": `${rightPanelWidth}px`,
+    // 拖拽期间以 ref 的最新宽度为准：即使其它 state 变化触发渲染，
+    // 也不会把 CSS 变量重置回拖拽前的旧值导致宽度跳动。
+    "--sidebar-width": `${
+      activeResizeTarget === "sidebar" ? sidebarWidthRef.current : sidebarWidth
+    }px`,
+    "--right-panel-width": `${
+      activeResizeTarget === "right-panel"
+        ? rightPanelWidthRef.current
+        : rightPanelWidth
+    }px`,
   };
 
   const getMaxPanelWidth = (target: ResizeTarget): number => {
-    const visibleSidebarWidth = isSidebarCollapsed ? 0 : sidebarWidth;
-    const visibleRightPanelWidth = isRightPanelCollapsed ? 0 : rightPanelWidth;
+    const visibleSidebarWidth = isSidebarCollapsed ? 0 : sidebarWidthRef.current;
+    const visibleRightPanelWidth = isRightPanelCollapsed
+      ? 0
+      : rightPanelWidthRef.current;
     const otherPanelWidth =
       target === "sidebar" ? visibleRightPanelWidth : visibleSidebarWidth;
     const minWidth =
@@ -290,10 +313,28 @@ export const App = (): React.JSX.Element => {
     event.preventDefault();
 
     const startX = event.clientX;
-    const startWidth = target === "sidebar" ? sidebarWidth : rightPanelWidth;
+    const startWidth =
+      target === "sidebar" ? sidebarWidthRef.current : rightPanelWidthRef.current;
 
     setActiveResizeTarget(target);
     event.currentTarget.setPointerCapture(event.pointerId);
+
+    // 拖拽过程中直接更新 app-shell 的 CSS 变量。这只会触发浏览器布局，
+    // 不会触发 React 重渲染 —— 高频 pointermove（Windows 上可达
+    // 500-1000Hz）下全树渲染是卡顿的根因。
+    const applyWidth = (width: number): void => {
+      const shell = appShellRef.current;
+      if (!shell) {
+        return;
+      }
+      if (target === "sidebar") {
+        sidebarWidthRef.current = width;
+        shell.style.setProperty("--sidebar-width", `${width}px`);
+      } else {
+        rightPanelWidthRef.current = width;
+        shell.style.setProperty("--right-panel-width", `${width}px`);
+      }
+    };
 
     const handlePointerMove = (pointerEvent: PointerEvent): void => {
       const deltaX = pointerEvent.clientX - startX;
@@ -303,12 +344,7 @@ export const App = (): React.JSX.Element => {
         target === "sidebar" ? SIDEBAR_MIN_WIDTH : RIGHT_PANEL_MIN_WIDTH;
       const maxWidth = getMaxPanelWidth(target);
       const clampedWidth = Math.round(clamp(nextWidth, minWidth, maxWidth));
-
-      if (target === "sidebar") {
-        setSidebarWidth(clampedWidth);
-      } else {
-        setRightPanelWidth(clampedWidth);
-      }
+      applyWidth(clampedWidth);
     };
 
     const stopResize = (): void => {
@@ -316,6 +352,12 @@ export const App = (): React.JSX.Element => {
       document.removeEventListener("pointermove", handlePointerMove);
       document.removeEventListener("pointerup", stopResize);
       document.removeEventListener("pointercancel", stopResize);
+      // 拖拽结束一次性提交最终宽度，React 渲染会把 CSS 变量设为相同值。
+      if (target === "sidebar") {
+        setSidebarWidth(sidebarWidthRef.current);
+      } else {
+        setRightPanelWidth(rightPanelWidthRef.current);
+      }
     };
 
     document.addEventListener("pointermove", handlePointerMove);
@@ -330,7 +372,11 @@ export const App = (): React.JSX.Element => {
         directoryPath={activeDirectory?.path}
       >
         <ShortcutHandlerBridge />
-        <div className={shellClasses} style={panelSizeStyle}>
+        <div
+          ref={appShellRef}
+          className={shellClasses}
+          style={panelSizeStyle}
+        >
           {isWindows && <WindowControls />}
           <TopBar
             isSidebarCollapsed={isSidebarCollapsed}
