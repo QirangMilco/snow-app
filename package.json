@@ -1,6 +1,6 @@
 {
   "name": "snow-app",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "High-performance cross-platform desktop app scaffold powered by Electron, React, TypeScript, and Rust.",
   "author": {
     "name": "Qirang",

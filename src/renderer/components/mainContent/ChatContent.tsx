@@ -1,4 +1,10 @@
-import { ArrowDown } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowDown,
+  ArrowLeft,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -81,6 +87,8 @@ const ChatContentBody = ({
     setGoalModeTokenBudget,
     pendingToolAuthorizations,
     conversationVersion,
+    subAgentSessionEvents,
+    handleSelectConversation,
   } = useChatConversationContext();
   const { t } = useI18n();
   const { autoScrollEnabled, setAutoScrollEnabled } = useAutoScrollPreference();
@@ -97,6 +105,67 @@ const ChatContentBody = ({
   const activeCompactionError = isCompactionForActiveConversation
     ? compactionError
     : null;
+
+  // Sub-agent run state of the active conversation. The persisted record
+  // (fetched on switch) covers conversations opened after their run ended
+  // (e.g. after an app restart); the live session event takes precedence
+  // while a run is in flight or has just finished in this app session.
+  const [activeConversationMeta, setActiveConversationMeta] = useState<{
+    conversationType: string;
+    subAgentStatus: string;
+    parentConversationId: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!activeConversationId) {
+      setActiveConversationMeta(null);
+      return;
+    }
+
+    let cancelled = false;
+    void window.snow
+      .getChatConversation(activeConversationId)
+      .then((record) => {
+        if (cancelled || !record) {
+          return;
+        }
+        setActiveConversationMeta({
+          conversationType: record.conversationType,
+          subAgentStatus: record.subAgentStatus,
+          parentConversationId: record.parentConversationId,
+        });
+      })
+      .catch(() => {
+        // Best effort — live session events still cover in-flight runs.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId]);
+
+  const liveSubAgentEvent = activeConversationId
+    ? subAgentSessionEvents[activeConversationId]
+    : undefined;
+  const isSubAgentConversation =
+    Boolean(liveSubAgentEvent) ||
+    activeConversationMeta?.conversationType === "sub_agent";
+  const subAgentRunStatus =
+    liveSubAgentEvent?.status ??
+    activeConversationMeta?.subAgentStatus ??
+    "";
+  // Once its run ends the sub-agent conversation becomes read-only: the
+  // input box disappears and only a status notice remains. While the run is
+  // live the input stays visible so the user can insert pending messages.
+  const isSubAgentFinished =
+    isSubAgentConversation &&
+    subAgentRunStatus !== "" &&
+    subAgentRunStatus !== "running";
+  const subAgentParentConversationId =
+    activeConversationMeta?.parentConversationId ||
+    liveSubAgentEvent?.parentConversationId ||
+    "";
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeConversationIdRef = useRef(activeConversationId);
   const previousActiveConversationIdRef = useRef(activeConversationId);
@@ -761,7 +830,13 @@ const ChatContentBody = ({
             <ArrowDown size={20} strokeWidth={2} aria-hidden="true" />
           </button>
         ) : null}
-        {isLoadingInitialHistory ? null : (
+        {isLoadingInitialHistory ? null : isSubAgentFinished ? (
+          <SubAgentFinishedNotice
+            status={subAgentRunStatus}
+            parentConversationId={subAgentParentConversationId}
+            onBackToParent={handleSelectConversation}
+          />
+        ) : (
           <ChatInput
             projectId={activeDirectory?.directoryId}
             projectName={activeDirectory?.name}
@@ -809,6 +884,72 @@ const ChatContentBody = ({
           onConfirm={handleConfirmRollback}
           onCancel={cancelRollback}
         />
+      ) : null}
+    </div>
+  );
+};
+
+/**
+ * Read-only footer shown in place of the input box once a sub-agent
+ * conversation's run has ended (completed, failed or cancelled). Offers a
+ * shortcut back to the parent conversation where the dialogue continues.
+ */
+const SubAgentFinishedNotice = ({
+  status,
+  parentConversationId,
+  onBackToParent,
+}: {
+  status: string;
+  parentConversationId: string;
+  onBackToParent: (conversationId: string) => Promise<void> | void;
+}): React.JSX.Element => {
+  const { t } = useI18n();
+
+  const icon =
+    status === "failed" ? (
+      <AlertCircle size={15} aria-hidden="true" />
+    ) : status === "cancelled" ? (
+      <XCircle size={15} aria-hidden="true" />
+    ) : (
+      <CheckCircle2 size={15} aria-hidden="true" />
+    );
+  const [messageKey, messageDefault] =
+    status === "failed"
+      ? [
+          "chat.subAgentFinished.failed",
+          "This sub-agent failed. The conversation is read-only.",
+        ]
+      : status === "cancelled"
+        ? [
+            "chat.subAgentFinished.cancelled",
+            "This sub-agent was cancelled. The conversation is read-only.",
+          ]
+        : [
+            "chat.subAgentFinished.completed",
+            "This sub-agent has finished. The conversation is read-only.",
+          ];
+
+  return (
+    <div
+      className={`sub-agent-finished-bar${
+        status === "failed" || status === "cancelled" ? " is-error" : ""
+      }`}
+    >
+      <span className="sub-agent-finished-bar-status">
+        {icon}
+        <span>{t(messageKey, { defaultValue: messageDefault })}</span>
+      </span>
+      {parentConversationId ? (
+        <button
+          type="button"
+          className="sub-agent-finished-bar-back"
+          onClick={() => void onBackToParent(parentConversationId)}
+        >
+          <ArrowLeft size={13} aria-hidden="true" />
+          {t("chat.subAgentFinished.backToParent", {
+            defaultValue: "Back to parent conversation",
+          })}
+        </button>
       ) : null}
     </div>
   );

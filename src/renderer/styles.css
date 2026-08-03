@@ -4884,6 +4884,57 @@ input {
   flex-shrink: 0;
 }
 
+/* Read-only footer that replaces the input box in a sub-agent conversation
+   whose run has ended (completed / failed / cancelled). The conversation
+   stays browsable, but no further messages can be sent into it. */
+.sub-agent-finished-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  backdrop-filter: var(--backdrop-blur-lg);
+}
+
+.sub-agent-finished-bar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sub-agent-finished-bar-status svg {
+  flex-shrink: 0;
+  color: var(--accent-green, #22c55e);
+}
+
+.sub-agent-finished-bar.is-error .sub-agent-finished-bar-status svg {
+  color: var(--accent-red-text, #ef4444);
+}
+
+.sub-agent-finished-bar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sub-agent-finished-bar-back:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 /* ===== User Message Rail (hover axis) =====
    A thin vertical strip pinned to the right edge of the chat area. On hover
    it expands a floating popover listing all user messages for quick

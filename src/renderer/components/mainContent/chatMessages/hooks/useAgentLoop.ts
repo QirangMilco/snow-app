@@ -68,6 +68,14 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
       const sessionKey =
         ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
       const existingRef = ctx.sessionsRefData.current.get(sessionKey);
+      // A sub-agent conversation becomes read-only as soon as its run ends.
+      // The input box is hidden in the UI; this guard closes the remaining
+      // programmatic paths (a last-moment send racing the status event, or a
+      // finishing parent loop flushing its pending queue while the user is
+      // viewing the terminated sub-agent conversation).
+      if (existingRef?.subAgentTerminated) {
+        return;
+      }
       if (existingRef?.isSending) {
         const queue = ctx.pendingQueueRef.current.get(sessionKey) ?? [];
         queue.push({ text: trimmed, options });

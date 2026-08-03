@@ -236,6 +236,11 @@ export type ConversationSessionRef = {
   planMode: boolean;
   /** Whether Goal Mode was active when this session was last used. */
   goalMode: boolean;
+  /** Set once a sub-agent conversation's run has ended (completed, failed or
+   *  cancelled). A terminated sub-agent conversation is read-only: the input
+   *  box is hidden and handleSendMessage refuses to start a new loop in it.
+   *  Only meaningful for sub-agent sessions; absent for main conversations. */
+  subAgentTerminated?: boolean;
 };
 
 /** Per-session pause controller stored in pauseControllerRef. When `paused`

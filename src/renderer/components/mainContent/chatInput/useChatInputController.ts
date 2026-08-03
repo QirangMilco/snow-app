@@ -28,11 +28,7 @@ import type {
   ModelMenuView,
 } from "./types";
 import {
-  createChangeChipHtml,
-  createChipHtml,
-  createCommitChipHtml,
-  createImageChipHtml,
-  createTextSnippetChipHtml,
+  buildSegmentsHtml,
   parseContentSegments,
   renumberImageChips,
 } from "./fileTagUtils";
@@ -357,31 +353,7 @@ export const useChatInputController = ({
 
     const textarea = textareaRef.current;
     if (textarea) {
-      const segments = parseContentSegments(draftToRestore);
-      const html = segments
-        .map((segment) => {
-          if (segment.type === "text") {
-            return segment.content
-              .replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;")
-              .replace(/\n/g, "<br>");
-          }
-          if (segment.type === "image") {
-            return createImageChipHtml(segment.tag);
-          }
-          if (segment.type === "commit") {
-            return createCommitChipHtml(segment.tag);
-          }
-          if (segment.type === "change") {
-            return createChangeChipHtml(segment.tag);
-          }
-          if (segment.type === "text-snippet") {
-            return createTextSnippetChipHtml(segment.tag);
-          }
-          return createChipHtml(segment.tag);
-        })
-        .join("");
+      const html = buildSegmentsHtml(parseContentSegments(draftToRestore));
 
       textarea.innerHTML = html;
       // 固定 chip 宽度，确保 hover 显示 remove 按钮时布局不跳动、
@@ -431,31 +403,7 @@ export const useChatInputController = ({
       setValue(content);
 
       if (textareaRef.current) {
-        const segments = parseContentSegments(content);
-        const html = segments
-          .map((segment) => {
-            if (segment.type === "text") {
-              return segment.content
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/\n/g, "<br>");
-            }
-            if (segment.type === "image") {
-              return createImageChipHtml(segment.tag);
-            }
-            if (segment.type === "commit") {
-              return createCommitChipHtml(segment.tag);
-            }
-            if (segment.type === "change") {
-              return createChangeChipHtml(segment.tag);
-            }
-            if (segment.type === "text-snippet") {
-              return createTextSnippetChipHtml(segment.tag);
-            }
-            return createChipHtml(segment.tag);
-          })
-          .join("");
+        const html = buildSegmentsHtml(parseContentSegments(content));
 
         textareaRef.current.innerHTML = html;
         renumberImageChips(textareaRef.current);

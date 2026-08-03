@@ -47,6 +47,13 @@ export type TextSnippetTag = {
   charCount: number;
 };
 
+/**
+ * 自定义剪贴板 MIME 类型：应用内复制/剪切选区时携带编辑区的完整
+ * 编码内容（含 @@file:...@@ 等 chip 标签），粘贴时优先解析该格式，
+ * 可将选区内容（含各类 chip）完整还原。
+ */
+export const CHIPS_CLIPBOARD_TYPE = "application/x-snow-chat-chips";
+
 export type ContentSegment =
   | { type: "text"; content: string }
   | { type: "file"; tag: FileTag }
@@ -418,7 +425,45 @@ export const createTextSnippetChipHtml = (tag: TextSnippetTag): string => {
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
 
-export const readEditableContent = (el: HTMLElement): string => {
+/**
+ * 将内容片段列表渲染为可插入编辑区的 HTML：纯文本做 HTML 转义
+ * （换行转为 <br>），各类标签转换为对应 chip。用于剪贴板粘贴、
+ * 草稿还原等场景重建 chip。
+ */
+export const buildSegmentsHtml = (segments: ContentSegment[]): string =>
+  segments
+    .map((segment) => {
+      if (segment.type === "text") {
+        return escapeHtml(segment.content).replace(/\n/g, "<br>");
+      }
+      if (segment.type === "image") {
+        return createImageChipHtml(segment.tag);
+      }
+      if (segment.type === "commit") {
+        return createCommitChipHtml(segment.tag);
+      }
+      if (segment.type === "change") {
+        return createChangeChipHtml(segment.tag);
+      }
+      if (segment.type === "text-snippet") {
+        return createTextSnippetChipHtml(segment.tag);
+      }
+      return createChipHtml(segment.tag);
+    })
+    .join("");
+
+type ChipSerializers = {
+  file: (tag: FileTag) => string;
+  image: (tag: ImageTag) => string;
+  commit: (tag: CommitTag) => string;
+  change: (tag: ChangeTag) => string;
+  textSnippet: (tag: TextSnippetTag) => string;
+};
+
+const readEditableContentWith = (
+  el: HTMLElement,
+  serializers: ChipSerializers
+): string => {
   let result = "";
   const walk = (node: Node): void => {
     if (node.nodeType === Node.TEXT_NODE) {
@@ -429,14 +474,14 @@ export const readEditableContent = (el: HTMLElement): string => {
         const linesRaw = elem.dataset.fileLines;
         const lines =
           linesRaw && linesRaw.length > 0 ? parseLinesStr(linesRaw) : undefined;
-        result += encodeFileTag({
+        result += serializers.file({
           path: elem.dataset.filePath || "",
           name: elem.dataset.fileName || "",
           isDirectory: elem.dataset.fileIsDir === "true",
           lines: elem.dataset.fileIsDir === "true" ? undefined : lines,
         });
       } else if (elem.dataset.imageTag === "true") {
-        result += encodeImageTag({
+        result += serializers.image({
           name: elem.dataset.imageName || "image.png",
           dataUrl: elem.dataset.imageDataUrl || "",
         });
@@ -445,7 +490,7 @@ export const readEditableContent = (el: HTMLElement): string => {
           const data = JSON.parse(
             elem.dataset.commitData || "{}"
           ) as Partial<CommitTag>;
-          result += encodeCommitTag({
+          result += serializers.commit({
             hash: data.hash ?? "",
             shortHash: data.shortHash ?? "",
             author: data.author ?? "",
@@ -461,7 +506,7 @@ export const readEditableContent = (el: HTMLElement): string => {
           const data = JSON.parse(
             elem.dataset.changeData || "{}"
           ) as Partial<ChangeTag>;
-          result += encodeChangeTag({
+          result += serializers.change({
             repoPath: data.repoPath ?? "",
             path: data.path ?? "",
             section: data.section === "staged" ? "staged" : "unstaged",
@@ -476,7 +521,7 @@ export const readEditableContent = (el: HTMLElement): string => {
             elem.dataset.textSnippetData || "{}"
           ) as Partial<TextSnippetTag>;
           const textContent = data.content ?? "";
-          result += encodeTextSnippetTag({
+          result += serializers.textSnippet({
             content: textContent,
             summary: data.summary ?? buildTextSnippetSummary(textContent),
             charCount:
@@ -502,6 +547,39 @@ export const readEditableContent = (el: HTMLElement): string => {
   return result;
 };
 
+/**
+ * 读取编辑区内容为编码字符串，各类 chip 序列化为 @@kind:...@@ 标签。
+ * 用于消息发送、草稿保存等场景。
+ */
+export const readEditableContent = (el: HTMLElement): string =>
+  readEditableContentWith(el, {
+    file: encodeFileTag,
+    image: encodeImageTag,
+    commit: encodeCommitTag,
+    change: encodeChangeTag,
+    textSnippet: encodeTextSnippetTag,
+  });
+
+/**
+ * 读取编辑区内容为人类可读纯文本，用于复制/剪切时剪贴板的
+ * text/plain 格式：文件 chip 输出路径（含行号后缀）、文本片段
+ * chip 输出原文等，保证粘贴到应用外依然可读。
+ */
+export const readEditableContentAsPlainText = (el: HTMLElement): string =>
+  readEditableContentWith(el, {
+    file: (tag) => {
+      const linesStr =
+        !tag.isDirectory && tag.lines && tag.lines.length > 0
+          ? formatLinesStr(tag.lines)
+          : "";
+      return linesStr ? `${tag.path}:${linesStr}` : tag.path;
+    },
+    image: (tag) => `[${tag.name}]`,
+    commit: (tag) => tag.shortHash,
+    change: (tag) => tag.path,
+    textSnippet: (tag) => tag.content,
+  });
+
 export const insertHtmlAtSelection = (html: string): void => {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) {
@@ -516,11 +594,18 @@ export const insertHtmlAtSelection = (html: string): void => {
   range.insertNode(fragment);
 
   if (lastNode) {
-    const space = document.createTextNode(" ");
-    lastNode.parentNode?.insertBefore(space, lastNode.nextSibling);
+    // 插入内容末尾是 chip（或 <br>）时需要补一个空格，否则光标无法
+    // 定位到 chip 之后、且 chip 会与后续输入的文字紧贴；末尾是纯
+    // 文本节点时（如粘贴的文本片段）不补空格，避免污染粘贴内容。
+    let caretAnchor: Node = lastNode;
+    if (lastNode.nodeType !== Node.TEXT_NODE) {
+      const space = document.createTextNode(" ");
+      lastNode.parentNode?.insertBefore(space, lastNode.nextSibling);
+      caretAnchor = space;
+    }
 
-    range.setStartAfter(space);
-    range.setEndAfter(space);
+    range.setStartAfter(caretAnchor);
+    range.setEndAfter(caretAnchor);
     selection.removeAllRanges();
     selection.addRange(range);
   }

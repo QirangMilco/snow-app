@@ -1,5 +1,40 @@
 # Release Notes
 
+## v0.1.15
+
+## New Features
+
+- **User Message Rail**: Added a right-edge hover rail for quick chat navigation. A portaled popover lists user messages with paginated loading and virtualization, scrolling to the corresponding message on click. Visible messages are highlighted in the rail as you scroll, and a custom animation-frame tween replaces native smooth scroll for streaming content.
+- **Text Snippet Chip**: Pasted text exceeding 2000 characters is automatically converted into a collapsible chip, preventing performance issues from rendering large text nodes in the contenteditable input. Chips support hover preview, click-to-edit modal, and automatic summary generation.
+- **`/changes` Panel**: The file-change stats summary has been moved from the message list into a `/changes` slash-command modal with per-file diff previews. Repeated edits to a file are collapsed into a single latest record, and stats are re-hydrated from persisted history when reopening a conversation. Sub-agent changes are merged into the parent conversation.
+- **Non-UTF-8 File Support**: Filesystem read/create/edit now auto-detects encoding (BOM + chardetng), preserving the original encoding and BOM on write-back. CSV files are decoded with the detected encoding.
+- **Cancellable Remote SSH Tool Calls**: Per-tool execution cancellation is now supported for SSH-backed tools (bash, grep, filesystem). Rust registers a cancel token and Electron maps `tool_execution` IDs to `AbortControllers` that close the SSH exec channel on stop. All running tool executions are killed on session stop, not just bash.
+- **Native Multimodal Tool Images**: Screenshots in tool results are now split from `@@image:@@` tags and emitted as provider-native image content blocks (image_url, input_image, inlineData) across Chat Completions, Responses, Anthropic, and Gemini payloads, instead of leaking base64 into plain text tool fields.
+- **Codebase Embedding Error States**: Added error states and a retry flow for codebase embedding failures.
+- **Git Graph Commit Tooltip**: Hovering a commit row in the git graph now shows a floating tooltip with full commit info (hash, author, date, refs, parents, message). The tooltip renders in a portal with fixed positioning and flips sides near viewport edges.
+- **Sub-Agent Read-Only State**: Once a sub-agent run ends (completed, failed, or cancelled), the conversation becomes read-only — the input box is replaced by a status notice with a shortcut back to the parent conversation. Queued user insertions from the sub-agent are forwarded to the parent's pending queue so they are never lost.
+
+## Improvements
+
+- **Sidebar List Refresh Decoupling**: The sidebar conversation list no longer re-renders on every message version bump. A separate `conversationListVersion` triggers full redraws only after explicit actions (top/delete/rename/truncate), while AI responses use incremental upserts. Unchanged upsert content keeps the original reference to avoid meaningless re-renders.
+- **User Message ID Sync**: `store_chat_exchange` now returns the snowflake IDs of persisted user messages, propagated through all API result handlers. The frontend replaces temporary IDs with real database IDs after persistence, keeping in-memory state in sync with the DB.
+- **Pending Message Tag Rendering**: Pending queued messages now render file/submit tags and other chips properly. Shortcut key matching has been fixed by merging `mod` and `ctrl` checksums for non-macOS platforms while keeping exact matches on macOS.
+- **Chat Input Copy/Cut with Chips**: Copying or cutting a selection from the chat input now serializes chip content via a custom clipboard MIME type (`application/x-snow-chat-chips`), enabling full chip restoration on paste within the app. Plain text and HTML formats are also written for external use.
+- **Proxy Sync for Auto-Updater**: Proxy configuration is now synchronized to the electron-updater's partitioned session before update checks and downloads, since the updater uses a separate session that doesn't inherit `defaultSession` proxy settings.
+- **Thinking Content Filtering**: Added `extract_chat_content` to strip thinking/reasoning content from Chat Completions responses, including inline `[think]`/`<thinking>` markers, for models that return thinking content even when `reasoning_effort=none` is requested.
+- **Sub-Agent Pending Queue Forwarding**: When a sub-agent run ends, its pending user message queue is forwarded to the parent conversation's queue, ensuring messages inserted mid-run are picked up by the parent loop.
+
+## Bug Fixes
+
+- **Mermaid Image Viewer**: Fixed the Mermaid image viewer background in light theme.
+- **macOS Tray Activity Icon**: The tray active-status icon previously used a template image that ignored RGB colors, making the green dot invisible. It now pre-renders black/white snowflake lines based on system appearance to simulate template inversion, with the dot uniformly green, and listens for `nativeTheme` changes.
+- **Cream Theme Layout Gap**: Removed the app-layout gap in the Cream theme, including padding when the right panel is fullscreen.
+- **Search Box Focus Style**: Replaced the separate border color change with a focus ring for the search modal input.
+- **Icon Resource Paths**: Updated resource path handling to ensure icons load correctly after packaging.
+- **Grep Output Parsing**: Fixed grep output parsing to split on the first `:<digits>:` pair so matched content containing colons is no longer dropped.
+- **Tool Parse Error Truncation**: Tool parse errors are now truncated on UTF-8 boundaries to prevent invalid character sequences.
+- **CSS Position Anchoring**: Added explicit `position: relative` anchors to `.main-content` and `.chat-content` to prevent child elements from drifting when the theme disables `backdrop-filter`.
+
 ## v0.1.14
 
 ## New Features

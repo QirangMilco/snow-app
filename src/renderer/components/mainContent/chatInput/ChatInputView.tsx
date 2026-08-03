@@ -24,18 +24,23 @@ import { BtwPanel } from "./BtwPanel";
 import { TEXT_SNIPPET_THRESHOLD } from "./constants";
 import { TokenUsageRing } from "./TokenUsageRing";
 import {
+  CHIPS_CLIPBOARD_TYPE,
+  buildSegmentsHtml,
+  buildTextSnippetSummary,
   createChangeChipHtml,
   createChipHtml,
   createCommitChipHtml,
   createImageChipHtml,
   createTextSnippetChipHtml,
-  buildTextSnippetSummary,
   insertHtmlAtSelection,
   insertLineBreak,
+  parseContentSegments,
   readEditableContent,
+  readEditableContentAsPlainText,
   renumberImageChips as renumberImageChipsFn,
   type ChangeTag,
   type CommitTag,
+  type ContentSegment,
   type FileTag,
   type ImageTag,
   type TextSnippetTag,
@@ -655,6 +660,75 @@ export const ChatInputView = ({
     handleCloseCommand();
   }, [handleCloseCommand, handleCloseMention]);
 
+  /**
+   * 将当前选区（鼠标划选、Ctrl/Cmd+A 全选等，含 chip）序列化为剪贴板
+   * 数据，无有效选区时返回 null。自定义 MIME 携带完整编码内容（供应用
+   * 内粘贴还原 chip），text/plain 为人类可读文本（供粘贴到应用外），
+   * text/html 为 chip HTML（供粘贴到富文本编辑器）。
+   */
+  const serializeSelectionForClipboard = useCallback(() => {
+    const el = textareaRef.current;
+    const selection = window.getSelection();
+    if (
+      !el ||
+      !selection ||
+      selection.rangeCount === 0 ||
+      selection.isCollapsed
+    ) {
+      return null;
+    }
+    const range = selection.getRangeAt(0);
+    if (!el.contains(range.commonAncestorContainer)) {
+      return null;
+    }
+    const container = document.createElement("div");
+    container.appendChild(range.cloneContents());
+    const encoded = readEditableContent(container);
+    if (!encoded) {
+      return null;
+    }
+    return {
+      encoded,
+      plain: readEditableContentAsPlainText(container),
+      html: buildSegmentsHtml(parseContentSegments(encoded)),
+    };
+  }, [textareaRef]);
+
+  const writeSelectionToClipboard = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>): boolean => {
+      const data = serializeSelectionForClipboard();
+      if (!data) {
+        return false;
+      }
+      event.preventDefault();
+      event.clipboardData.setData(CHIPS_CLIPBOARD_TYPE, data.encoded);
+      event.clipboardData.setData("text/plain", data.plain);
+      event.clipboardData.setData("text/html", data.html);
+      return true;
+    },
+    [serializeSelectionForClipboard]
+  );
+
+  const handleCopy = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      writeSelectionToClipboard(event);
+    },
+    [writeSelectionToClipboard]
+  );
+
+  const handleCut = useCallback(
+    (event: React.ClipboardEvent<HTMLDivElement>) => {
+      if (!writeSelectionToClipboard(event)) {
+        return;
+      }
+      // preventDefault 后浏览器不会执行默认剪切，手动调用原生 delete
+      // 命令删除选区，保持在撤销栈中（Ctrl+Z 可恢复）。
+      document.execCommand("delete");
+      syncContent();
+    },
+    [writeSelectionToClipboard, syncContent]
+  );
+
   const handlePaste = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -700,10 +774,53 @@ export const ChatInputView = ({
         return;
       }
 
+      // 插入“文本 + 编码标签”混合内容，将各标签还原为对应 chip；
+      // 超出阈值的文本段折叠为 text-snippet chip，避免渲染海量文本节点。
+      const insertSegmentedContent = (segments: ContentSegment[]) => {
+        const normalized = segments.map((segment): ContentSegment => {
+          if (
+            segment.type === "text" &&
+            segment.content.length > TEXT_SNIPPET_THRESHOLD
+          ) {
+            return {
+              type: "text-snippet",
+              tag: {
+                content: segment.content,
+                summary: buildTextSnippetSummary(segment.content),
+                charCount: segment.content.length,
+              },
+            };
+          }
+          return segment;
+        });
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+        insertHtmlAtSelection(buildSegmentsHtml(normalized));
+        syncContent();
+      };
+
+      // 应用内复制/剪切携带自定义 MIME 的完整编码内容，优先解析该格式，
+      // 完整还原文件/图片/commit 等 chip。
+      const chipsData = event.clipboardData.getData(CHIPS_CLIPBOARD_TYPE);
+      if (chipsData) {
+        insertSegmentedContent(parseContentSegments(chipsData));
+        return;
+      }
+
       const text = event.clipboardData.getData("text/plain");
       if (!text) {
         return;
       }
+
+      // 粘贴的纯文本本身含编码标签时（如从其他输入框或草稿复制），
+      // 同样还原为 chip。
+      const segments = parseContentSegments(text);
+      if (segments.some((segment) => segment.type !== "text")) {
+        insertSegmentedContent(segments);
+        return;
+      }
+
       // 超出阈值的纯文本粘贴标签化为 text-snippet chip，避免
       // contenteditable 输入框渲染海量文本节点导致应用卡死。
       if (text.length > TEXT_SNIPPET_THRESHOLD) {
@@ -727,7 +844,7 @@ export const ChatInputView = ({
       syncContent();
       checkInputTriggers();
     },
-    [syncContent, checkInputTriggers]
+    [syncContent, checkInputTriggers, textareaRef]
   );
 
   const handleInput = useCallback(() => {
@@ -1158,6 +1275,8 @@ export const ChatInputView = ({
             data-empty="true"
             onInput={handleInput}
             onKeyDown={handleInputKeyDown}
+            onCopy={handleCopy}
+            onCut={handleCut}
             onPaste={handlePaste}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
