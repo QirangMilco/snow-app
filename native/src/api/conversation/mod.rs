@@ -25,6 +25,9 @@ pub struct ConversationContextRequest<'a> {
     /// system prompt. Used by lightweight single-shot completions such as the
     /// AI commit-message generator.
     pub skip_context: bool,
+    /// When true, keep this exchange out of the conversation database even
+    /// though history was loaded. Used by side-channel Q&A (e.g. BTW).
+    pub skip_persist: bool,
     /// When true, replace the built-in system prompt with the Plan Mode prompt.
     pub plan_mode: bool,
     /// When true, replace the built-in system prompt with the Goal Mode prompt.

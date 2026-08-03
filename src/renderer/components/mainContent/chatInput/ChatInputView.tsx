@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n";
 import type { ChatInputViewProps } from "./types";
+import { BtwPanel } from "./BtwPanel";
 import { TokenUsageRing } from "./TokenUsageRing";
 import {
   createChangeChipHtml,
@@ -88,6 +89,8 @@ export const ChatInputView = ({
   onWithdrawPendingMessage,
   onSendPendingMessageNow,
   onCompactConversation,
+  btwConversationId,
+  btwOnSendToChat,
   yoloMode,
   isUpdatingYoloMode,
   onYoloModeChange,
@@ -1012,6 +1015,10 @@ export const ChatInputView = ({
                 onGoalModeTokenBudgetChange={onGoalModeTokenBudgetChange}
                 autoScrollEnabled={autoScrollEnabled}
                 onAutoScrollChange={onAutoScrollChange}
+              />
+              <BtwPanel
+                conversationId={btwConversationId}
+                onSendToChat={btwOnSendToChat}
               />
               {value.trim() === "" && (
                 <button

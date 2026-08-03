@@ -51,16 +51,18 @@ export const eventToKey = (event: KeyboardEvent): string | null => {
     return "escape";
   }
 
-  // 其余按键必须有 mod、ctrl 或 alt 修饰，避免与普通输入冲突
+  // 其余按键必须有 mod、ctrl 或 alt 修饰，避免与普通输入冲突；
+  // shift 作为附加修饰参与组合（如 mod+shift+b）
+  const shiftPart = event.shiftKey ? "+shift" : "";
   if (mod) {
-    return `mod+${main}`;
+    return `mod${shiftPart}+${main}`;
   }
   // macOS 上 Ctrl 与 Cmd 是独立修饰键，单独记录
   if (isMac && event.ctrlKey) {
-    return `ctrl+${main}`;
+    return `ctrl${shiftPart}+${main}`;
   }
   if (event.altKey) {
-    return `alt+${main}`;
+    return `alt${shiftPart}+${main}`;
   }
 
   return null;
@@ -85,6 +87,8 @@ export const keyToDisplay = (key: string): string => {
       segments.push("Alt");
     } else if (part === "ctrl") {
       segments.push("Ctrl");
+    } else if (part === "shift") {
+      segments.push("Shift");
     } else if (part === "backtick") {
       segments.push("`");
     } else if (part === "escape") {
@@ -118,21 +122,26 @@ const isModalOpen = (): boolean => {
  * ESC 仅在无 Modal 打开时触发，避免与 Modal ESC 关闭冲突。
  */
 export const matchKey = (event: KeyboardEvent, key: string): boolean => {
-  const mod = isMacOS() ? event.metaKey : event.ctrlKey;
+  const isMac = isMacOS();
+  const mod = isMac ? event.metaKey : event.ctrlKey;
   const parts = key.split("+");
   const hasMod = parts.includes("mod");
   const hasAlt = parts.includes("alt");
   const hasCtrl = parts.includes("ctrl");
+  const hasShift = parts.includes("shift");
   const mainPart = parts.find(
-    (p) => p !== "mod" && p !== "alt" && p !== "ctrl"
+    (p) => p !== "mod" && p !== "alt" && p !== "ctrl" && p !== "shift"
   );
 
   if (mainPart === undefined) return false;
 
-  // 修饰键状态必须精确匹配
+  // 修饰键状态必须精确匹配（含 shift：mod+b 不会误触 Cmd/Ctrl+Shift+B）
   if (hasMod !== mod) return false;
+  // 非 mac 平台上 mod 即 ctrlKey（mod 已校验），ctrl 修饰不再单独校验；
+  // mac 上 ctrl 是独立修饰键（如 Ctrl+P）。
+  if (hasCtrl !== (isMac ? event.ctrlKey : false)) return false;
   if (hasAlt !== event.altKey) return false;
-  if (hasCtrl !== event.ctrlKey) return false;
+  if (hasShift !== event.shiftKey) return false;
 
   const main = normalizeKeyName(event.key);
 

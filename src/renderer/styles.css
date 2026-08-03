@@ -23397,3 +23397,142 @@ input {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ==========================================================================
+   BTW 旁路问答（BtwPanel）
+   ========================================================================== */
+.btw-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.btw-popup {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  display: flex;
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.btw-popup-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.btw-popup-header strong {
+  color: var(--text-primary);
+  font-size: 12.5px;
+}
+
+.btw-popup-header span {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
+.btw-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  outline: none;
+}
+
+.btw-input:focus {
+  border-color: var(--accent-blue, #3b82f6);
+  box-shadow: 0 0 0 2px var(--focus-ring, rgba(59, 130, 246, 0.2));
+}
+
+.btw-answer {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.btw-waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.btw-error {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger, #dc2626) 10%, transparent);
+  color: var(--danger, #dc2626);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.btw-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btw-actions .api-settings-action-btn {
+  padding: 5px 10px;
+  font-size: 11.5px;
+}
+
+/* BTW 连续追问历史 */
+.btw-thread {
+  display: flex;
+  max-height: 200px;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+}
+
+.btw-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.btw-entry-q {
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.btw-entry-q::before {
+  content: "Q ";
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.btw-entry-a {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -2043,4 +2043,13 @@ export const en = {
   "builtinServices.appControl.name": "App Control",
   "git.generateCommitMessageFailed": "Failed to generate commit message",
   "git.generateCommitMessageFailedDetail": "The AI could not generate a commit message. Check your API settings and make sure changes are staged.",
+  "btw.trigger": "Ask by the way",
+  "btw.title": "By the way",
+  "btw.hint": "Based only on this conversation. Not saved and without tools.",
+  "btw.placeholder": "Ask a quick question based on this conversation…",
+  "btw.thinking": "Thinking…",
+  "btw.stop": "Stop",
+  "btw.retry": "Retry",
+  "btw.sendToChat": "Send to conversation",
+  "btw.error": "Failed to get an answer.",
 } satisfies Record<string, string>;

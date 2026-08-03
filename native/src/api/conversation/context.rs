@@ -13,6 +13,18 @@ use crate::storage::services::workspace_directories::get_workspace_directory_pat
 use super::tool_messages::ensure_tool_pairing;
 use super::{images::persist_inline_images_to_disk, ConversationContextRequest};
 
+/// 旁路问答（BTW）的防幻觉约束：无工具、不落库的临时问答只能基于
+/// 已加载的会话上下文回答，禁止编造上下文中不存在的信息。
+///
+/// 约束放在 user 消息前缀而非 system prompt：保持 system 部分与主请求
+/// 完全一致，从而复用主请求的 prompt cache 前缀（system + history），
+/// 把 btw 的边际成本降到最低（cache 命中折扣而非全价重算）。
+const BTW_ANSWER_CONSTRAINT: &str = "\
+Answer the question using ONLY the conversation context above. Never invent \
+file paths, line numbers, function signatures, or facts that are not present \
+in the context. If the information is not available in the context, say so \
+explicitly.";
+
 pub struct PreparedConversationRequest {
     pub conversation_id: String,
     pub messages: Vec<ChatContextMessage>,
@@ -56,6 +68,18 @@ pub fn prepare_context_request(
     // --- Lightweight mode: skip history loading and system-prompt injection ---
     if request.skip_context {
         ensure_tool_pairing(&mut current_messages);
+        // BTW 旁路问答的无会话模式同样需要防幻觉约束（此时无历史可引用，
+        // 模型更应明确"不知道"而非编造）。
+        if request.skip_persist {
+            if let Some(last_user) = current_messages
+                .iter_mut()
+                .rev()
+                .find(|msg| msg.role.trim() == "user")
+            {
+                last_user.content =
+                    format!("{BTW_ANSWER_CONSTRAINT}\n\n{}", last_user.content);
+            }
+        }
         return Ok(PreparedConversationRequest {
             conversation_id: String::new(),
             messages: current_messages.clone(),
@@ -119,6 +143,7 @@ pub fn prepare_context_request(
             request.remote_include_global_rules,
         )
     };
+
     let has_existing_system = messages
         .iter()
         .any(|msg| msg.role.trim() == "system" || msg.role.trim() == "developer");
@@ -139,6 +164,24 @@ pub fn prepare_context_request(
 
     messages.extend(current_messages.iter().cloned());
 
+    // BTW 旁路问答（skip_persist = true）：临时问答不落库、不带工具。
+    // 1) 剥离历史中的工具消息：btw 不携带工具定义，历史残留的
+    //    tool_use/tool_result 消息会导致 Anthropic/Gemini 等 provider
+    //    拒绝请求（tool_use 块无对应工具定义）。
+    // 2) 防幻觉约束放在当前 user 消息（问题）前缀，保持 system 与
+    //    主请求完全一致以复用 prompt cache 前缀。
+    if request.skip_persist {
+        messages = strip_tool_messages(messages);
+        if let Some(last_user) = messages
+            .iter_mut()
+            .rev()
+            .find(|msg| msg.role.trim() == "user")
+        {
+            last_user.content =
+                format!("{BTW_ANSWER_CONSTRAINT}\n\n{}", last_user.content);
+        }
+    }
+
     // --- Tool-pairing guard: ensure no orphan tool calls or results reach the
     //     AI API, which would reject the request outright. ---
     ensure_tool_pairing(&mut messages);
@@ -149,6 +192,39 @@ pub fn prepare_context_request(
         current_messages,
         user_system_prompts,
     })
+}
+
+/// 剥离历史中的工具消息：BTW 请求不带任何工具定义，历史中残留的
+/// tool_use/tool_result 消息会导致 Anthropic/Gemini 等 provider 拒绝
+/// 请求（tool_use 块无对应工具定义）。纯工具调用（无文本内容）的
+/// assistant 消息仅在无 thinking 时删除——带 thinking 块的消息必须
+/// 保留（或保留其 thinking），否则会断裂 Anthropic extended thinking /
+/// Responses reasoning 的签名链，与 ensure_tool_pairing 的保护逻辑对齐。
+fn strip_tool_messages(messages: Vec<ChatContextMessage>) -> Vec<ChatContextMessage> {
+    messages
+        .into_iter()
+        .filter_map(|mut message| {
+            if message.role.trim() == "tool" {
+                return None;
+            }
+            message.tool_calls_json = None;
+            message.tool_results_json = None;
+            let has_thinking = message
+                .thinking
+                .as_deref()
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(false)
+                || message
+                    .thinking_blocks_json
+                    .as_deref()
+                    .map(|t| t.trim() != "[]")
+                    .unwrap_or(false);
+            if message.content.trim().is_empty() && !has_thinking {
+                return None;
+            }
+            Some(message)
+        })
+        .collect()
 }
 
 fn normalize_messages(messages: &[ChatContextMessage]) -> Vec<ChatContextMessage> {

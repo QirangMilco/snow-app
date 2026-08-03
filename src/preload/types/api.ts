@@ -69,6 +69,7 @@ export type ResponsesApiRequest = {
   subAgentToolsJson?: string | null;
   subAgentConfigProfile?: string | null;
   skipContext?: boolean | null;
+  skipPersist?: boolean | null;
   planMode?: boolean | null;
   goalMode?: boolean | null;
 };

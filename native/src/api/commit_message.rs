@@ -77,6 +77,7 @@ fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest 
         sub_agent_tools_json: None,
         sub_agent_config_profile: None,
         skip_context: Some(true),
+        skip_persist: None,
         plan_mode: None,
         goal_mode: None,
         remote_role_content: None,

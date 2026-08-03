@@ -121,6 +121,10 @@ export type ChatInputViewProps = ChatInputState &
     placeholder: string;
     projectId?: string;
     projectName?: string;
+    /** BTW 旁路问答：当前会话 ID（空值退化为纯问答）。 */
+    btwConversationId?: string;
+    /** BTW 旁路问答：把问题转为主对话消息。 */
+    btwOnSendToChat?: (message: string) => void;
     tokenUsage: TokenUsage | null;
     pendingMessages: string[];
     onWithdrawPendingMessage?: (index: number) => string | null;

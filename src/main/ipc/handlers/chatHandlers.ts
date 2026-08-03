@@ -98,6 +98,8 @@ const normalizeResponsesApiRequest = (value: unknown): ResponsesApiRequest => {
         : undefined,
     skipContext:
       typeof source.skipContext === "boolean" ? source.skipContext : undefined,
+    skipPersist:
+      typeof source.skipPersist === "boolean" ? source.skipPersist : undefined,
     planMode:
       typeof source.planMode === "boolean" ? source.planMode : undefined,
     goalMode:

@@ -55,6 +55,8 @@ export const ChatInput = ({
       placeholder={placeholder ?? t("chatInput.placeholder")}
       projectId={projectId}
       projectName={projectName}
+      btwConversationId={conversationId}
+      btwOnSendToChat={(message) => onSend?.(message, {})}
       {...controller}
       tokenUsage={tokenUsage}
       pendingMessages={pendingMessages}

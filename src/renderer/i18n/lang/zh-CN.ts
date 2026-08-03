@@ -1945,4 +1945,13 @@ export const zhCN = {
   "builtinServices.appControl.name": "应用控制",
   "git.generateCommitMessageFailed": "生成提交信息失败",
   "git.generateCommitMessageFailedDetail": "无法生成提交信息。请检查 API 设置，并确认变更已暂存。",
+  "btw.trigger": "顺便问一句",
+  "btw.title": "顺便问一句",
+  "btw.hint": "仅基于当前对话回答，不会保存，且不带工具。",
+  "btw.placeholder": "基于当前对话快速提问…",
+  "btw.thinking": "思考中…",
+  "btw.stop": "停止",
+  "btw.retry": "重试",
+  "btw.sendToChat": "发送到对话",
+  "btw.error": "获取回答失败。",
 } satisfies Record<string, string>;

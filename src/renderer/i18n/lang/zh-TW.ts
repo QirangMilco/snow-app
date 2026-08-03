@@ -1918,4 +1918,13 @@ export const zhTW = {
   "builtinServices.appControl.name": "應用程式控制",
   "git.generateCommitMessageFailed": "產生提交訊息失敗",
   "git.generateCommitMessageFailedDetail": "無法產生提交訊息。請檢查 API 設定，並確認變更已暫存。",
+  "btw.trigger": "順便問一句",
+  "btw.title": "順便問一句",
+  "btw.hint": "僅基於當前對話回答，不會保存，且不帶工具。",
+  "btw.placeholder": "基於當前對話快速提問…",
+  "btw.thinking": "思考中…",
+  "btw.stop": "停止",
+  "btw.retry": "重試",
+  "btw.sendToChat": "傳送到對話",
+  "btw.error": "獲取回答失敗。",
 } satisfies Record<string, string>;
