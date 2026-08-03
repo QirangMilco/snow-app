@@ -14,6 +14,9 @@ import { getDecryptedSecret, getSshCredential } from "./sshCredentials";
 
 const REMOTE_SEARCH_MAX_DEPTH = 15;
 const REMOTE_SEARCH_MAX_RESULTS = 200;
+// Mirrors the local ripgrep timeout in native/src/mcp/servers/grep.rs so the
+// SSH branch cannot hang the tool card forever when the remote side stalls.
+const REMOTE_GREP_TIMEOUT_MS = 30_000;
 
 export type RemoteWorkspaceCommand = {
   operation: string;
@@ -369,15 +372,17 @@ const parseGrepLines = (
   remoteRootPath: string
 ): RemoteWorkspaceSearchMatch[] =>
   output.split("\n").flatMap((line) => {
-    const lastColon = line.lastIndexOf(":");
-    if (lastColon < 0) {
+    // Parse from the LEFT: `path:line:content` with the FIRST `:<digits>:`
+    // pair as the separator. Content may contain colons (e.g. `case "x": y`),
+    // so splitting from the last two colons would misparse the line number
+    // and silently drop the match. File paths with embedded colons are
+    // extremely rare on POSIX, and the lazy quantifier still skips them when
+    // a `:<digits>:` separator exists later in the line.
+    const parsed = /^(.+?):(\d+):(.*)$/.exec(line);
+    if (!parsed) {
       return [];
     }
-    const secondColon = line.lastIndexOf(":", lastColon - 1);
-    if (secondColon < 0) {
-      return [];
-    }
-    const lineNumber = Number(line.slice(secondColon + 1, lastColon));
+    const lineNumber = Number(parsed[2]);
     if (!Number.isInteger(lineNumber)) {
       return [];
     }
@@ -385,11 +390,11 @@ const parseGrepLines = (
       {
         file: buildRemoteWorkspaceUri(
           workspacePath,
-          line.slice(0, secondColon),
+          parsed[1],
           remoteRootPath
         ),
         line: lineNumber,
-        content: line.slice(lastColon + 1),
+        content: parsed[3],
       },
     ];
   });
@@ -444,7 +449,8 @@ const executeFilesystemReplaceEdit = async (
 };
 
 const executeFilesystemCreate = async (
-  args: RemoteWorkspaceCommandArgs
+  args: RemoteWorkspaceCommandArgs,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.filePath, "filePath");
   const content = ensureString(args.content, "content");
@@ -452,7 +458,9 @@ const executeFilesystemCreate = async (
 
   await withSshSession(workspacePath, async (sessionId, remotePath) => {
     const exists = (
-      await executeSshCommand(sessionId, buildRemoteStatCommand(remotePath))
+      await executeSshCommand(sessionId, buildRemoteStatCommand(remotePath), {
+        signal,
+      })
     ).trim();
     if (exists && !overwrite) {
       throw new Error(
@@ -461,7 +469,9 @@ const executeFilesystemCreate = async (
     }
     const parentPath = dirname(remotePath);
     if (parentPath && parentPath !== ".") {
-      await executeSshCommand(sessionId, buildRemoteMkdirCommand(parentPath));
+      await executeSshCommand(sessionId, buildRemoteMkdirCommand(parentPath), {
+        signal,
+      });
     }
     await writeSshFile(sessionId, remotePath, content);
   });
@@ -475,7 +485,8 @@ const executeFilesystemCreate = async (
 };
 
 const executeGrepSearch = async (
-  args: RemoteWorkspaceCommandArgs
+  args: RemoteWorkspaceCommandArgs,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.path, "path");
   const pattern = ensureString(args.pattern, "pattern");
@@ -500,7 +511,8 @@ const executeGrepSearch = async (
         isRegex,
         caseSensitive,
         maxResults
-      )
+      ),
+      { timeoutMs: REMOTE_GREP_TIMEOUT_MS, signal }
     );
     const matches = parseGrepLines(output, workspacePath, remotePath);
     return {
@@ -517,7 +529,8 @@ const executeGrepSearch = async (
 };
 
 const executeBashCommand = async (
-  args: RemoteWorkspaceCommandArgs
+  args: RemoteWorkspaceCommandArgs,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(
     args.workingDirectory,
@@ -531,18 +544,13 @@ const executeBashCommand = async (
 
   return withSshSession(workspacePath, async (sessionId, remotePath) => {
     const wrappedCommand = `cd -- ${shellQuote(remotePath)} && ${command}`;
-    const output = await Promise.race([
-      executeSshCommand(sessionId, wrappedCommand),
-      new Promise<string>((_, reject) => {
-        setTimeout(
-          () =>
-            reject(
-              new Error(`Command timed out after ${timeout}ms: ${command}`)
-            ),
-          timeout
-        );
-      }),
-    ]);
+    // The timeout lives inside executeSshCommand so a timed-out command also
+    // closes the exec channel and signals the remote process instead of
+    // merely racing the promise and leaking the underlying process.
+    const output = await executeSshCommand(sessionId, wrappedCommand, {
+      timeoutMs: timeout,
+      signal,
+    });
 
     return {
       stdout: output,
@@ -555,8 +563,10 @@ const executeBashCommand = async (
 };
 
 export const dispatchRemoteWorkspaceCommand = async (
-  command: RemoteWorkspaceCommand
+  command: RemoteWorkspaceCommand,
+  options?: { signal?: AbortSignal }
 ): Promise<string> => {
+  const signal = options?.signal;
   let args: RemoteWorkspaceCommandArgs;
   try {
     args = JSON.parse(command.argsJson) as RemoteWorkspaceCommandArgs;
@@ -573,13 +583,13 @@ export const dispatchRemoteWorkspaceCommand = async (
       result = await executeFilesystemReplaceEdit(args);
       break;
     case "filesystem-create":
-      result = await executeFilesystemCreate(args);
+      result = await executeFilesystemCreate(args, signal);
       break;
     case "grep-search":
-      result = await executeGrepSearch(args);
+      result = await executeGrepSearch(args, signal);
       break;
     case "bash-terminal-execute":
-      result = await executeBashCommand(args);
+      result = await executeBashCommand(args, signal);
       break;
     default:
       throw new Error(

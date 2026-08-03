@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.1.14
+
+## New Features
+
+- **App Error Boundary**: Added an application-level error boundary that automatically refreshes and self-heals when dynamic sub-package loading fails. Refresh attempts are limited via `sessionStorage` to prevent infinite refresh loops when build artifacts are missing.
+- **Direct Sub-Agent Interaction**: Sub-agent sessions are no longer read-only — they now use the regular `ChatInput` for direct interaction, and the separate monitor UI has been removed. The sub-agent model is fixed to its own `advancedModel` to prevent misleading model memorization by the parent session.
+- **Collapsible Projects Section**: The Projects section in the sidebar is now collapsible, with its expand/collapse state persisted to `localStorage`.
+
+## Improvements
+
+- **Sub-Agent Sidebar Refactoring**: The sidebar sub-agent list has been moved to a separate panel with its own surface background to avoid visual conflict with the parent session's selected state. Activating a sub-agent automatically expands its parent session, and deleting a parent session cascades to abort all child agent streams and clears the chat area.
+- **Session Compression API Profile**: Compressed sessions now use the session-level `apiProfile` instead of the global active configuration, ensuring consistency with the API configuration actually used in the conversation.
+- **Project Rule Editor**: The rule editor now follows the currently active project item, and the project dropdown selector has been removed to keep rule settings in sync with the current context.
+- **Localized Time Labels**: Weekday names in chat timestamps are now localized (en, zh-CN, zh-TW) by passing the i18n `t` function to `formatTimeLabel`.
+- **TokenUsageRing Placeholder**: Displays a placeholder ring during API configuration loading to avoid false alarms about token capacity being full.
+- **MCP & Skill Settings**: Removed the MCP JSON batch import feature; JSON editor errors now use `AutoDismissNotice`. The skill installation panel now shows an example repository address.
+- **Simplified Conversation Types**: Removed the `conversationType` status to streamline conversation type management.
+
 ## v0.1.13
 
 ## New Features

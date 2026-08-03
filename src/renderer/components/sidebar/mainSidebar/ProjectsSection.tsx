@@ -1,4 +1,11 @@
-import { Folder, FolderPlus, Loader2, Plus, Server } from "lucide-react";
+import {
+  ChevronRight,
+  Folder,
+  FolderPlus,
+  Loader2,
+  Plus,
+  Server,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -110,6 +117,31 @@ export function ProjectsSection({
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [projectNameInput, setProjectNameInput] = useState("");
   const createProjectInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [isProjectsCollapsed, setIsProjectsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("projects-section-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleProjectsCollapsed = (): void => {
+    setIsProjectsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("projects-section-collapsed", String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+    // 收起时关闭可能打开的添加菜单，避免菜单残留在界面上
+    if (!isProjectsCollapsed) {
+      setIsAddMenuOpen(false);
+      setAddDirectoryMode("");
+    }
+  };
 
   const { position: addMenuPosition } = useMenuPosition({
     isOpen: isAddMenuOpen,
@@ -616,9 +648,24 @@ export function ProjectsSection({
   return (
     <div className="sidebar-section">
       <div className="section-header">
-        <span className="section-title">
-          {t("sidebar.projects", { defaultValue: "Projects" })}
-        </span>
+        <button
+          aria-expanded={!isProjectsCollapsed}
+          className="section-toggle-btn"
+          onClick={toggleProjectsCollapsed}
+          type="button"
+        >
+          <ChevronRight
+            className={
+              isProjectsCollapsed
+                ? ""
+                : "section-toggle-chevron--open"
+            }
+            size={12}
+          />
+          <span className="section-title">
+            {t("sidebar.projects", { defaultValue: "Projects" })}
+          </span>
+        </button>
         <div className="section-actions" ref={addMenuRef}>
           {isLoadingDirectories || isSavingDirectory ? (
             <Loader2 className="spin" size={14} />
@@ -703,7 +750,7 @@ export function ProjectsSection({
             : null}
         </div>
       </div>
-      {isCreateProjectOpen ? (
+      {!isProjectsCollapsed && isCreateProjectOpen ? (
         <div className="workspace-directory-create">
           <span className="workspace-directory-create-title">
             {t("sidebar.createProjectTitle", {
@@ -753,40 +800,42 @@ export function ProjectsSection({
           </div>
         </div>
       ) : null}
-      <div className="workspace-directory-card">
-        <span className="workspace-directory-label">
-          {t("sidebar.activeDirectory", {
-            defaultValue: "Active directory",
-          })}
-        </span>
-        <WorkspaceDirectoryList
-          activeDirectoryId={activeDirectory?.directoryId}
-          directoryListRef={directoryListRef}
-          draggedDirectoryId={draggedDirectoryId}
-          dragOverDirectoryId={dragOverDirectoryId}
-          hasMoreDirectories={hasMoreDirectories}
-          isActionLocked={
-            isSavingDirectory || isReorderingDirectories || isSwitchingDirectory
-          }
-          isLoadingDirectories={isLoadingDirectories}
-          loadMoreRef={directoryLoadMoreRef}
-          onActivate={(directoryId) =>
-            void handleActivateDirectory(directoryId)
-          }
-          onDelete={(directoryId) => void handleDeleteDirectory(directoryId)}
-          onDragEnd={handleDirectoryDragEnd}
-          onDragOver={handleDirectoryDragOver}
-          onDragStart={handleDirectoryDragStart}
-          onDrop={handleDirectoryDrop}
-          onShowDetails={handleShowDetails}
-          totalCount={workspaceDirectories.length}
-          visibleDirectories={visibleDirectories}
-          workspaceDirectories={workspaceDirectories}
-        />
-        {directoryError ? (
-          <span className="workspace-directory-error">{directoryError}</span>
-        ) : null}
-      </div>
+      {!isProjectsCollapsed ? (
+        <div className="workspace-directory-card">
+          <span className="workspace-directory-label">
+            {t("sidebar.activeDirectory", {
+              defaultValue: "Active directory",
+            })}
+          </span>
+          <WorkspaceDirectoryList
+            activeDirectoryId={activeDirectory?.directoryId}
+            directoryListRef={directoryListRef}
+            draggedDirectoryId={draggedDirectoryId}
+            dragOverDirectoryId={dragOverDirectoryId}
+            hasMoreDirectories={hasMoreDirectories}
+            isActionLocked={
+              isSavingDirectory || isReorderingDirectories || isSwitchingDirectory
+            }
+            isLoadingDirectories={isLoadingDirectories}
+            loadMoreRef={directoryLoadMoreRef}
+            onActivate={(directoryId) =>
+              void handleActivateDirectory(directoryId)
+            }
+            onDelete={(directoryId) => void handleDeleteDirectory(directoryId)}
+            onDragEnd={handleDirectoryDragEnd}
+            onDragOver={handleDirectoryDragOver}
+            onDragStart={handleDirectoryDragStart}
+            onDrop={handleDirectoryDrop}
+            onShowDetails={handleShowDetails}
+            totalCount={workspaceDirectories.length}
+            visibleDirectories={visibleDirectories}
+            workspaceDirectories={workspaceDirectories}
+          />
+          {directoryError ? (
+            <span className="workspace-directory-error">{directoryError}</span>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

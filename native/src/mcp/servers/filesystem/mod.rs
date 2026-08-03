@@ -4,6 +4,7 @@ use std::path::Path;
 use base64::Engine;
 use napi::bindgen_prelude::*;
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 use super::super::service::McpService;
 use super::super::tools::McpTool;
@@ -12,8 +13,10 @@ use super::remote_workspace::{
 };
 
 mod office;
+mod text_codec;
 
 use office::{extract_office_document_text, office_document_kind};
+use text_codec::{decode_text_bytes, encode_text, encode_text_back, encoding_for_label};
 
 /// 模糊匹配的最低相似度阈值（0.0 ~ 1.0）。
 /// 当 searchContent 与文件中某段内容相似度达到此值时，视为匹配成功。
@@ -47,7 +50,7 @@ impl McpService for FilesystemService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "read".to_string(),
-                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once.".to_string(),
+                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Text file encoding is auto-detected (UTF-8, UTF-16/32 with BOM, GBK/GB18030, Big5, Shift_JIS, EUC-KR, windows-1252, etc.) and decoded to UTF-8. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -70,7 +73,7 @@ impl McpService for FilesystemService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "replace_edit".to_string(),
-                description: "Fuzzy search-and-replace editing. Finds searchContent in the file and replaces it with replaceContent. IMPORTANT: searchContent must be COPIED EXACTLY from the file - do NOT include line number prefixes (like \"42:\") that appear in read output, do NOT retype or paraphrase. Copy the raw source text verbatim. If the exact text is not found, a fuzzy match is attempted; on failure the error includes the closest matching region to help you correct your searchContent. On success the response includes a \"review\" field with the edited region plus surrounding context lines (edited lines marked with \">>>\") - always verify the edit landed correctly.".to_string(),
+                description: "Fuzzy search-and-replace editing. Finds searchContent in the file and replaces it with replaceContent. The file's original text encoding is auto-detected and preserved on write-back (the edited file keeps its original encoding and BOM). IMPORTANT: searchContent must be COPIED EXACTLY from the file - do NOT include line number prefixes (like \"42:\") that appear in read output, do NOT retype or paraphrase. Copy the raw source text verbatim. If the exact text is not found, a fuzzy match is attempted; on failure the error includes the closest matching region to help you correct your searchContent. On success the response includes a \"review\" field with the edited region plus surrounding context lines (edited lines marked with \">>>\") - always verify the edit landed correctly. ESCAPE SEQUENCES: text inside string literals (e.g. Rust/Python/JSON source) stores escapes like \\n, \\t, \\\", \\\\ as literal backslash + character pairs in the file. When searchContent or replaceContent touches such text, keep the escapes in their literal form exactly as shown by filesystem-read output - never convert a literal backslash-n into a real newline, and never convert a real newline into a literal \\n. Use a real newline only when the file actually contains one; use a literal escape sequence only when the file text shows that escape.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -80,11 +83,11 @@ impl McpService for FilesystemService {
                         },
                         "searchContent": {
                             "type": "string",
-                            "description": "The EXACT raw source text to find in the file. Do NOT include line number prefixes from read output. Copy verbatim from the file content."
+                            "description": "The EXACT raw source text to find in the file. Do NOT include line number prefixes from read output. Copy verbatim from the file content. If the file text contains escape sequences (like \\n, \\t, \\\" inside string literals), copy them as literal backslash + character text - do NOT convert them to real newlines/tabs/quotes."
                         },
                         "replaceContent": {
                             "type": "string",
-                            "description": "New content to replace with."
+                            "description": "New content to replace with. Match the file's escape style: write a literal backslash-n (two characters) when the file should keep an escape sequence like \\n; write a real newline only when the file actually uses real newlines."
                         },
                         "occurrence": {
                             "type": "number",
@@ -97,7 +100,7 @@ impl McpService for FilesystemService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "create".to_string(),
-                description: "Create a new file with content. Automatically creates parent directories if needed. If the file already exists, an error is returned with the current file size and line count - use overwrite=true to replace it, or use replace_edit instead to modify the existing file.".to_string(),
+                description: "Create a new file with content. Automatically creates parent directories if needed. If the file already exists, an error is returned with the current file size and line count - use overwrite=true to replace it, or use replace_edit instead to modify the existing file. The optional encoding parameter (default: utf-8) controls the file's byte encoding, e.g. gbk, gb18030, big5, shift_jis, euc-kr, utf-16le, utf-16be, windows-1252.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -112,6 +115,10 @@ impl McpService for FilesystemService {
                         "overwrite": {
                             "type": "boolean",
                             "description": "Whether to overwrite the file if it already exists (default false)."
+                        },
+                        "encoding": {
+                            "type": "string",
+                            "description": "Byte encoding of the created file (default utf-8). Supports encoding labels like gbk, gb18030, big5, shift_jis, euc-kr, utf-16le, utf-16be, windows-1252."
                         }
                     },
                     "required": ["filePath", "content","overwrite"]
@@ -142,6 +149,7 @@ impl FilesystemService {
         tool_name: &str,
         args: &Value,
         on_remote_workspace_command: &RemoteWorkspaceCallback,
+        cancel_token: Option<&CancellationToken>,
     ) -> napi::Result<Value> {
         let file_path = args.get("filePath").and_then(Value::as_str);
         if file_path.is_some_and(is_ssh_path) {
@@ -149,6 +157,7 @@ impl FilesystemService {
                 on_remote_workspace_command,
                 &format!("filesystem-{tool_name}"),
                 args,
+                cancel_token,
             )
             .await;
         }
@@ -228,12 +237,23 @@ impl FilesystemService {
             .map(|o| o as usize)
             .unwrap_or(1);
 
-        let content = fs::read_to_string(&file_path).map_err(|e| {
+        // 按字节读取并自动检测文件原始编码，统一解码为 UTF-8 后在字符串上编辑，
+        // 写回时再转回原始编码（含 BOM），保证非 UTF-8 文件编辑后编码不变。
+        let bytes = fs::read(&file_path).map_err(|e| {
             Error::new(
                 Status::GenericFailure,
                 format!("Failed to read file: {} (path: {})", e, file_path),
             )
         })?;
+        let decoded = decode_text_bytes(&bytes).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to decode file as text: {} (path: {})", e, file_path),
+            )
+        })?;
+        let content = decoded.text;
+        let original_encoding = decoded.encoding;
+        let had_bom = decoded.had_bom;
 
         // 检测文件主要使用的行尾风格，并将 replace_content 适配为相同风格，
         // 避免在 CRLF 文件中插入 LF 行尾导致混合行尾。
@@ -290,7 +310,17 @@ impl FilesystemService {
                 new_lines.splice(target_start..end_line, replacement_lines);
                 let new_content = new_lines.join("\n");
 
-                fs::write(&file_path, &new_content).map_err(|e| {
+                let new_bytes =
+                    encode_text_back(&new_content, original_encoding, had_bom).map_err(|e| {
+                        Error::new(
+                            Status::GenericFailure,
+                            format!(
+                                "Failed to encode edited content back to original encoding: {} (path: {})",
+                                e, file_path
+                            ),
+                        )
+                    })?;
+                fs::write(&file_path, &new_bytes).map_err(|e| {
                     Error::new(
                         Status::GenericFailure,
                         format!("Failed to write file: {} (path: {})", e, file_path),
@@ -328,7 +358,17 @@ impl FilesystemService {
                 new_lines.splice(start_line..end_line, replacement_lines);
                 let new_content = new_lines.join("\n");
 
-                fs::write(&file_path, &new_content).map_err(|e| {
+                let new_bytes =
+                    encode_text_back(&new_content, original_encoding, had_bom).map_err(|e| {
+                        Error::new(
+                            Status::GenericFailure,
+                            format!(
+                                "Failed to encode edited content back to original encoding: {} (path: {})",
+                                e, file_path
+                            ),
+                        )
+                    })?;
+                fs::write(&file_path, &new_bytes).map_err(|e| {
                     Error::new(
                         Status::GenericFailure,
                         format!("Failed to write file: {} (path: {})", e, file_path),
@@ -387,12 +427,33 @@ impl FilesystemService {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        // 可选的输出编码（默认 UTF-8）。无效 label 直接报错，避免静默回退。
+        let encoding = args
+            .get("encoding")
+            .and_then(|v| v.as_str())
+            .map(|label| {
+                encoding_for_label(label).ok_or_else(|| {
+                    Error::new(
+                        Status::InvalidArg,
+                        format!(
+                            "Unsupported encoding label: \"{}\". Supported labels include: utf-8, gbk, gb18030, big5, shift_jis, euc-kr, utf-16le, utf-16be, windows-1252.",
+                            label
+                        ),
+                    )
+                })
+            })
+            .transpose()?
+            .unwrap_or(encoding_rs::UTF_8);
+
         let path = Path::new(&file_path);
 
         if path.exists() && !overwrite {
             let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-            let line_count = fs::read_to_string(path)
-                .map(|c| c.lines().count())
+            let line_count = fs::read(path)
+                .map(|bytes| {
+                    // 行数仅为错误信息参考，用 lossy 解码避免非 UTF-8 文件统计失败。
+                    String::from_utf8_lossy(&bytes).lines().count()
+                })
                 .unwrap_or(0);
             return Err(Error::new(
                 Status::GenericFailure,
@@ -414,14 +475,27 @@ impl FilesystemService {
             }
         }
 
-        fs::write(path, content).map_err(|e| {
+        // 将 UTF-8 内容按指定编码转为字节后写入。
+        let bytes = encode_text(content, encoding).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Failed to encode content to \"{}\": {} (path: {})",
+                    encoding.name(),
+                    e,
+                    file_path
+                ),
+            )
+        })?;
+
+        fs::write(path, &bytes).map_err(|e| {
             Error::new(
                 Status::GenericFailure,
                 format!("Failed to write file: {} (path: {})", e, file_path),
             )
         })?;
 
-        let byte_count = content.len();
+        let byte_count = bytes.len();
         let line_count = content.lines().count();
 
         Ok(json!({
@@ -884,12 +958,24 @@ fn read_path(
     let content = if let Some(kind) = office_document_kind(path) {
         extract_office_document_text(path, kind)?
     } else {
-        fs::read_to_string(path).map_err(|error| {
+        // 字节读取 + 自动编码检测（BOM/chardetng），统一解码为 UTF-8。
+        let bytes = fs::read(path).map_err(|error| {
             Error::new(
                 Status::GenericFailure,
                 format!("Failed to read file: {} (path: {})", error, file_path),
             )
-        })?
+        })?;
+        decode_text_bytes(&bytes)
+            .map_err(|error| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!(
+                        "Failed to decode file as text: {} (path: {})",
+                        error, file_path
+                    ),
+                )
+            })?
+            .text
     };
 
     Ok(format_numbered_lines(&content, start_line, end_line))

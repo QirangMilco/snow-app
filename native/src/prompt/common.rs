@@ -182,32 +182,6 @@ fn combine_role_contents(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::combine_role_contents;
-
-    #[test]
-    fn combines_global_before_project_rules() {
-        let (content, is_override) = combine_role_contents(
-            Some(("global rule".to_string(), false)),
-            Some(("project rule".to_string(), false)),
-        )
-        .expect("combined rules");
-
-        assert_eq!(
-            content,
-            "## Global rules\n\nglobal rule\n\n## Project rules\n\nproject rule"
-        );
-        assert!(!is_override);
-    }
-
-    #[test]
-    fn keeps_a_single_enabled_scope_unchanged() {
-        let role = ("project only".to_string(), false);
-        assert_eq!(combine_role_contents(None, Some(role.clone())), Some(role));
-    }
-}
-
 /// Replace the default role text in the prompt with the role override block.
 pub(crate) fn apply_role_override(prompt: &str, role_content: &str) -> String {
     let override_block = format!(

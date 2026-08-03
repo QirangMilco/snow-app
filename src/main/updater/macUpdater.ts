@@ -16,7 +16,8 @@ import { readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { snowLog } from "../../utils/snowLogger";
 import { markCloseConfirmed } from "../app/mainWindow";
-import { getRawNative } from "../native/nativeBridge";
+import { applySessionProxy } from "../app/sessionProxy";
+import { getRawNative, native } from "../native/nativeBridge";
 import {
   getUpdateStatus,
   setUpdateStatus,
@@ -252,6 +253,8 @@ const checkForUpdatesAction = async (): Promise<void> => {
   }
   checkInFlight = true;
   try {
+    // 每次检查前同步代理设置，确保清单请求与后续下载走配置的代理
+    await applySessionProxy(native);
     if (!app.isPackaged) {
       return;
     }
@@ -329,6 +332,8 @@ const downloadUpdateAction = async (): Promise<void> => {
   }
   downloadInFlight = true;
   try {
+    // 下载前同步代理设置，确保更新包下载走配置的代理
+    await applySessionProxy(native);
     if (!app.isPackaged) {
       throw new Error("开发模式下不支持下载更新");
     }

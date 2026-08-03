@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::path::Path;
 
 use serde_json::Value;
 
+use crate::api::conversation::images::{parse_chat_message_content, ChatImage};
 use crate::storage::services::chat_conversations::ChatContextMessage;
 
 /// Convert stored tool_calls_json (any provider format) into Anthropic
@@ -53,6 +55,61 @@ pub fn parse_tool_results_json(raw: &str) -> Vec<(String, String, String)> {
             let call_id = v.get("callId").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let result = v.get("result").and_then(|x| x.as_str()).unwrap_or("").to_string();
             (name, call_id, result)
+        })
+        .collect()
+}
+
+/// A tool result split into plain text and multimodal image blocks.
+///
+/// Screenshot tools (`browser-screenshot`) embed their PNG base64 payload as
+/// `@@image:data:image/png;base64,...@@` tags inside the stored result string
+/// (see `formatMcpToolResultForModel` in the renderer). Each provider payload
+/// builder must emit those images as native multimodal content blocks
+/// (`image_url` / `input_image` / `image` / `inlineData`) instead of leaking
+/// the base64 into a plain-text tool result field, which wastes context and
+/// cannot be interpreted as vision input by the model.
+pub struct ParsedToolResult {
+    pub name: String,
+    pub call_id: String,
+    pub text: String,
+    pub images: Vec<ChatImage>,
+}
+
+/// Parse tool_results_json and split `@@image:...@@` tags out of each result
+/// into structured [`ChatImage`] blocks.
+///
+/// `skip_image_parsing` mirrors the per-request context skipping flag: when
+/// set, results are passed through verbatim so no file I/O happens.
+pub fn parse_tool_results_with_images(
+    raw: &str,
+    database_path: &Path,
+    skip_image_parsing: bool,
+) -> Vec<ParsedToolResult> {
+    parse_tool_results_json(raw)
+        .into_iter()
+        .map(|(name, call_id, result)| {
+            if skip_image_parsing || !result.contains("@@image:") {
+                return ParsedToolResult {
+                    name,
+                    call_id,
+                    text: result,
+                    images: Vec::new(),
+                };
+            }
+            match parse_chat_message_content(&result, database_path) {
+                Ok(parsed) => ParsedToolResult {
+                    name,
+                    call_id,
+                    text: parsed.text,
+                    images: parsed.images,
+                },
+                Err(_) => ParsedToolResult {
+                    name,
+                    call_id,
+                    text: result,
+                    images: Vec::new(),
+                },
+            }
         })
         .collect()
 }

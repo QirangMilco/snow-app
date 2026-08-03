@@ -69,3 +69,9 @@ export type ChatMessagePage = {
   total: number;
   hasMore: boolean;
 };
+
+export type UserMessageSummary = {
+  id: string;
+  content: string;
+  createdAt: string;
+};

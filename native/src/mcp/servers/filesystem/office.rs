@@ -4,7 +4,8 @@
 //! - pdf: 使用 pdf-extract 提取全文
 //! - docx/pptx: 作为 OOXML(zip) 容器解包后按标签提取文本运行
 //! - xlsx/xls/xlsb/xlsm/ods: 使用 calamine 逐 Sheet 读取
-//! - csv: 使用 csv crate 正确解析带引号字段（字段内可含换行/分隔符）
+//! - csv: 使用 csv crate 正确解析带引号字段（字段内可含换行/分隔符），
+//!        读取时经编码检测解码，支持 GBK 等非 UTF-8 编码的 CSV
 //! - doc/ppt（旧版二进制格式）: 无法直接解析，返回引导性错误
 //!
 //! 注意：本模块的提取函数都是同步的 CPU/IO 密集型操作，调用方必须保证其运行在
@@ -320,16 +321,30 @@ fn extract_excel_text(path: &Path) -> napi::Result<String> {
 
 /// 解析 CSV：正确处理带引号字段内的换行/分隔符，
 /// 每条记录输出一行，字段间以 " | " 连接。允许行列数不一致。
+/// 按字节读取并经编码检测解码，GBK 等非 UTF-8 编码的 CSV 也能正确解析。
 fn extract_csv_text(path: &Path) -> napi::Result<String> {
-    let mut reader = csv::ReaderBuilder::new()
-        .flexible(true)
-        .from_path(path)
+    let bytes = fs::read(path).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to open CSV file: {} (path: {})", error, path.display()),
+        )
+    })?;
+    let text = super::text_codec::decode_text_bytes(&bytes)
         .map_err(|error| {
             Error::new(
                 Status::GenericFailure,
-                format!("Failed to open CSV file: {} (path: {})", error, path.display()),
+                format!(
+                    "Failed to decode CSV file as text: {} (path: {})",
+                    error,
+                    path.display()
+                ),
             )
-        })?;
+        })?
+        .text;
+
+    let mut reader = csv::ReaderBuilder::new()
+        .flexible(true)
+        .from_reader(std::io::Cursor::new(text));
 
     let mut text = String::new();
     for record in reader.records() {

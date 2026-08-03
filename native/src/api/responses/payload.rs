@@ -89,22 +89,63 @@ pub(super) fn build_responses_payload(
                 continue;
             }
             let results = match message.tool_results_json {
-                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_json(raw),
+                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_with_images(
+                    raw,
+                    database_path,
+                    skip_image_parsing,
+                ),
                 None => Vec::new(),
             };
-            for (_name, call_id, result) in &results {
-                if call_id.is_empty() {
+            for tool_result in &results {
+                let text = if tool_result.text.is_empty() {
+                    "[image attached]".to_string()
+                } else {
+                    tool_result.text.clone()
+                };
+                if tool_result.call_id.is_empty() {
+                    // No paired call: emit text and images as a single user
+                    // message with multimodal content blocks.
+                    let mut content_blocks = Vec::new();
+                    if !text.is_empty() {
+                        content_blocks.push(json!({"type": "input_text", "text": text}));
+                    }
+                    content_blocks.extend(tool_result.images.iter().map(|image| {
+                        json!({
+                            "type": "input_image",
+                            "image_url": image.data_url,
+                        })
+                    }));
                     input.push(json!({
                         "type": "message",
                         "role": "user",
-                        "content": [{"type": "input_text", "text": result}],
+                        "content": content_blocks,
                     }));
                 } else {
+                    // function_call_output only accepts a plain string, so the
+                    // screenshot base64 must travel in a following structured
+                    // user message as input_image blocks.
                     input.push(json!({
                         "type": "function_call_output",
-                        "call_id": call_id,
-                        "output": result,
+                        "call_id": tool_result.call_id,
+                        "output": text,
                     }));
+                    if !tool_result.images.is_empty() {
+                        let image_blocks: Vec<Value> = tool_result
+                            .images
+                            .iter()
+                            .map(|image| {
+                                json!({
+                                    "type": "input_image",
+                                    "image_url": image.data_url,
+                                })
+                            })
+                            .collect();
+                        input.push(json!({
+                            "type": "message",
+                            "role": "user",
+                            "content": image_blocks,
+                        }));
+                    }
                 }
             }
             continue;

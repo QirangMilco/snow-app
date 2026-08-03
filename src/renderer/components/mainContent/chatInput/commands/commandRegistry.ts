@@ -1,6 +1,7 @@
 import { createClearCommand } from "./ClearCommand";
 import { createCodebaseCommand } from "./CodebaseCommand";
 import { createCompactCommand } from "./CompactCommand";
+import { createFileChangesCommand } from "./FileChangesCommand";
 import { createMcpCommand } from "./McpCommand";
 import { createRoleCommand } from "./RoleCommand";
 import { createSensitiveCommandsCommand } from "./SensitiveCommandsCommand";
@@ -26,6 +27,7 @@ type ChatCommandLabels = {
   codebaseDescription: string;
   codebaseNoProject: string;
   compactDescription: string;
+  fileChangesDescription: string;
   mcpDescription: string;
   roleDescription: string;
   roleNoProject: string;
@@ -35,14 +37,20 @@ type ChatCommandLabels = {
 
 type CreateChatCommandsOptions = {
   onNewChat: () => void;
-  onCompactConversation?: (model?: string) => void | Promise<void>;
+  onCompactConversation?: (
+    model?: string,
+    apiProfile?: string
+  ) => void | Promise<void>;
+  onOpenFileChangesPanel: () => void;
   onOpenMcpPanel: () => void;
   onOpenRolePanel: () => void;
   onOpenSensitiveCommandsPanel: () => void;
   onOpenSkillsPanel: () => void;
   onOpenCodebasePanel: () => void;
   model?: string;
+  apiProfile?: string;
   compactDisabled: boolean;
+  fileChangesDisabled: boolean;
   mcpDisabled: boolean;
   roleDisabled: boolean;
   sensitiveCommandsDisabled: boolean;
@@ -55,13 +63,16 @@ type CreateChatCommandsOptions = {
 export const createChatCommands = ({
   onNewChat,
   onCompactConversation,
+  onOpenFileChangesPanel,
   onOpenMcpPanel,
   onOpenRolePanel,
   onOpenSensitiveCommandsPanel,
   onOpenSkillsPanel,
   onOpenCodebasePanel,
   model,
+  apiProfile,
   compactDisabled,
+  fileChangesDisabled,
   mcpDisabled,
   roleDisabled,
   sensitiveCommandsDisabled,
@@ -75,6 +86,14 @@ export const createChatCommands = ({
 
   const commands: ChatCommand[] = [
     createClearCommand(onNewChat, labels.clearDescription),
+    {
+      ...createFileChangesCommand(
+        onOpenFileChangesPanel,
+        labels.fileChangesDescription,
+        fileChangesDisabled
+      ),
+      disabled: fileChangesDisabled,
+    },
     {
       ...createMcpCommand(onOpenMcpPanel, labels.mcpDescription, mcpDisabled),
       disabled: mcpDisabled || isRunningDisabled("mcp"),
@@ -118,6 +137,7 @@ export const createChatCommands = ({
       ...createCompactCommand(
         onCompactConversation,
         model,
+        apiProfile,
         labels.compactDescription,
         compactDisabled
       ),

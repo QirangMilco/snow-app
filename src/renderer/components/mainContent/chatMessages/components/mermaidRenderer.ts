@@ -596,6 +596,9 @@ export const openMermaidImageViewer = (block: HTMLElement): void => {
 
   const overlay = document.createElement("div");
   overlay.className = IMAGE_VIEWER_CLASS;
+  if (!isDarkTheme()) {
+    overlay.classList.add("is-light");
+  }
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.setAttribute("aria-label", "Diagram preview");

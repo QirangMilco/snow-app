@@ -13,6 +13,13 @@ export const MAX_TEXTAREA_ROWS = 8;
 export const DEFAULT_TEXTAREA_ROWS = 2;
 export const DEFAULT_THINKING_VALUE = "high";
 
+/**
+ * 粘贴大段文本时的阈值（字符数）。超出此值的纯文本粘贴会被
+ * 标签化为 text-snippet chip，避免 contenteditable 输入框渲染
+ * 海量文本节点导致整个应用卡死。
+ */
+export const TEXT_SNIPPET_THRESHOLD = 2000;
+
 export const THINKING_OPTIONS_BY_METHOD: Record<
   RequestMethod,
   ThinkingOption[]

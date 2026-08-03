@@ -296,10 +296,19 @@ impl TodoService {
             .iter()
             .map(|item| serde_json::to_value(item).unwrap_or(json!({})))
             .collect();
-        Ok(json!({
+        let mut result = json!({
             "sessionId": session_id,
             "todos": items_json,
-        }))
+        });
+        // When the list is empty, return a guiding hint instead of a bare
+        // empty list, so the caller knows there is nothing to manage yet and
+        // is told how to add TODOs (avoids generating malformed add args).
+        if items_json.is_empty() {
+            result["message"] = json!(
+                "当前没有待办项，请先使用 action=add 添加待办后再继续。content 为必填参数（字符串或字符串数组），例如 content: [\"任务1\", \"任务2\"]"
+            );
+        }
+        Ok(result)
     }
 
     fn execute_add(&self, args: &Value) -> napi::Result<Value> {

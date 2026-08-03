@@ -28,20 +28,20 @@ export const directoryIdToPath = (
 };
 
 /**
- * Kill every in-flight bash subprocess of a session.  Iterates the running
- * tool calls and calls the Rust abort API for each known execution id, so
- * stopping a session also terminates the underlying OS process (and its
- * process tree) instead of leaving it running until its timeout.
- * Fire-and-forget: a process that just finished naturally is a no-op.
+ * Kill every in-flight tool execution of a session (bash subprocesses, SSH
+ * grep-search, remote filesystem commands, ...). Iterates the running tool
+ * calls and calls the Rust abort API for each known execution id, so stopping
+ * a session also terminates the underlying OS process / closes the SSH exec
+ * channel instead of leaving it running until its timeout.
+ * Fire-and-forget: an execution that just finished naturally is a no-op.
  */
-export const killRunningBashExecutions = (
+export const killRunningToolExecutions = (
   messages: ChatConversationMessage[]
 ): void => {
   const executionIds = new Set<string>();
   for (const message of messages) {
     for (const toolCall of message.toolCalls ?? []) {
       if (
-        toolCall.name === "bash-terminal-execute" &&
         (toolCall.status === "running" || toolCall.status === "pending") &&
         toolCall.toolExecutionId
       ) {
@@ -51,7 +51,7 @@ export const killRunningBashExecutions = (
   }
   for (const executionId of executionIds) {
     void window.snow.abortToolExecution(executionId).catch(() => {
-      // The process may have just finished; nothing to do.
+      // The execution may have just finished; nothing to do.
     });
   }
 };

@@ -22,7 +22,8 @@ export const useCompaction = (ctx: ConversationContextValue) => {
       conversationId: string,
       model?: string,
       isAuto = false,
-      subAgentConfigProfile?: string
+      subAgentConfigProfile?: string,
+      apiProfile?: string
     ): Promise<string | null> => {
       const sessionRef = ctx.sessionsRefData.current.get(conversationId);
       if (sessionRef) {
@@ -77,8 +78,11 @@ export const useCompaction = (ctx: ConversationContextValue) => {
         contextCompaction: true,
         checkpointId,
         goalMode: ctx.goalModeRef.current,
-        // For sub-agent conversations, carry the configured profile so Rust
-        // resolves the same API config the sub-agent uses for the handoff.
+        // Conversation-scoped profile isolation: the handoff must resolve the
+        // same API config the conversation's messages use. For sub-agent
+        // conversations, carry the configured profile so Rust resolves the
+        // same API config the sub-agent uses for the handoff.
+        apiProfile,
         subAgentConfigProfile,
       };
 
@@ -294,7 +298,7 @@ export const useCompaction = (ctx: ConversationContextValue) => {
   ctx.performCompactionRef.current = performCompaction;
 
   const compactConversation = useCallback(
-    async (model?: string): Promise<void> => {
+    async (model?: string, apiProfile?: string): Promise<void> => {
       const conversationId = ctx.activeConversationIdRef.current;
       if (
         !conversationId ||
@@ -303,7 +307,7 @@ export const useCompaction = (ctx: ConversationContextValue) => {
         return;
       }
 
-      await performCompaction(conversationId, model, false);
+      await performCompaction(conversationId, model, false, undefined, apiProfile);
     },
     [performCompaction, ctx.activeConversationIdRef, ctx.sessionsRefData]
   );

@@ -11,7 +11,10 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CO
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::api::common::{emit_stream_chunk as emit_chat_completion_stream_chunk, emit_tool_args_probe, inject_custom_headers};
+use crate::api::common::{
+    emit_stream_chunk as emit_chat_completion_stream_chunk, emit_tool_args_probe,
+    inject_custom_headers, truncate_utf8_safe,
+};
 use crate::api::retry::{
     non_sse_response_error, should_retry, stream_idle_timeout_error, wait_before_retry, RetryOptions,
 };
@@ -477,7 +480,7 @@ pub(super) async fn collect_chat_completions_stream(
                         "tool={}, error={}, raw={}",
                         name,
                         e,
-                        &args[..args.len().min(200)]
+                        truncate_utf8_safe(args, 200)
                     ));
                 }
             }

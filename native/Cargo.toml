@@ -1,6 +1,6 @@
 [package]
 name = "snow_native"
-version = "0.1.13"
+version = "0.1.14"
 edition = "2021"
 license = "MIT"
 
@@ -32,7 +32,9 @@ similar = "2"
 tiktoken-rs = "0.6"
 uuid = { version = "1", features = ["v4"] }
 calamine = "0.36"
+chardetng = "0.1"
 csv = "1.4"
+encoding_rs = "0.8"
 pdf-extract = "0.12"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 oxc = { version = "0.82", features = ["semantic", "ast_visit"] }

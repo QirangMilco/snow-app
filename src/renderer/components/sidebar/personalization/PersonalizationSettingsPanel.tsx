@@ -1,20 +1,24 @@
 import { ChevronRight, FolderOpen, Globe, Info, X } from "lucide-react";
 import { useState } from "react";
+import type { WorkspaceDirectoryRecord } from "../../../../preload";
 import { useI18n } from "../../../i18n";
 import { GlobalRoleEditor } from "./GlobalRoleEditor";
 import { ProjectRoleEditor } from "./ProjectRoleEditor";
 
 export type PersonalizationSettingsPanelProps = {
+  /** 当前激活的工作区项目（项目规则只允许作用于当前项目）。 */
+  activeDirectory?: WorkspaceDirectoryRecord | null;
   onClose?: () => void;
 };
 
 /**
  * 个性化/规则设置面板：
  * - 全局规则：编辑 ~/.snow/ROLE.md（对所有项目与对话生效）
- * - 项目规则：选择项目后编辑该项目 ROLE.md（本地/SSH）
+ * - 项目规则：编辑当前激活项目的 ROLE.md（本地/SSH），不允许任意切换项目
  * - 默认组合全局与项目规则，并允许项目单独关闭全局规则
  */
 export function PersonalizationSettingsPanel({
+  activeDirectory,
   onClose,
 }: PersonalizationSettingsPanelProps): React.JSX.Element {
   const { t } = useI18n();
@@ -98,7 +102,7 @@ export function PersonalizationSettingsPanel({
           hidden={activeScope !== "project"}
           role="tabpanel"
         >
-          <ProjectRoleEditor />
+          <ProjectRoleEditor activeDirectory={activeDirectory} />
         </div>
       </div>
 

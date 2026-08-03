@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   ChevronDown,
   ChevronUp,
+  FileText,
   GitCommitHorizontal,
   GitCompare,
 } from "lucide-react";
@@ -36,6 +37,15 @@ export const UserMessage = memo(
     } | null>(null);
     const [imageLightbox, setImageLightbox] = useState<string | null>(null);
     const imagePreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+      null
+    );
+    const [textSnippetPreview, setTextSnippetPreview] = useState<{
+      content: string;
+      x: number;
+      y: number;
+      placement: "up" | "down";
+    } | null>(null);
+    const textSnippetPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
       null
     );
 
@@ -90,10 +100,57 @@ export const UserMessage = memo(
       setImagePreview(null);
     }, []);
 
+    const cancelHideTextSnippetPreview = useCallback(() => {
+      if (textSnippetPreviewTimerRef.current) {
+        clearTimeout(textSnippetPreviewTimerRef.current);
+        textSnippetPreviewTimerRef.current = null;
+      }
+    }, []);
+
+    const scheduleHideTextSnippetPreview = useCallback(() => {
+      textSnippetPreviewTimerRef.current = setTimeout(() => {
+        setTextSnippetPreview(null);
+      }, 200);
+    }, []);
+
+    const handleTextSnippetChipMouseMove = useCallback(
+      (event: React.MouseEvent<HTMLSpanElement>, snippetContent: string) => {
+        if (textSnippetPreviewTimerRef.current) {
+          clearTimeout(textSnippetPreviewTimerRef.current);
+          textSnippetPreviewTimerRef.current = null;
+        }
+        const rect = event.currentTarget.getBoundingClientRect();
+        const PREVIEW_MAX_W = 440;
+        const PREVIEW_MAX_H = 320;
+        const PREVIEW_GAP = 8;
+        const halfW = PREVIEW_MAX_W / 2;
+        const clampedX = Math.max(
+          halfW + 4,
+          Math.min(rect.left + rect.width / 2, window.innerWidth - halfW - 4)
+        );
+        const spaceAbove = rect.top;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const placement: "up" | "down" =
+          spaceAbove >= PREVIEW_MAX_H + PREVIEW_GAP || spaceAbove >= spaceBelow
+            ? "up"
+            : "down";
+        setTextSnippetPreview({
+          content: snippetContent,
+          x: clampedX,
+          y: placement === "up" ? rect.top : rect.bottom,
+          placement,
+        });
+      },
+      []
+    );
+
     useEffect(() => {
       return () => {
         if (imagePreviewTimerRef.current) {
           clearTimeout(imagePreviewTimerRef.current);
+        }
+        if (textSnippetPreviewTimerRef.current) {
+          clearTimeout(textSnippetPreviewTimerRef.current);
         }
       };
     }, []);
@@ -211,6 +268,33 @@ export const UserMessage = memo(
                 );
               }
 
+              if (segment.type === "text-snippet") {
+                const snippetTitle = `${segment.tag.summary} (${segment.tag.charCount} chars)`;
+                return (
+                  <span
+                    className="user-message-file-chip text-snippet-chip"
+                    key={index}
+                    title={snippetTitle}
+                    onMouseMove={(event) =>
+                      handleTextSnippetChipMouseMove(
+                        event,
+                        segment.tag.content
+                      )
+                    }
+                    onMouseLeave={scheduleHideTextSnippetPreview}
+                  >
+                    <FileText
+                      size={12}
+                      className="user-message-file-chip-icon"
+                      style={{ color: "#6c757d" }}
+                    />
+                    <span className="user-message-file-chip-name">
+                      {segment.tag.summary}
+                    </span>
+                  </span>
+                );
+              }
+
               const { tag } = segment;
               const linesStr =
                 !tag.isDirectory && tag.lines && tag.lines.length > 0
@@ -288,6 +372,27 @@ export const UserMessage = memo(
               onClick={() => setImageLightbox(null)}
             >
               <img src={imageLightbox} alt="fullscreen" />
+            </div>,
+            document.body
+          )}
+        {textSnippetPreview &&
+          createPortal(
+            <div
+              className="text-snippet-preview"
+              style={{
+                left: textSnippetPreview.x,
+                top: textSnippetPreview.y,
+                transform:
+                  textSnippetPreview.placement === "up"
+                    ? "translate(-50%, calc(-100% - 8px))"
+                    : "translate(-50%, 8px)",
+              }}
+              onMouseEnter={cancelHideTextSnippetPreview}
+              onMouseLeave={scheduleHideTextSnippetPreview}
+            >
+              <pre className="text-snippet-preview-content">
+                {textSnippetPreview.content}
+              </pre>
             </div>,
             document.body
           )}

@@ -205,7 +205,9 @@ export const TodoToolCall = ({
           </span>
           {parsedResult.type === "success" ? (
             <span className="tool-call-todo-hint">
-              {t("toolCall.todo.viewInTopBar")}
+              {parsedResult.todoCount === 0
+                ? t("toolCall.todo.empty")
+                : t("toolCall.todo.viewInTopBar")}
             </span>
           ) : null}
         </div>

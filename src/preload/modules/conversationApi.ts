@@ -5,6 +5,7 @@ import type {
   ChatMessagePage,
   ChatMessageRecord,
   ConversationSearchResult,
+  UserMessageSummary,
 } from "../types";
 
 export const conversationApi = {
@@ -74,6 +75,13 @@ export const conversationApi = {
     ),
   listChatMessages: (conversationId: string): Promise<ChatMessageRecord[]> =>
     ipcRenderer.invoke("chat-conversations:list-messages", conversationId),
+  listUserMessages: (
+    conversationId: string
+  ): Promise<UserMessageSummary[]> =>
+    ipcRenderer.invoke(
+      "chat-conversations:list-user-messages",
+      conversationId
+    ),
   listChatMessagesPaginated: (
     conversationId: string,
     beforeMessageId: string,

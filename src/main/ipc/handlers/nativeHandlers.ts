@@ -29,6 +29,11 @@ import {
   APP_CONTROL_RESPONSE_CHANNEL,
 } from "../appControlBroker";
 import { dispatchRemoteWorkspaceCommand } from "../../ssh/remoteWorkspaceCommand";
+import {
+  abortSshCommand,
+  registerSshCommandAbort,
+  unregisterSshCommandAbort,
+} from "../../ssh/sshCommandRegistry";
 
 const MCP_TOOL_CHUNK_CHANNEL = "mcp:call-tool:chunk";
 
@@ -688,7 +693,12 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
       if (typeof toolExecutionId !== "string" || !toolExecutionId.trim()) {
         throw new Error("Tool execution ID is required");
       }
-      return native.abortToolExecution(toolExecutionId.trim());
+      const normalizedToolExecutionId = toolExecutionId.trim();
+      // Cancel any in-flight SSH command for this execution first so the
+      // Electron-side promise settles (exec channel closed) instead of
+      // waiting forever; the Rust-side token is cancelled right after.
+      abortSshCommand(normalizedToolExecutionId);
+      return native.abortToolExecution(normalizedToolExecutionId);
     }
   );
   ipcMain.handle(
@@ -763,7 +773,14 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
         )
           ? (subAgentAllowedTools as string[])
           : undefined;
-      return native.callMcpTool(
+
+      // One AbortController per tool call: remote workspace commands (SSH)
+      // receive its signal so `abortToolExecution` can close the exec channel.
+      // The Rust layer emits a `tool_execution` chunk with a UUID before any
+      // remote command runs; we map every emitted id to this controller.
+      const sshAbortController = new AbortController();
+      const remoteExecutionIds = new Set<string>();
+      const callPromise = native.callMcpTool(
         toolFullName.trim(),
         argsJson,
         (projectId as string | undefined)?.trim(),
@@ -771,6 +788,15 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
         (checkpointWorkDir as string | undefined)?.trim(),
         (sensitiveAuthorizationToken as string | undefined)?.trim(),
         (chunk: BashStreamChunk) => {
+          if (
+            chunk.stream === "tool_execution" &&
+            typeof chunk.data === "string" &&
+            chunk.data.trim()
+          ) {
+            const executionId = chunk.data.trim();
+            remoteExecutionIds.add(executionId);
+            registerSshCommandAbort(executionId, sshAbortController);
+          }
           if (event.sender.isDestroyed()) {
             return;
           }
@@ -786,11 +812,22 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
           dispatchUserQuestion(event.sender, question, normalizedInteractionId),
         (command: AppControlCommand) =>
           dispatchAppControl(event.sender, command),
-        (command) => dispatchRemoteWorkspaceCommand(command),
+        (command) =>
+          dispatchRemoteWorkspaceCommand(command, {
+            signal: sshAbortController.signal,
+          }),
         normalizedSubAgentAllowedTools,
         planMode as boolean | undefined,
         planApproved as boolean | undefined
       );
+
+      try {
+        return await callPromise;
+      } finally {
+        for (const executionId of remoteExecutionIds) {
+          unregisterSshCommandAbort(executionId);
+        }
+      }
     }
   );
 

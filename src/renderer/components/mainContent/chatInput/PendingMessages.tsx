@@ -1,10 +1,137 @@
-import { ArrowUp, Clock, Trash2 } from "lucide-react";
+import {
+  ArrowUp,
+  Clock,
+  FileText,
+  GitCommitHorizontal,
+  GitCompare,
+  Trash2,
+} from "lucide-react";
 import { useI18n } from "../../../i18n";
+import {
+  formatLinesStr,
+  parseContentSegments,
+  type ContentSegment,
+} from "./fileTagUtils";
+import { getFileTypeIcon } from "../../../utils/fileIcons";
 
 type PendingMessagesProps = {
   messages: string[];
   onWithdraw?: (index: number) => string | null;
   onSendNow?: (index: number) => void;
+};
+
+/**
+ * 将编码后的消息内容（含 @@file/@@image/@@commit/@@change/@@text-snippet@@
+ * 等标签）解析为分段并渲染：标签显示为 chip，其余为纯文本。
+ */
+const renderSegments = (content: string): React.ReactNode => {
+  const segments = parseContentSegments(content);
+  return segments.map((segment: ContentSegment, index: number) => {
+    if (segment.type === "text") {
+      return <span key={index}>{segment.content}</span>;
+    }
+
+    if (segment.type === "image") {
+      const imgIndex = segment.tag.index ?? 0;
+      const displayName =
+        imgIndex > 0 ? `${segment.tag.name} #${imgIndex}` : segment.tag.name;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip image-chip"
+          title={displayName}
+        >
+          {getFileTypeIcon(segment.tag.name, false, false, {
+            size: 12,
+            className: "user-message-file-chip-icon",
+          })}
+          <span className="user-message-file-chip-name">{displayName}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "commit") {
+      const { tag } = segment;
+      const chipTitle = `${tag.shortHash} ${tag.message} (${tag.author}, ${tag.date})`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip commit-chip"
+          title={chipTitle}
+        >
+          <GitCommitHorizontal
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#f05032" }}
+          />
+          <span className="user-message-file-chip-name">{tag.shortHash}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "change") {
+      const { tag } = segment;
+      const lastSep = Math.max(
+        tag.path.lastIndexOf("/"),
+        tag.path.lastIndexOf("\\")
+      );
+      const changeName =
+        lastSep === -1 ? tag.path : tag.path.slice(lastSep + 1);
+      const chipTitle = `${tag.section === "staged" ? "Staged" : "Unstaged"} ${
+        tag.status
+      } ${tag.path}`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip change-chip"
+          title={chipTitle}
+        >
+          <GitCompare
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#f59e0b" }}
+          />
+          <span className="user-message-file-chip-name">{changeName}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "text-snippet") {
+      const { tag } = segment;
+      const snippetTitle = `${tag.summary} (${tag.charCount} chars)`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip text-snippet-chip"
+          title={snippetTitle}
+        >
+          <FileText
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#6c757d" }}
+          />
+          <span className="user-message-file-chip-name">{tag.summary}</span>
+        </span>
+      );
+    }
+
+    const { tag } = segment;
+    const linesStr =
+      !tag.isDirectory && tag.lines && tag.lines.length > 0
+        ? formatLinesStr(tag.lines)
+        : "";
+    const displayName = linesStr ? `${tag.name}:${linesStr}` : tag.name;
+    const chipTitle = linesStr ? `${tag.path}:${linesStr}` : tag.path;
+    return (
+      <span key={index} className="user-message-file-chip" title={chipTitle}>
+        {getFileTypeIcon(tag.name, tag.isDirectory, false, {
+          size: 12,
+          className: "user-message-file-chip-icon",
+        })}
+        <span className="user-message-file-chip-name">{displayName}</span>
+      </span>
+    );
+  });
 };
 
 export const PendingMessages = ({
@@ -44,7 +171,7 @@ export const PendingMessages = ({
       <ul className="pending-messages-list">
         {messages.map((msg, index) => (
           <li key={index} className="pending-message-item">
-            <span className="pending-message-text">{msg}</span>
+            <span className="pending-message-text">{renderSegments(msg)}</span>
             {onSendNow && (
               <button
                 type="button"

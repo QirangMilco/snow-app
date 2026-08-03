@@ -119,11 +119,12 @@ const isModalOpen = (): boolean => {
  *
  * macOS 上 mod 对应 metaKey，其他平台对应 ctrlKey；`alt` 对应 altKey，
  * `ctrl` 对应 ctrlKey（主要用于 macOS 上的 Ctrl+P）。
+ * 非 macOS 平台上 mod 与 ctrl 是同一修饰键（都是 Ctrl），`mod+f` 与
+ * `ctrl+f` 等价，合并校验；macOS 上两者独立，分别精确匹配。
  * ESC 仅在无 Modal 打开时触发，避免与 Modal ESC 关闭冲突。
  */
 export const matchKey = (event: KeyboardEvent, key: string): boolean => {
   const isMac = isMacOS();
-  const mod = isMac ? event.metaKey : event.ctrlKey;
   const parts = key.split("+");
   const hasMod = parts.includes("mod");
   const hasAlt = parts.includes("alt");
@@ -136,10 +137,14 @@ export const matchKey = (event: KeyboardEvent, key: string): boolean => {
   if (mainPart === undefined) return false;
 
   // 修饰键状态必须精确匹配（含 shift：mod+b 不会误触 Cmd/Ctrl+Shift+B）
-  if (hasMod !== mod) return false;
-  // 非 mac 平台上 mod 即 ctrlKey（mod 已校验），ctrl 修饰不再单独校验；
-  // mac 上 ctrl 是独立修饰键（如 Ctrl+P）。
-  if (hasCtrl !== (isMac ? event.ctrlKey : false)) return false;
+  if (isMac) {
+    // macOS：Cmd 与 Ctrl 是两个独立修饰键，分别校验
+    if (hasMod !== event.metaKey) return false;
+    if (hasCtrl !== event.ctrlKey) return false;
+  } else if ((hasMod || hasCtrl) !== event.ctrlKey) {
+    // 其他平台：mod 即 Ctrl，两者等价，合并校验
+    return false;
+  }
   if (hasAlt !== event.altKey) return false;
   if (hasShift !== event.shiftKey) return false;
 

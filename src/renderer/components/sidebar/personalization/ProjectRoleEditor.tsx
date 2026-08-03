@@ -1,7 +1,6 @@
 import { FileCode2, FolderOpen, Loader2, Save } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceDirectoryRecord } from "../../../../preload";
-import { CustomSelect } from "../../common/CustomSelect";
 import { AutoDismissNotice } from "../../AutoDismissNotice";
 import { useI18n } from "../../../i18n";
 import {
@@ -9,19 +8,24 @@ import {
   buildRoleSettingsPath,
   buildSshConnectParams,
   readIncludeGlobalRules,
-  resolveProjectDirectory,
   writeIncludeGlobalRules,
   type ProjectDirectoryInfo,
 } from "./roleFileUtils";
 
+type ProjectRoleEditorProps = {
+  /** 当前激活的工作区项目；为空时无法编辑项目规则。 */
+  activeDirectory?: WorkspaceDirectoryRecord | null;
+};
+
 /**
- * 项目规则编辑器：选择工作区项目后编辑其根目录的 ROLE.md。
- * 支持本地与 SSH 远程工作区（复用 RoleEditorPanel 的 SSH 链路）。
+ * 项目规则编辑器：直接编辑当前激活项目根目录的 ROLE.md。
+ * 与 MCP 项目作用域一致，项目层级只允许设置当前项目、不允许任意切换，
+ * 避免规则设置出现与当前上下文无关的任意性。支持本地与 SSH 远程工作区。
  */
-export const ProjectRoleEditor = (): React.JSX.Element => {
+export const ProjectRoleEditor = ({
+  activeDirectory,
+}: ProjectRoleEditorProps): React.JSX.Element => {
   const { t } = useI18n();
-  const [projects, setProjects] = useState<WorkspaceDirectoryRecord[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [directoryInfo, setDirectoryInfo] =
     useState<ProjectDirectoryInfo | null>(null);
   const [roleFilePath, setRoleFilePath] = useState("");
@@ -32,27 +36,12 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
     useState(true);
   const [content, setContent] = useState("");
   const [originalContent, setOriginalContent] = useState("");
-  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const loadGenerationRef = useRef(0);
   const sshSessionIdRef = useRef<string | null>(null);
-
-  // 加载项目列表。
-  useEffect(() => {
-    setIsLoadingProjects(true);
-    window.snow
-      .listWorkspaceDirectories()
-      .then(setProjects)
-      .catch((loadError: unknown) => {
-        setError(
-          loadError instanceof Error ? loadError.message : String(loadError)
-        );
-      })
-      .finally(() => setIsLoadingProjects(false));
-  }, []);
 
   // 断开 SSH 会话（切换项目/卸载时）。
   const disconnectSsh = useCallback((): void => {
@@ -68,36 +57,30 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
     };
   }, [disconnectSsh]);
 
+  // 重置编辑器状态：使任何在途请求失效、清空草稿并断开 SSH 会话。
+  const resetEditor = useCallback((): void => {
+    loadGenerationRef.current += 1;
+    setIsLoading(false);
+    setError(null);
+    setSaveSuccess(false);
+    setContent("");
+    setOriginalContent("");
+    setDirectoryInfo(null);
+    setRoleFilePath("");
+    setSettingsFilePath("");
+    setSettingsContent("");
+    setIncludeGlobalRules(true);
+    setOriginalIncludeGlobalRules(true);
+    disconnectSsh();
+  }, [disconnectSsh]);
+
   const loadProjectRole = useCallback(
-    async (projectId: string): Promise<void> => {
-      const generation = loadGenerationRef.current + 1;
-      loadGenerationRef.current = generation;
+    async (info: ProjectDirectoryInfo): Promise<void> => {
+      resetEditor();
       setIsLoading(true);
-      setError(null);
-      setSaveSuccess(false);
-      setContent("");
-      setOriginalContent("");
-      setDirectoryInfo(null);
-      setRoleFilePath("");
-      setSettingsFilePath("");
-      setSettingsContent("");
-      setIncludeGlobalRules(true);
-      setOriginalIncludeGlobalRules(true);
-      disconnectSsh();
+      const generation = loadGenerationRef.current;
 
       try {
-        const info = await resolveProjectDirectory(projectId);
-        if (loadGenerationRef.current !== generation) return;
-
-        if (!info) {
-          setError(
-            t("personalization.projectNotFound", {
-              defaultValue: "Project directory not found.",
-            })
-          );
-          return;
-        }
-
         setDirectoryInfo(info);
         const filePath = buildRoleFilePath(info);
         const projectSettingsPath = buildRoleSettingsPath(info);
@@ -164,7 +147,9 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
             setOriginalContent("");
           }
           try {
-            const result = await window.snow.readFileContent(projectSettingsPath);
+            const result = await window.snow.readFileContent(
+              projectSettingsPath
+            );
             if (loadGenerationRef.current !== generation) return;
             const text = result.isBinary ? "" : result.content;
             const enabled = readIncludeGlobalRules(text);
@@ -186,24 +171,20 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
         }
       }
     },
-    [disconnectSsh, t]
+    [resetEditor, t]
   );
 
-  const handleProjectChange = (projectId: string): void => {
-    setSelectedProjectId(projectId);
-    if (projectId) {
-      void loadProjectRole(projectId);
-    } else {
-      loadGenerationRef.current += 1;
-      setDirectoryInfo(null);
-      setRoleFilePath("");
-      setSettingsFilePath("");
-      setContent("");
-      setOriginalContent("");
-      setError(null);
-      disconnectSsh();
+  // 跟随当前激活项目：项目切换时重新加载对应 ROLE.md，无项目时清空编辑器。
+  useEffect(() => {
+    if (!activeDirectory) {
+      resetEditor();
+      return;
     }
-  };
+    void loadProjectRole({
+      path: activeDirectory.path,
+      isSsh: activeDirectory.path.startsWith("ssh://"),
+    });
+  }, [activeDirectory, loadProjectRole, resetEditor]);
 
   const handleSave = async (): Promise<void> => {
     if (!directoryInfo || !roleFilePath || !settingsFilePath || isSaving) return;
@@ -278,9 +259,6 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
   const hasChanges =
     content !== originalContent ||
     includeGlobalRules !== originalIncludeGlobalRules;
-  const selectedProject = projects.find(
-    (project) => project.directoryId === selectedProjectId
-  );
 
   return (
     <section
@@ -306,46 +284,25 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
         </div>
       </div>
 
-      <div className="personalization-project-select-row">
-        <label className="personalization-project-select-label">
-          <span>
-            {t("personalization.projectSelect", {
-              defaultValue: "Project",
+      {activeDirectory ? (
+        <div className="personalization-current-project">
+          <span className="personalization-current-project-label">
+            {t("personalization.currentProject", {
+              defaultValue: "Current project",
             })}
           </span>
-          <div className="personalization-project-select-wrap">
-            <CustomSelect
-              value={selectedProjectId}
-              options={[
-                {
-                  value: "",
-                  label: t("personalization.projectSelectPlaceholder", {
-                    defaultValue: "Select a project...",
-                  }),
-                },
-                ...projects.map((project) => ({
-                  value: project.directoryId,
-                  label: project.name,
-                })),
-              ]}
-              onChange={handleProjectChange}
-              disabled={isLoadingProjects}
-              portal
-            />
-          </div>
-        </label>
-        {selectedProject ? (
+          <strong title={activeDirectory.path}>{activeDirectory.name}</strong>
           <span className="personalization-project-kind">
-            {selectedProject.path.startsWith("ssh://")
+            {activeDirectory.path.startsWith("ssh://")
               ? "SSH"
               : t("personalization.projectKindLocal", {
                   defaultValue: "Local",
                 })}
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
-      {selectedProjectId ? (
+      {activeDirectory ? (
         <div className="personalization-inheritance-row">
           <div className="personalization-inheritance-copy">
             <strong>
@@ -391,13 +348,13 @@ export const ProjectRoleEditor = (): React.JSX.Element => {
         }}
       />
 
-      {!selectedProjectId ? (
+      {!activeDirectory ? (
         <div className="personalization-empty">
           <FolderOpen size={20} />
           <span>
             {t("personalization.projectEmpty", {
               defaultValue:
-                "Select a project to edit its ROLE.md. Add projects from the sidebar first.",
+                "No active project. Open or add a project from the sidebar to edit its ROLE.md.",
             })}
           </span>
         </div>

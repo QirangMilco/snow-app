@@ -4,6 +4,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  nativeTheme,
   Tray,
   type NativeImage,
 } from "electron";
@@ -24,7 +25,9 @@ import { snowLog } from "../../utils/snowLogger";
  *   会把白底一起带上、缩到 16px 糊成实心方块，故反解蓝色雪花覆盖度抠出
  *   雪花造型并去色，与 LOGO 完全统一，16px @1x + 32px @2x 双表示。
  * - Windows/Linux：LOGO 彩色 favicon 小图（16px + 32px @2x 双表示，DPI 精确匹配）。
- * - 活动态（有会话进行中）：右下角叠加圆点（macOS 纯黑、Windows/Linux 绿色）。
+ * - 活动态（有会话进行中）：右下角叠加绿色圆点。绿点使活动图不能设为模板
+ *   （模板图忽略颜色、整体反色），雪花反色由 nativeTheme 监听人工模拟：
+ *   浅色外观黑雪花 + 绿点、深色外观白雪花 + 绿点，与普通态模板反色一致。
  *
  * 悬停 tooltip 展示快速信息（原生纯文本，无图标）：
  * 进行中会话 / 活跃终端 / 项目 / 待办备忘录 / 今日 Token 用量。
@@ -224,9 +227,8 @@ const overlayActivityDot = (
 
 // ─── 图标生成 ─────────────────────────────────────────────────────────────
 
-// 活动态圆点颜色：macOS 模板图为纯黑（与雪花线条同色，反色后一致）；
-// Windows/Linux 用绿色（与主题 accentGreen #22c55e 一致）。
-const BLACK_DOT: [number, number, number, number] = [0, 0, 0, 255];
+// 活动态圆点颜色：三平台统一用绿色（与主题 accentGreen #22c55e 一致）。
+// macOS 活动图不再设为模板图（模板图会忽略 RGB 颜色），绿色圆点直接显示。
 const GREEN_DOT: [number, number, number, number] = [34, 197, 94, 255];
 
 /**
@@ -401,26 +403,44 @@ const maskToTemplateRgba = (
 };
 
 /**
- * macOS 模板图标：从 LOGO 抠出的雪花去色版（纯黑 + alpha，系统自动反色
- * 适配明暗菜单栏），16px @1x + 32px @2x 双表示。active 时右下角带实心圆点。
+ * 将 RGBA 像素中所有不透明（alpha > 0）像素的 RGB 染成指定颜色。
+ * 用于生成与模板反色效果一致的黑/白雪花线条。
  */
-const createMacTemplateIcons = (): {
-  normal: NativeImage;
-  active: NativeImage;
-} => {
+const tintRgba = (rgba: Uint8Array, color: [number, number, number]): void => {
+  for (let i = 0; i < rgba.length; i += 4) {
+    if (rgba[i + 3] > 0) {
+      rgba[i] = color[0];
+      rgba[i + 1] = color[1];
+      rgba[i + 2] = color[2];
+    }
+  }
+};
+
+/**
+ * macOS 图标：
+ * - 普通态：雪花模板（纯黑 + alpha，系统自动反色适配明暗菜单栏）；
+ * - 活动态：模板图会忽略 RGB 颜色，绿色圆点无法与之共存，故改为彩色图并
+ *   按系统外观预渲染两版雪花线条（浅色黑、深色白），模拟模板反色效果，
+ *   圆点始终绿色，跟随 nativeTheme 切换。16px @1x + 32px @2x 双表示。
+ */
+const createMacTemplateIcons = (): TrayIcons => {
   const build = (
     mask: Float32Array,
     srcWidth: number,
     srcHeight: number,
     crop: { x: number; y: number; side: number },
     size: number
-  ): { png: Buffer; activePng: Buffer } => {
+  ): { png: Buffer; activeLightPng: Buffer; activeDarkPng: Buffer } => {
     const rgba = maskToTemplateRgba(mask, srcWidth, srcHeight, crop, size, size);
-    const activeRgba = Uint8Array.from(rgba);
-    overlayActivityDot(activeRgba, size, size, BLACK_DOT);
+    const activeLight = Uint8Array.from(rgba);
+    overlayActivityDot(activeLight, size, size, GREEN_DOT);
+    const activeDark = Uint8Array.from(rgba);
+    tintRgba(activeDark, [255, 255, 255]);
+    overlayActivityDot(activeDark, size, size, GREEN_DOT);
     return {
       png: encodePng(rgba, size, size),
-      activePng: encodePng(activeRgba, size, size),
+      activeLightPng: encodePng(activeLight, size, size),
+      activeDarkPng: encodePng(activeDark, size, size),
     };
   };
 
@@ -432,19 +452,31 @@ const createMacTemplateIcons = (): {
       const s16 = build(mask, decoded.width, decoded.height, crop, 16);
       const s32 = build(mask, decoded.width, decoded.height, crop, 32);
       const normal = nativeImage.createFromBuffer(s16.png);
-      const active = nativeImage.createFromBuffer(s16.activePng);
+      const activeLight = nativeImage.createFromBuffer(s16.activeLightPng);
+      const activeDark = nativeImage.createFromBuffer(s16.activeDarkPng);
       normal.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: s32.png });
-      active.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: s32.activePng });
+      activeLight.addRepresentation({
+        scaleFactor: 2,
+        width: 32,
+        height: 32,
+        buffer: s32.activeLightPng,
+      });
+      activeDark.addRepresentation({
+        scaleFactor: 2,
+        width: 32,
+        height: 32,
+        buffer: s32.activeDarkPng,
+      });
       normal.setTemplateImage(true);
-      active.setTemplateImage(true);
-      return { normal, active };
+      // 活动态含绿色圆点，不能设为模板图（模板图会忽略 RGB 颜色、整体反色）。
+      return { normal, activeLight, activeDark };
     }
   } catch {
     // fallthrough to colored fallback below
   }
   // 解码失败保底：直接用彩色 LOGO（非模板，菜单栏显示原色）。
   const fallback = nativeImage.createFromPath(APP_ICON_PATH);
-  return { normal: fallback, active: fallback };
+  return { normal: fallback, activeLight: fallback, activeDark: fallback };
 };
 
 /** 构建 Windows 双表示图标：16px @1x + 32px @2x，DPI 精确匹配。 */
@@ -474,18 +506,27 @@ const withActivityDot = (pngPath: string): NativeImage => {
   }
 };
 
+/** 托盘图标集：普通态 + 活动态（macOS 按明暗外观分两套，其余平台两套相同）。 */
+type TrayIcons = {
+  normal: NativeImage;
+  activeLight: NativeImage;
+  activeDark: NativeImage;
+};
+
 /** Windows/Linux 彩色图标（正常 + 活动两套），使用设计好的 favicon 小图。 */
-const createColorIcons = (): { normal: NativeImage; active: NativeImage } => {
+const createColorIcons = (): TrayIcons => {
   if (process.platform === "win32") {
     const icon16 = nativeImage.createFromPath(APP_FAVICON_16_PATH);
     const icon32 = nativeImage.createFromPath(APP_FAVICON_32_PATH);
     if (!icon16.isEmpty() && !icon32.isEmpty()) {
+      const active = buildDualRepIcon(
+        withActivityDot(APP_FAVICON_16_PATH),
+        withActivityDot(APP_FAVICON_32_PATH)
+      );
       return {
         normal: buildDualRepIcon(icon16, icon32),
-        active: buildDualRepIcon(
-          withActivityDot(APP_FAVICON_16_PATH),
-          withActivityDot(APP_FAVICON_32_PATH)
-        ),
+        activeLight: active,
+        activeDark: active,
       };
     }
   }
@@ -501,7 +542,8 @@ const createColorIcons = (): { normal: NativeImage; active: NativeImage } => {
     width: target,
     height: target,
   });
-  return { normal, active: active.isEmpty() ? normal : active };
+  const resolvedActive = active.isEmpty() ? normal : active;
+  return { normal, activeLight: resolvedActive, activeDark: resolvedActive };
 };
 
 // ─── 托盘状态 ─────────────────────────────────────────────────────────────
@@ -518,7 +560,8 @@ type TrayStats = {
 
 let tray: Tray | null = null;
 let nativeBridge: NativeBridge | null = null;
-let icons: { normal: NativeImage; active: NativeImage } | null = null;
+let icons: TrayIcons | null = null;
+let isDarkAppearance = false;
 let stats: TrayStats = {
   activeSessions: 0,
   activeTerminals: 0,
@@ -573,12 +616,19 @@ const applyTooltip = (): void => {
   tray.setToolTip(lines.join("\n"));
 };
 
-/** 根据是否有进行中会话切换托盘图标（活动态角标）。 */
+/**
+ * 根据是否有进行中会话切换托盘图标（活动态角标）。
+ * macOS 活动态按当前明暗外观选用对应雪花线条（模拟模板反色），圆点始终绿色。
+ */
 const applyActiveVisual = (): void => {
   if (!tray || !icons) {
     return;
   }
-  tray.setImage(stats.activeSessions > 0 ? icons.active : icons.normal);
+  if (stats.activeSessions > 0) {
+    tray.setImage(isDarkAppearance ? icons.activeDark : icons.activeLight);
+  } else {
+    tray.setImage(icons.normal);
+  }
 };
 
 // 通过 Rust 后端异步聚合全部指标（目录、备忘录、用量均走 native bridge）。
@@ -648,10 +698,21 @@ export const initTray = (native: NativeBridge): void => {
     nativeBridge = native;
     const isMacOS = process.platform === "darwin";
     icons = isMacOS ? createMacTemplateIcons() : createColorIcons();
+    isDarkAppearance = nativeTheme.shouldUseDarkColors;
 
     tray = new Tray(icons.normal);
     tray.setToolTip("Snow App");
     tray.on("click", showMainWindow);
+
+    // macOS 菜单栏外观随墙纸/系统设置变化，活动态图标需同步切换
+    // 雪花线条颜色（黑/白），绿点本身不变。
+    nativeTheme.on("updated", () => {
+      const dark = nativeTheme.shouldUseDarkColors;
+      if (dark !== isDarkAppearance) {
+        isDarkAppearance = dark;
+        applyActiveVisual();
+      }
+    });
 
     if (isMacOS) {
       // macOS 左键点击恢复窗口，右键弹出菜单（避免左键被菜单吞掉）。

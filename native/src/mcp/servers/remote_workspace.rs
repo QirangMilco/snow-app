@@ -2,6 +2,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::ThreadsafeFunction;
 use napi_derive::napi;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 /// A filesystem or command operation that must be handled by Electron's SSH
 /// session manager. Rust awaits this Promise and never performs SSH I/O itself.
@@ -79,6 +80,7 @@ pub async fn execute_remote_workspace_command(
     on_command: &RemoteWorkspaceCallback,
     operation: &str,
     args: &Value,
+    cancel_token: Option<&CancellationToken>,
 ) -> napi::Result<Value> {
     let args_json = serde_json::to_string(args).map_err(|error| {
         Error::new(
@@ -97,12 +99,37 @@ pub async fn execute_remote_workspace_command(
             format!("Failed to dispatch remote workspace command to Electron: {error}"),
         )
     })?;
-    let result_json = promise.await.map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Remote workspace command failed: {error}"),
-        )
-    })?;
+
+    // When a cancellation token is supplied (conversation stop / per-tool
+    // stop button), race the Electron-side promise against it so the tool
+    // execution settles into a cancelled terminal state immediately instead
+    // of waiting for the SSH exec channel. The Electron side independently
+    // aborts the channel via the AbortController registry, so both halves
+    // of the command converge.
+    let result_json = match cancel_token {
+        Some(token) => {
+            tokio::select! {
+                result = promise => result.map_err(|error| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!("Remote workspace command failed: {error}"),
+                    )
+                })?,
+                _ = token.cancelled() => {
+                    return Err(Error::new(
+                        Status::GenericFailure,
+                        "Remote workspace command was cancelled".to_string(),
+                    ));
+                }
+            }
+        }
+        None => promise.await.map_err(|error| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Remote workspace command failed: {error}"),
+            )
+        })?,
+    };
 
     serde_json::from_str(&result_json).map_err(|error| {
         Error::new(

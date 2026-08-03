@@ -150,7 +150,10 @@ export const MainContent = ({
           ) : activeView === "builtin-services-settings" ? (
             <BuiltinServicesPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "personalization-settings" ? (
-            <PersonalizationSettingsPanel onClose={() => onSelectView("chat")} />
+            <PersonalizationSettingsPanel
+              activeDirectory={activeDirectory}
+              onClose={() => onSelectView("chat")}
+            />
           ) : activeView === "custom-headers-settings" ? (
             <CustomHeadersSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "mcp-settings" ? (

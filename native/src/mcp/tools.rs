@@ -1,8 +1,10 @@
 use std::path::{Component, Path, PathBuf};
 
 use napi::bindgen_prelude::*;
+use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use napi_derive::napi;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::storage::services::checkpoint::CheckpointWorktreeCapture;
 use crate::storage::services::system_settings::McpProjectScopeSettings;
@@ -21,7 +23,7 @@ use super::builtin::{
     execute_builtin_tool, get_builtin_servers_with_tools, get_builtin_tools,
 };
 use super::servers::app_control::{AppControlCallback, AppControlService};
-use super::servers::bash::{BashService, BashStreamCallback};
+use super::servers::bash::{BashService, BashStreamCallback, BashStreamChunk};
 use super::servers::browser::{BrowserCommandCallback, BrowserService};
 use super::servers::codebase::CodebaseService;
 use super::servers::codelens::CodeLensService;
@@ -720,6 +722,27 @@ pub fn tools_as_gemini_json(tools: &[McpTool]) -> Value {
     })
 }
 
+/// Register a cancellation token for a remote (SSH) tool execution and emit
+/// its id as a `tool_execution` stream chunk so the frontend can abort the
+/// pending Electron-side command (per-tool stop button / session stop).
+/// Returns the id and token; the caller must `unregister_tool_execution` when
+/// the execution settles.
+fn register_remote_tool_execution(
+    on_chunk: &BashStreamCallback,
+) -> (String, tokio_util::sync::CancellationToken) {
+    let tool_execution_id = Uuid::new_v4().to_string();
+    let cancel_token =
+        crate::api::cancel::register_tool_execution(&tool_execution_id);
+    on_chunk.call(
+        BashStreamChunk {
+            stream: "tool_execution".to_string(),
+            data: tool_execution_id.clone(),
+        },
+        ThreadsafeFunctionCallMode::NonBlocking,
+    );
+    (tool_execution_id, cancel_token)
+}
+
 /// Execute an MCP tool and capture incremental checkpoint state immediately
 pub async fn call_mcp_tool(
     tool_full_name: String,
@@ -857,9 +880,29 @@ pub async fn call_mcp_tool(
         }
         terminal_result?
     } else if tool_full_name == "grep-search" {
-        GrepService::new()
-            .execute_search(&args, &on_remote_workspace_command)
-            .await?
+        // Register a cancellable tool execution only for the SSH branch; the
+        // local ripgrep/native search has its own 30s timeout and cannot be
+        // aborted through the exec-channel registry.
+        let remote_cancel = if args
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(is_ssh_path)
+        {
+            Some(register_remote_tool_execution(&on_chunk))
+        } else {
+            None
+        };
+        let search_result = GrepService::new()
+            .execute_search(
+                &args,
+                &on_remote_workspace_command,
+                remote_cancel.as_ref().map(|(_, token)| token),
+            )
+            .await;
+        if let Some((tool_execution_id, _)) = remote_cancel {
+            crate::api::cancel::unregister_tool_execution(&tool_execution_id);
+        }
+        search_result?
     } else if uses_remote_workspace {
         let filesystem_tool = tool_full_name.strip_prefix("filesystem-").ok_or_else(|| {
             Error::new(
@@ -867,9 +910,18 @@ pub async fn call_mcp_tool(
                 format!("Unsupported remote workspace MCP tool: {tool_full_name}"),
             )
         })?;
-        FilesystemService::new()
-            .execute_async(filesystem_tool, &args, &on_remote_workspace_command)
-            .await?
+        let (tool_execution_id, cancel_token) =
+            register_remote_tool_execution(&on_chunk);
+        let fs_result = FilesystemService::new()
+            .execute_async(
+                filesystem_tool,
+                &args,
+                &on_remote_workspace_command,
+                Some(&cancel_token),
+            )
+            .await;
+        crate::api::cancel::unregister_tool_execution(&tool_execution_id);
+        fs_result?
     } else if tool_full_name == "todo-todo-manage" {
         TodoService::new().execute_async(&args).await?
     } else if tool_full_name == "websearch-websearch-search" {

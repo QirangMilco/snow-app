@@ -90,6 +90,7 @@ export type ResponsesApiResult = {
   status: string;
   toolCallsJson: string;
   tokenUsage: TokenUsage;
+  persistedUserMessageIds: string[];
 };
 
 export type ResponsesApiStreamChunk = {

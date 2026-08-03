@@ -63,21 +63,65 @@ pub(super) fn build_chat_completions_payload(
                 continue;
             }
             let results = match message.tool_results_json {
-                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_json(raw),
+                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_with_images(
+                    raw,
+                    database_path,
+                    skip_image_parsing,
+                ),
                 None => Vec::new(),
             };
-            for (_name, call_id, result) in &results {
-                if call_id.is_empty() {
-                    payload_messages.push(json!({
-                        "role": "user",
-                        "content": result,
-                    }));
+            for tool_result in &results {
+                let text = if tool_result.text.is_empty() {
+                    "[image attached]".to_string()
                 } else {
+                    tool_result.text.clone()
+                };
+                if tool_result.call_id.is_empty() {
+                    // No paired call: emit text and images as a single user
+                    // message with multimodal content blocks.
+                    if tool_result.images.is_empty() {
+                        payload_messages.push(json!({
+                            "role": "user",
+                            "content": text,
+                        }));
+                    } else {
+                        let mut parts = Vec::new();
+                        if !text.is_empty() {
+                            parts.push(json!({ "type": "text", "text": text }));
+                        }
+                        parts.extend(tool_result.images.iter().map(|image| {
+                            json!({
+                                "type": "image_url",
+                                "image_url": { "url": image.data_url },
+                            })
+                        }));
+                        payload_messages.push(json!({
+                            "role": "user",
+                            "content": parts,
+                        }));
+                    }
+                } else {
+                    // Chat Completions `tool` messages only accept a plain
+                    // string content, so the screenshot base64 must travel in
+                    // a following structured user message as image_url blocks.
                     payload_messages.push(json!({
                         "role": "tool",
-                        "tool_call_id": call_id,
-                        "content": result,
+                        "tool_call_id": tool_result.call_id,
+                        "content": text,
                     }));
+                    if !tool_result.images.is_empty() {
+                        let mut parts = Vec::new();
+                        parts.extend(tool_result.images.iter().map(|image| {
+                            json!({
+                                "type": "image_url",
+                                "image_url": { "url": image.data_url },
+                            })
+                        }));
+                        payload_messages.push(json!({
+                            "role": "user",
+                            "content": parts,
+                        }));
+                    }
                 }
             }
             continue;

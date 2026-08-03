@@ -18,6 +18,8 @@ type UseCodebaseEmbeddingParams = {
 type UseCodebaseEmbeddingResult = {
   embedState: EmbedState;
   embedProgress: CodebaseEmbedProgress | null;
+  /** Error message of the last failed embedding (from progress or IPC reject). */
+  embedError: string | null;
   resumableSession: ResumableCodebaseSession | null;
   isResuming: boolean;
   startEmbedding: () => Promise<void>;
@@ -50,6 +52,7 @@ export const useCodebaseEmbedding = ({
   const [embedState, setEmbedState] = useState<EmbedState>("idle");
   const [embedProgress, setEmbedProgress] =
     useState<CodebaseEmbedProgress | null>(null);
+  const [embedError, setEmbedError] = useState<string | null>(null);
   const [resumableSession, setResumableSession] =
     useState<ResumableCodebaseSession | null>(null);
   const [isResuming, setIsResuming] = useState(false);
@@ -90,10 +93,12 @@ export const useCodebaseEmbedding = ({
             break;
           case "error":
             setEmbedState("error");
+            setEmbedError(progress.error || null);
             break;
           case "cancelled":
             setEmbedState("idle");
             setEmbedProgress(null);
+            setEmbedError(null);
             sessionIdRef.current = null;
             break;
           case "paused":
@@ -121,6 +126,7 @@ export const useCodebaseEmbedding = ({
     sessionIdRef.current = null;
     setEmbedState("idle");
     setEmbedProgress(null);
+    setEmbedError(null);
     setResumableSession(null);
     setIsResuming(false);
 
@@ -169,14 +175,16 @@ export const useCodebaseEmbedding = ({
     sessionIdRef.current = sessionId;
     setEmbedState("running");
     setEmbedProgress(null);
+    setEmbedError(null);
 
     try {
       await window.snow.startCodebaseEmbedding(projectId, sessionId);
       // The broadcast subscription handles progress + terminal states.
       // Refresh stats after the promise resolves.
       onDoneRef.current?.();
-    } catch {
+    } catch (error) {
       setEmbedState("error");
+      setEmbedError(error instanceof Error ? error.message : String(error));
     }
   }, [projectId, embedState]);
 
@@ -218,6 +226,7 @@ export const useCodebaseEmbedding = ({
       sessionIdRef.current = null;
       setEmbedState("idle");
       setEmbedProgress(null);
+      setEmbedError(null);
     } catch {
       // Silent
     }
@@ -234,6 +243,7 @@ export const useCodebaseEmbedding = ({
     try {
       sessionIdRef.current = session.sessionId;
       setEmbedState("running");
+      setEmbedError(null);
       setResumableSession(null);
 
       await window.snow.startCodebaseEmbedding(
@@ -241,8 +251,9 @@ export const useCodebaseEmbedding = ({
         session.sessionId
       );
       onDoneRef.current?.();
-    } catch {
+    } catch (error) {
       setEmbedState("error");
+      setEmbedError(error instanceof Error ? error.message : String(error));
     } finally {
       setIsResuming(false);
     }
@@ -264,6 +275,7 @@ export const useCodebaseEmbedding = ({
   return {
     embedState,
     embedProgress,
+    embedError,
     resumableSession,
     isResuming,
     startEmbedding,

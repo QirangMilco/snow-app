@@ -4,7 +4,6 @@ import {
   CirclePause,
   Download,
   Folder,
-  GitFork,
   Globe2,
   Loader2,
   RefreshCw,
@@ -21,6 +20,7 @@ import type {
 import { useI18n } from "../../i18n";
 import { AutoDismissNotice } from "../AutoDismissNotice";
 import { ConfirmDialog } from "../common/ConfirmDialog";
+import { GitHubLogo } from "../common/GitHubLogo";
 
 type SkillsSettingsPanelProps = {
   activeDirectory?: WorkspaceDirectoryRecord | null;
@@ -455,7 +455,7 @@ export function SkillsSettingsPanel({
               })}
             </span>
           </div>
-          <GitFork size={16} strokeWidth={1.8} />
+          <GitHubLogo size={16} />
         </div>
 
         <div className="skills-settings-install-form">
@@ -513,6 +513,10 @@ export function SkillsSettingsPanel({
                     }),
               },
             })}
+          </span>
+          <span className="skills-settings-install-example">
+            {t("settings.skillsInstallExample", { defaultValue: "Example:" })}{" "}
+            <code>https://github.com/upstash/context7/tree/master/skills</code>
           </span>
         </div>
       </section>
@@ -609,7 +613,7 @@ export function SkillsSettingsPanel({
                               defaultValue: "Install from GitHub",
                             })}
                           >
-                            <GitFork size={11} strokeWidth={1.8} />
+                            <GitHubLogo size={11} />
                           </span>
                         )}
                       </div>

@@ -38,12 +38,22 @@ export type ChangeTag = {
   status: string;
 };
 
+export type TextSnippetTag = {
+  /** 粘贴的原始文本内容 */
+  content: string;
+  /** 摘要标签，用于 chip 显示 */
+  summary: string;
+  /** 字符数 */
+  charCount: number;
+};
+
 export type ContentSegment =
   | { type: "text"; content: string }
   | { type: "file"; tag: FileTag }
   | { type: "image"; tag: ImageTag }
   | { type: "commit"; tag: CommitTag }
-  | { type: "change"; tag: ChangeTag };
+  | { type: "change"; tag: ChangeTag }
+  | { type: "text-snippet"; tag: TextSnippetTag };
 
 /**
  * 将行号数组格式化为紧凑的字符串表示，连续区间合并为范围。
@@ -136,9 +146,61 @@ export const encodeChangeTag = (tag: ChangeTag): string =>
     status: tag.status,
   })}@@`;
 
+/**
+ * 将粘贴的大段文本编码为 text-snippet 标签。
+ * 使用 JSON 序列化内容，避免 @@ 终止符被破坏。
+ */
+export const encodeTextSnippetTag = (tag: TextSnippetTag): string =>
+  `@@text-snippet:${JSON.stringify({
+    content: tag.content,
+    summary: tag.summary,
+    charCount: tag.charCount,
+  })}@@`;
+
+/**
+ * 根据原始文本生成一个简短的摘要标签，用于 chip 显示。
+ *
+ * 跳过过短或纯符号的行（如 "{", "}", ">", "<?"），从多行累积
+ * 有意义的内容直到达到 maxLen，避免格式文件首行仅为单个符号
+ * 时标签过于简短。最终截断到 maxLen 并加省略号。
+ */
+export const buildTextSnippetSummary = (text: string, maxLen = 30): string => {
+  const lines = text.split(/\r?\n/);
+  const meaningfulLines: string[] = [];
+  let totalLen = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+    // 跳过过短或纯符号行（如 "{", "}", ">", "---"），这类行在
+    // 格式文件（JSON / XML / HTML / 代码）开头很常见，作为标签
+    // 几乎没有辨识度。
+    if (trimmed.length < 4) {
+      continue;
+    }
+    meaningfulLines.push(trimmed);
+    totalLen += trimmed.length;
+    if (totalLen >= maxLen) {
+      break;
+    }
+  }
+  if (meaningfulLines.length === 0) {
+    // 所有行都太短时，退回取第一个非空行
+    const fallback = lines
+      .map((l) => l.trim())
+      .find((l) => l.length > 0);
+    return fallback || "text";
+  }
+  const summary = meaningfulLines.join(" ");
+  return summary.length > maxLen
+    ? `${summary.slice(0, maxLen)}...`
+    : summary;
+};
+
 export const parseContentSegments = (content: string): ContentSegment[] => {
   const segments: ContentSegment[] = [];
-  const regex = /@@(file|dir|image|commit|change):(.+?)@@/g;
+  const regex = /@@(file|dir|image|commit|change|text-snippet):(.+?)@@/g;
   let lastIndex = 0;
   let imageCounter = 0;
   let match: RegExpExecArray | null;
@@ -153,7 +215,21 @@ export const parseContentSegments = (content: string): ContentSegment[] => {
     const kind = match[1];
     const value = match[2];
 
-    if (kind === "commit") {
+    if (kind === "text-snippet") {
+      try {
+        const data = JSON.parse(value) as Partial<TextSnippetTag>;
+        segments.push({
+          type: "text-snippet",
+          tag: {
+            content: data.content ?? "",
+            summary: data.summary ?? "text",
+            charCount: typeof data.charCount === "number" ? data.charCount : (data.content ?? "").length,
+          },
+        });
+      } catch {
+        segments.push({ type: "text", content: match[0] });
+      }
+    } else if (kind === "commit") {
       try {
         const data = JSON.parse(value) as Partial<CommitTag>;
         segments.push({
@@ -321,8 +397,24 @@ export const createChangeChipHtml = (tag: ChangeTag): string => {
   );
   return `<span class="file-chip change-chip" contenteditable="false" data-change-tag="true" data-change-data="${changeData}" title="${escapeHtml(
     chipTitle
-  )}"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
+  )}\"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
     name
+  )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
+};
+
+export const createTextSnippetChipHtml = (tag: TextSnippetTag): string => {
+  const snippetData = escapeHtml(
+    JSON.stringify({
+      content: tag.content,
+      summary: tag.summary,
+      charCount: tag.charCount,
+    })
+  );
+  const displayName = `${tag.summary} (${tag.charCount} chars)`;
+  return `<span class="file-chip text-snippet-chip" contenteditable="false" data-text-snippet-tag="true" data-text-snippet-data="${snippetData}" title="${escapeHtml(
+    displayName
+  )}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9Z"/><path d="M15 3v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg></span><span class="file-chip-name">${escapeHtml(
+    tag.summary
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
 
@@ -377,6 +469,23 @@ export const readEditableContent = (el: HTMLElement): string => {
           });
         } catch {
           // Ignore malformed change data
+        }
+      } else if (elem.dataset.textSnippetTag === "true") {
+        try {
+          const data = JSON.parse(
+            elem.dataset.textSnippetData || "{}"
+          ) as Partial<TextSnippetTag>;
+          const textContent = data.content ?? "";
+          result += encodeTextSnippetTag({
+            content: textContent,
+            summary: data.summary ?? buildTextSnippetSummary(textContent),
+            charCount:
+              typeof data.charCount === "number"
+                ? data.charCount
+                : textContent.length,
+          });
+        } catch {
+          // Ignore malformed text-snippet data
         }
       } else if (elem.tagName === "BR") {
         result += "\n";

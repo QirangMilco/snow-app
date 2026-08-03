@@ -60,6 +60,11 @@ export const TopBar = ({
   const [isTodoPanelPinned, setIsTodoPanelPinned] = useState(false);
   const [codebaseEnabled, setCodebaseEnabled] = useState(false);
   const [codebaseIndexed, setCodebaseIndexed] = useState(false);
+  // Error message of the last failed embedding for the active project.
+  // Shown as a red error state on the codebase sync indicator (see #16/#17).
+  const [codebaseEmbedError, setCodebaseEmbedError] = useState<string | null>(
+    null
+  );
   // Track which projectId the codebaseEnabled state corresponds to. This is
   // used to detect stale enabled values during project switches — when the
   // active project changes, codebaseEnabled may still hold the previous
@@ -94,6 +99,7 @@ export const TopBar = ({
   useEffect(() => {
     if (!activeProjectId) {
       setCodebaseEnabled(false);
+      setCodebaseEmbedError(null);
       enabledProjectIdRef.current = undefined;
       return;
     }
@@ -103,6 +109,7 @@ export const TopBar = ({
     // update hasn't flushed yet, the derived `effectiveEnabled` below
     // will be false.
     setCodebaseEnabled(false);
+    setCodebaseEmbedError(null);
     enabledProjectIdRef.current = undefined;
 
     let cancelled = false;
@@ -217,13 +224,19 @@ export const TopBar = ({
     // (`codebase:sync:progress`) is not emitted for it. Without this, the
     // indicator stays amber ("enabled but never embedded") until the user
     // switches projects and back, which re-runs the stats load.
+    // The same broadcast also drives the indicator's error state: an "error"
+    // phase turns the dot red (with the message as tooltip), and a "done"
+    // phase clears any previous error (see #16/#17).
     const disposeEmbed = window.snow.onCodebaseEmbedProgress(
       (progress, changedProjectId) => {
-        if (
-          changedProjectId === activeProjectId &&
-          progress.phase === "done"
-        ) {
+        if (changedProjectId !== activeProjectId) {
+          return;
+        }
+        if (progress.phase === "done") {
+          setCodebaseEmbedError(null);
           loadCodebaseIndexed();
+        } else if (progress.phase === "error") {
+          setCodebaseEmbedError(progress.error || null);
         }
       }
     );
@@ -386,6 +399,15 @@ export const TopBar = ({
           watchedProjectId={watchedProjectId}
           activeProjectId={activeProjectId}
           isIndexed={codebaseIndexed}
+          embedError={codebaseEmbedError}
+          onClick={() => {
+            if (activeProjectId) {
+              onOpenCodebase?.(
+                activeProjectId,
+                activeDirectory?.name ?? activeProjectId
+              );
+            }
+          }}
         />
       </div>
 

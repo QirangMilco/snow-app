@@ -217,7 +217,7 @@ export function GlobalSearchModal({
       conversation.title ||
       t("sidebar.untitledChat", { defaultValue: "Untitled" });
     const parsedDate = parseDbTimestamp(conversation.updatedAt);
-    const timeLabel = formatTimeLabel(parsedDate, now);
+    const timeLabel = formatTimeLabel(parsedDate, now, t);
 
     return (
       <div

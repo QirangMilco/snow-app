@@ -120,6 +120,16 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
     }
   );
   ipcMain.handle(
+    "chat-conversations:list-user-messages",
+    (_event, conversationId: unknown) => {
+      if (typeof conversationId !== "string" || !conversationId.trim()) {
+        throw new Error("Conversation ID is required to list user messages");
+      }
+
+      return native.listUserMessages(conversationId.trim());
+    }
+  );
+  ipcMain.handle(
     "chat-conversations:list-messages-paginated",
     (
       _event,

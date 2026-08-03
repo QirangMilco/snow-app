@@ -1315,6 +1315,30 @@ pub fn list_chat_messages(conversation_id: String) -> Result<Vec<ChatMessageReco
     Ok(records)
 }
 
+/// Lightweight summary of a single user message, used by the chat UI's
+/// user-message rail for quick navigation. Only carries the fields the rail
+/// needs (id for DOM lookup, content for preview, created_at for ordering),
+/// so long conversations do not pay the cost of loading full tool_calls_json
+/// and thinking blobs for every message.
+#[napi(object)]
+pub struct UserMessageSummary {
+    pub id: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+pub fn list_user_messages(conversation_id: String) -> Result<Vec<UserMessageSummary>> {
+    let database_path = ensure_database_file()?;
+    let mut records = services::chat_conversations::list_user_messages(
+        &database_path,
+        &conversation_id,
+    )?;
+    for record in &mut records {
+        record.content = resolve_inline_images_from_disk(&record.content, &database_path);
+    }
+    Ok(records)
+}
+
 pub fn list_chat_messages_paginated(
     conversation_id: String,
     before_message_id: String,

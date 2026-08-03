@@ -504,7 +504,7 @@ export function MemoModal({
     const isSelected = memo.memoId === selectedMemoId;
     const preview = buildLocalPreview(memo.content);
     const parsedDate = parseDbTimestamp(memo.updatedAt || memo.createdAt);
-    const timeLabel = formatTimeLabel(parsedDate, new Date());
+    const timeLabel = formatTimeLabel(parsedDate, new Date(), t);
     const isDone = memo.status === "done";
 
     return (
@@ -631,7 +631,8 @@ export function MemoModal({
             <span className="memo-editor-time">
               {formatTimeLabel(
                 parseDbTimestamp(selectedMemo.updatedAt),
-                new Date()
+                new Date(),
+                t
               )}
             </span>
           </div>

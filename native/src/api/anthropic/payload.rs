@@ -94,21 +94,62 @@ pub(super) fn build_anthropic_payload(
                 continue;
             }
             let results = match message.tool_results_json {
-                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_json(raw),
+                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_with_images(
+                    raw,
+                    database_path,
+                    skip_image_parsing,
+                ),
                 None => Vec::new(),
             };
             let mut tool_result_blocks = Vec::new();
-            for (_name, call_id, result) in &results {
-                if call_id.is_empty() {
-                    tool_result_blocks.push(json!({
-                        "type": "text",
-                        "text": result,
-                    }));
+            for tool_result in &results {
+                if tool_result.call_id.is_empty() {
+                    // No paired call: emit text and images as sibling blocks.
+                    if !tool_result.text.is_empty() {
+                        tool_result_blocks.push(json!({
+                            "type": "text",
+                            "text": tool_result.text,
+                        }));
+                    }
+                    for image in &tool_result.images {
+                        tool_result_blocks.push(json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data,
+                            },
+                        }));
+                    }
                 } else {
+                    // Anthropic natively accepts image content blocks inside
+                    // tool_result.content, keeping the screenshot attached to
+                    // its tool use instead of leaking base64 into text.
+                    let mut blocks: Vec<Value> = Vec::new();
+                    if !tool_result.text.is_empty() {
+                        blocks.push(json!({
+                            "type": "text",
+                            "text": tool_result.text,
+                        }));
+                    }
+                    for image in &tool_result.images {
+                        blocks.push(json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image.media_type,
+                                "data": image.data,
+                            },
+                        }));
+                    }
                     tool_result_blocks.push(json!({
                         "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": result,
+                        "tool_use_id": tool_result.call_id,
+                        "content": if blocks.is_empty() {
+                            Value::String(String::new())
+                        } else {
+                            Value::Array(blocks)
+                        },
                     }));
                 }
             }

@@ -15,7 +15,7 @@ use napi::threadsafe_function::ThreadsafeFunctionCallMode;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::common::emit_stream_chunk;
+use crate::api::common::{emit_stream_chunk, truncate_utf8_safe};
 use crate::api::retry::{non_sse_response_error, should_retry, wait_before_retry, RetryOptions};
 use crate::api::responses::payload::{is_stream_ended_error, ResponseValueStream};
 use crate::api::responses::{
@@ -529,7 +529,7 @@ pub(super) async fn collect_streaming_response(
                     } else {
                         tool_parse_errors.push(format!(
                             "tool=reconstructed, error=invalid JSON, raw={}",
-                            &args[..args.len().min(200)]
+                            truncate_utf8_safe(&args, 200)
                         ));
                         reconstructed
                             .as_object_mut()

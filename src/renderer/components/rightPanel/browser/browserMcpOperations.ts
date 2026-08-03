@@ -276,7 +276,10 @@ const screenshot = async (
   instanceId: string,
   args: BrowserMcpCommandArgs
 ): Promise<unknown> => {
-  const fullPage = args.fullPage !== false;
+  // Viewport-only by default: full-page captures of long pages produce
+  // huge base64 payloads that inflate context and may exceed provider
+  // per-image limits.
+  const fullPage = args.fullPage === true;
   const dataUrl = fullPage
     ? await captureWebviewPage(webview)
     : (await webview.capturePage()).toDataURL();

@@ -8,17 +8,48 @@ import {
 
 const PROXY_BROWSER_SETTING_CODE = "proxy_browser_settings";
 
+// electron-updater 内部使用独立的 "electron-updater" 分区会话发起请求
+// （见 electron-updater 的 electronHttpExecutor.ts），defaultSession 的
+// 代理设置对它不生效，因此需要把代理同步到这个分区会话。
+const UPDATER_SESSION_PARTITION = "electron-updater";
+
 type ProxySettingsJson = {
   enabled?: boolean;
   host?: string;
   port?: number;
 };
 
+const applyProxyToSession = async (
+  target: Electron.Session,
+  enabled: boolean,
+  host: string,
+  port: number
+): Promise<void> => {
+  if (enabled) {
+    const proxyUrl = `http://${host}:${port}`;
+    await target.setProxy({ proxyRules: proxyUrl });
+    snowLog.info({
+      module: "app/sessionProxy",
+      func: "applyProxyToSession",
+      message: `Session proxy applied: ${proxyUrl}`,
+    });
+  } else {
+    // 未启用内置代理时跟随操作系统代理设置
+    await target.setProxy({ mode: "system" });
+    snowLog.info({
+      module: "app/sessionProxy",
+      func: "applyProxyToSession",
+      message: "Session proxy set to system mode",
+    });
+  }
+};
+
 /**
- * 从数据库读取代理配置并应用到 Electron 默认会话。
+ * 从数据库读取代理配置并应用到 Electron 会话。
  *
- * 应用后，所有通过 net.fetch / electron-updater / webview 发出的
- * 请求都会走配置的代理，与 Rust 后端的 reqwest 代理行为保持一致。
+ * 同时覆盖 defaultSession（net.fetch / webview / macUpdater 下载）与
+ * electron-updater 使用的独立分区会话，确保更新检查与更新文件下载
+ * 都跟随配置的代理，与 Rust 后端的 reqwest 代理行为保持一致。
  */
 export const applySessionProxy = async (
   native: NativeBridge
@@ -46,23 +77,13 @@ export const applySessionProxy = async (
       }
     }
 
-    if (enabled) {
-      const proxyUrl = `http://${host}:${port}`;
-      await session.defaultSession.setProxy({ proxyRules: proxyUrl });
-      snowLog.info({
-        module: "app/sessionProxy",
-        func: "applySessionProxy",
-        message: `Session proxy applied: ${proxyUrl}`,
-      });
-    } else {
-      // 未启用内置代理时跟随操作系统代理设置
-      await session.defaultSession.setProxy({ mode: "system" });
-      snowLog.info({
-        module: "app/sessionProxy",
-        func: "applySessionProxy",
-        message: "Session proxy set to system mode",
-      });
-    }
+    await applyProxyToSession(session.defaultSession, enabled, host, port);
+    await applyProxyToSession(
+      session.fromPartition(UPDATER_SESSION_PARTITION, { cache: false }),
+      enabled,
+      host,
+      port
+    );
   } catch (error) {
     snowLog.error({
       module: "app/sessionProxy",

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { GitCommitFile, GitLogEntry } from "../../../../preload";
 import { useI18n } from "../../../i18n";
 
@@ -432,6 +433,51 @@ export const GitGraph = ({
     [repoPath]
   );
 
+  // Hover tooltip with the full commit details. Rendered in a portal with
+  // fixed positioning so the scroll container (.git-control-scroll) cannot
+  // clip it. The git panel sits on the right edge of the window, so the
+  // tooltip opens to the LEFT of the cursor and only flips right when it
+  // would run off the left edge of the viewport. Mousemove updates the
+  // position directly on the DOM node (no re-render); only entering a
+  // different commit triggers a render.
+  const [hoveredCommit, setHoveredCommit] = useState<GitLogEntry | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+
+  const positionTooltip = useCallback((clientX: number, clientY: number) => {
+    const node = tooltipRef.current;
+    if (!node) return;
+    const margin = 12;
+    const rect = node.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    let left = clientX - rect.width - margin;
+    let top = clientY + margin;
+    if (left < margin) {
+      left = clientX + margin;
+    }
+    if (top + rect.height > vh - margin) {
+      top = clientY - rect.height - margin;
+    }
+    if (top < margin) top = margin;
+    node.style.left = `${left}px`;
+    node.style.top = `${top}px`;
+  }, []);
+
+  const showTooltip = useCallback(
+    (commit: GitLogEntry, clientX: number, clientY: number) => {
+      // Skip the re-render when hovering within the same commit.
+      setHoveredCommit((prev) => (prev === commit ? prev : commit));
+      // Position once the node is visible so getBoundingClientRect() reports
+      // real dimensions for boundary detection.
+      requestAnimationFrame(() => positionTooltip(clientX, clientY));
+    },
+    [positionTooltip]
+  );
+
+  const hideTooltip = useCallback(() => {
+    setHoveredCommit(null);
+  }, []);
+
   if (isLoading) {
     return (
       <div className="git-graph" ref={containerRef}>
@@ -478,6 +524,13 @@ export const GitGraph = ({
               onClick={() => handleRowClick(row.commit.hash)}
               draggable
               onDragStart={(event) => handleRowDragStart(event, row.commit)}
+              onMouseEnter={(event) =>
+                showTooltip(row.commit, event.clientX, event.clientY)
+              }
+              onMouseMove={(event) =>
+                positionTooltip(event.clientX, event.clientY)
+              }
+              onMouseLeave={hideTooltip}
             >
               <svg
                 className="git-graph-svg"
@@ -611,6 +664,64 @@ export const GitGraph = ({
         className="git-graph-sentinel"
         style={{ display: hasMore ? "block" : "none" }}
       />
+      {createPortal(
+        hoveredCommit ? (
+          <div className="git-graph-tooltip" ref={tooltipRef}>
+            <div className="git-graph-tooltip-row">
+              <span className="git-graph-tooltip-label">
+                {t("git.graphTooltipHash")}
+              </span>
+              <span className="git-graph-tooltip-value git-graph-tooltip-mono">
+                {hoveredCommit.hash}
+              </span>
+            </div>
+            <div className="git-graph-tooltip-row">
+              <span className="git-graph-tooltip-label">
+                {t("git.graphTooltipAuthor")}
+              </span>
+              <span className="git-graph-tooltip-value">
+                {hoveredCommit.author}
+                {hoveredCommit.email
+                  ? ` <${hoveredCommit.email}>`
+                  : ""}
+              </span>
+            </div>
+            <div className="git-graph-tooltip-row">
+              <span className="git-graph-tooltip-label">
+                {t("git.graphTooltipDate")}
+              </span>
+              <span className="git-graph-tooltip-value">
+                {hoveredCommit.date}
+              </span>
+            </div>
+            {hoveredCommit.refs && (
+              <div className="git-graph-tooltip-row">
+                <span className="git-graph-tooltip-label">
+                  {t("git.graphTooltipRefs")}
+                </span>
+                <span className="git-graph-tooltip-value">
+                  {hoveredCommit.refs}
+                </span>
+              </div>
+            )}
+            {hoveredCommit.parents.length > 0 && (
+              <div className="git-graph-tooltip-row">
+                <span className="git-graph-tooltip-label">
+                  {t("git.graphTooltipParents")}
+                </span>
+                <span className="git-graph-tooltip-value git-graph-tooltip-mono">
+                  {hoveredCommit.parents.join(", ")}
+                </span>
+              </div>
+            )}
+            <div className="git-graph-tooltip-divider" />
+            <div className="git-graph-tooltip-message">
+              {hoveredCommit.message}
+            </div>
+          </div>
+        ) : null,
+        document.body
+      )}
     </div>
   );
 };

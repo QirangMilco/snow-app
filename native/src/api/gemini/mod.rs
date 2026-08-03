@@ -197,7 +197,7 @@ async fn create_gemini_response_async(
         );
     }
 
-    if !skip_context && !request.skip_persist.unwrap_or(false) {
+    let persisted_user_message_ids = if !skip_context && !request.skip_persist.unwrap_or(false) {
         store_chat_exchange(
             &database_path,
             &StoreChatExchangeInput {
@@ -218,8 +218,10 @@ async fn create_gemini_response_async(
                 context_compaction: request.context_compaction.unwrap_or(false),
                 total_duration_ms: streamed_response.total_duration_ms,
             },
-        )?;
-    }
+        )?
+    } else {
+        Vec::new()
+    };
 
     Ok(ResponsesApiResult {
         id: streamed_response.id,
@@ -235,5 +237,6 @@ async fn create_gemini_response_async(
             cache_creation_input_tokens: streamed_response.token_usage.cache_creation_input_tokens,
             cache_read_input_tokens: streamed_response.token_usage.cache_read_input_tokens,
         },
+        persisted_user_message_ids,
     })
 }

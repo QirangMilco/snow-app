@@ -1,6 +1,7 @@
 import { Loader2, Save, Search, Wrench, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useI18n } from "../../../i18n";
+import { AutoDismissNotice } from "../../AutoDismissNotice";
 import { CustomSelect } from "../../common/CustomSelect";
 import { McpKeyValueEditor } from "./McpKeyValueEditor";
 import { McpStringListEditor } from "./McpStringListEditor";
@@ -85,20 +86,16 @@ export function McpSettingsEditor({
   };
 
   const switchToForm = (): void => {
+    // JSON 内容不完整或缺少必填字段时不应阻断切换：能解析则应用，
+    // 否则保留当前表单数据，必填校验统一在保存时进行。
     try {
       const parsed = parseDraftJson(jsonText, draft);
       onDraftChange(parsed);
-      setJsonError("");
-      setEditMode("form");
-    } catch (error) {
-      setJsonError(
-        error instanceof Error
-          ? error.message
-          : t("settings.mcpJsonInvalid", {
-              defaultValue: "Invalid JSON",
-            })
-      );
+    } catch {
+      // 忽略无法解析的 JSON 编辑内容，保留当前表单数据
     }
+    setJsonError("");
+    setEditMode("form");
   };
 
   const handleJsonTextChange = (value: string): void => {
@@ -168,7 +165,11 @@ export function McpSettingsEditor({
               defaultValue: "MCP server JSON configuration",
             })}
           />
-          {jsonError && <div className="mcp-editor-json-error">{jsonError}</div>}
+          <AutoDismissNotice
+            message={jsonError}
+            tone="error"
+            onDismiss={() => setJsonError("")}
+          />
           <div className="mcp-editor-json-hint">
             {t("settings.mcpJsonHint", {
               defaultValue:

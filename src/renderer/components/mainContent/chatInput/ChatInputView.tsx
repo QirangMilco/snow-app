@@ -18,14 +18,18 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n";
+import { Modal } from "../../common/Modal";
 import type { ChatInputViewProps } from "./types";
 import { BtwPanel } from "./BtwPanel";
+import { TEXT_SNIPPET_THRESHOLD } from "./constants";
 import { TokenUsageRing } from "./TokenUsageRing";
 import {
   createChangeChipHtml,
   createChipHtml,
   createCommitChipHtml,
   createImageChipHtml,
+  createTextSnippetChipHtml,
+  buildTextSnippetSummary,
   insertHtmlAtSelection,
   insertLineBreak,
   readEditableContent,
@@ -34,6 +38,7 @@ import {
   type CommitTag,
   type FileTag,
   type ImageTag,
+  type TextSnippetTag,
 } from "./fileTagUtils";
 import {
   FileMentionPopup,
@@ -51,6 +56,7 @@ import { StreamMetrics } from "./StreamMetrics";
 import { useChatConversationContext } from "../chatMessages";
 import { CommandPanel, type CommandPanelHandle } from "./commands/CommandPanel";
 import { createChatCommands } from "./commands/commandRegistry";
+import { FileChangesPanel } from "./commands/FileChangesPanel";
 import type { ChatCommand } from "./commands/types";
 
 export const ChatInputView = ({
@@ -129,6 +135,7 @@ export const ChatInputView = ({
   const {
     handleNewChat,
     messages,
+    activeConversationId,
     streamTokenCount,
     streamElapsedMs,
     streamTtftMs,
@@ -153,6 +160,7 @@ export const ChatInputView = ({
   const [isProjectSkillsOpen, setIsProjectSkillsOpen] = useState(false);
   const [isProjectCodebaseOpen, setIsProjectCodebaseOpen] = useState(false);
   const [isRoleEditorOpen, setIsRoleEditorOpen] = useState(false);
+  const [isFileChangesOpen, setIsFileChangesOpen] = useState(false);
   const [isCustomThinkingMode, setIsCustomThinkingMode] = useState(false);
   const [customThinkingValue, setCustomThinkingValue] = useState("");
 
@@ -168,11 +176,20 @@ export const ChatInputView = ({
       createChatCommands({
         onNewChat: handleNewChat,
         onCompactConversation,
+        onOpenFileChangesPanel: () => {
+          setIsProjectMcpOpen(false);
+          setIsProjectSensitiveCommandsOpen(false);
+          setIsProjectSkillsOpen(false);
+          setIsProjectCodebaseOpen(false);
+          setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(true);
+        },
         onOpenMcpPanel: () => {
           setIsProjectSensitiveCommandsOpen(false);
           setIsProjectSkillsOpen(false);
           setIsProjectCodebaseOpen(false);
           setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(false);
           setIsProjectMcpOpen(true);
         },
         onOpenRolePanel: () => {
@@ -180,6 +197,7 @@ export const ChatInputView = ({
           setIsProjectSensitiveCommandsOpen(false);
           setIsProjectSkillsOpen(false);
           setIsProjectCodebaseOpen(false);
+          setIsFileChangesOpen(false);
           setIsRoleEditorOpen(true);
         },
         onOpenSensitiveCommandsPanel: () => {
@@ -187,6 +205,7 @@ export const ChatInputView = ({
           setIsProjectSkillsOpen(false);
           setIsProjectCodebaseOpen(false);
           setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(false);
           setIsProjectSensitiveCommandsOpen(true);
         },
         onOpenSkillsPanel: () => {
@@ -194,6 +213,7 @@ export const ChatInputView = ({
           setIsProjectSensitiveCommandsOpen(false);
           setIsProjectCodebaseOpen(false);
           setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(false);
           setIsProjectSkillsOpen(true);
         },
         onOpenCodebasePanel: () => {
@@ -201,10 +221,13 @@ export const ChatInputView = ({
           setIsProjectSensitiveCommandsOpen(false);
           setIsProjectSkillsOpen(false);
           setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(false);
           setIsProjectCodebaseOpen(true);
         },
         model: selectedModel || undefined,
+        apiProfile: selectedApiProfile || undefined,
         compactDisabled: messages.length === 0 || isCompacting,
+        fileChangesDisabled: !activeConversationId,
         mcpDisabled: !projectId,
         roleDisabled: !projectId,
         sensitiveCommandsDisabled: !projectId,
@@ -214,6 +237,7 @@ export const ChatInputView = ({
         labels: {
           clearDescription: t("chatCommand.clearDescription"),
           compactDescription: t("chatCommand.compactDescription"),
+          fileChangesDescription: t("chatCommand.fileChangesDescription"),
           mcpDescription: projectId
             ? t("chatCommand.mcpDescription")
             : t("chatCommand.mcpNoProject"),
@@ -230,12 +254,14 @@ export const ChatInputView = ({
         },
       }),
     [
+      activeConversationId,
       handleNewChat,
       isCompacting,
       isStreaming,
       messages.length,
       onCompactConversation,
       projectId,
+      selectedApiProfile,
       selectedModel,
       t,
     ]
@@ -250,6 +276,22 @@ export const ChatInputView = ({
     null
   );
   const [imageLightbox, setImageLightbox] = useState<string | null>(null);
+
+  // 文本片段（text-snippet）chip 的悬停预览与模态框编辑状态
+  const [textSnippetPreview, setTextSnippetPreview] = useState<{
+    content: string;
+    summary: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const textSnippetPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const [textSnippetEditor, setTextSnippetEditor] = useState<{
+    chip: HTMLElement;
+    content: string;
+    summary: string;
+  } | null>(null);
 
   const modelDropdownDir = useDropdownDirection(dropdownRef, isModelMenuOpen);
   const isCustomThinkingValue = !thinkingOptions.some(
@@ -662,6 +704,22 @@ export const ChatInputView = ({
       if (!text) {
         return;
       }
+      // 超出阈值的纯文本粘贴标签化为 text-snippet chip，避免
+      // contenteditable 输入框渲染海量文本节点导致应用卡死。
+      if (text.length > TEXT_SNIPPET_THRESHOLD) {
+        const summary = buildTextSnippetSummary(text);
+        const tag: TextSnippetTag = {
+          content: text,
+          summary,
+          charCount: text.length,
+        };
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+        insertHtmlAtSelection(createTextSnippetChipHtml(tag));
+        syncContent();
+        return;
+      }
       // 用浏览器原生 insertText 插入纯文本：配合 .input-field-editable 的
       // white-space: pre-wrap，原文的换行与缩进（连续空格）原样保留；
       // 同时接入浏览器撤销栈，Ctrl+Z 可整体撤销本次粘贴。
@@ -790,6 +848,145 @@ export const ChatInputView = ({
     }
   }, []);
 
+  const showTextSnippetPreview = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
+      const chip = target.closest(
+        "[data-text-snippet-tag='true']"
+      ) as HTMLElement | null;
+      if (!chip) {
+        if (textSnippetPreviewTimerRef.current) {
+          clearTimeout(textSnippetPreviewTimerRef.current);
+          textSnippetPreviewTimerRef.current = null;
+        }
+        setTextSnippetPreview(null);
+        return;
+      }
+
+      const rawData = chip.dataset.textSnippetData;
+      if (!rawData) {
+        if (textSnippetPreviewTimerRef.current) {
+          clearTimeout(textSnippetPreviewTimerRef.current);
+          textSnippetPreviewTimerRef.current = null;
+        }
+        setTextSnippetPreview(null);
+        return;
+      }
+
+      let parsed: { content?: string; summary?: string };
+      try {
+        parsed = JSON.parse(rawData) as { content?: string; summary?: string };
+      } catch {
+        if (textSnippetPreviewTimerRef.current) {
+          clearTimeout(textSnippetPreviewTimerRef.current);
+          textSnippetPreviewTimerRef.current = null;
+        }
+        setTextSnippetPreview(null);
+        return;
+      }
+
+      if (textSnippetPreviewTimerRef.current) {
+        clearTimeout(textSnippetPreviewTimerRef.current);
+        textSnippetPreviewTimerRef.current = null;
+      }
+
+      const rect = chip.getBoundingClientRect();
+      const PREVIEW_MAX_W = 440;
+      const halfW = PREVIEW_MAX_W / 2;
+      const clampedX = Math.max(
+        halfW + 4,
+        Math.min(rect.left + rect.width / 2, window.innerWidth - halfW - 4)
+      );
+      setTextSnippetPreview({
+        content: parsed.content ?? "",
+        summary: parsed.summary ?? "text",
+        x: clampedX,
+        y: rect.top,
+      });
+    },
+    []
+  );
+
+  const scheduleHideTextSnippetPreview = useCallback(() => {
+    textSnippetPreviewTimerRef.current = setTimeout(() => {
+      setTextSnippetPreview(null);
+    }, 200);
+  }, []);
+
+  const cancelHideTextSnippetPreview = useCallback(() => {
+    if (textSnippetPreviewTimerRef.current) {
+      clearTimeout(textSnippetPreviewTimerRef.current);
+      textSnippetPreviewTimerRef.current = null;
+    }
+  }, []);
+
+  const handleTextSnippetClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const target = event.target as HTMLElement;
+      // 点击 remove 按钮时不触发编辑
+      if (target.closest("[data-chip-remove='true']")) {
+        return;
+      }
+      const chip = target.closest(
+        "[data-text-snippet-tag='true']"
+      ) as HTMLElement | null;
+      if (!chip || !textareaRef.current?.contains(chip)) {
+        return;
+      }
+      const rawData = chip.dataset.textSnippetData;
+      if (!rawData) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(rawData) as {
+          content?: string;
+          summary?: string;
+        };
+        setTextSnippetEditor({
+          chip,
+          content: parsed.content ?? "",
+          summary: parsed.summary ?? buildTextSnippetSummary(parsed.content ?? ""),
+        });
+      } catch {
+        // Ignore malformed data
+      }
+    },
+    [textareaRef]
+  );
+
+  const handleTextSnippetEditorSave = useCallback(() => {
+    if (!textSnippetEditor) {
+      return;
+    }
+    const { chip, content, summary } = textSnippetEditor;
+    const trimmedSummary = summary.trim() || buildTextSnippetSummary(content);
+    const tag: TextSnippetTag = {
+      content,
+      summary: trimmedSummary,
+      charCount: content.length,
+    };
+    const newChipHtml = createTextSnippetChipHtml(tag);
+    const fragment = document
+      .createRange()
+      .createContextualFragment(newChipHtml);
+    const newChip = fragment.firstChild as HTMLElement | null;
+    if (newChip) {
+      chip.replaceWith(newChip);
+    }
+    setTextSnippetEditor(null);
+    syncContent();
+  }, [syncContent, textSnippetEditor]);
+
+  const handleTextSnippetEditorDelete = useCallback(() => {
+    if (!textSnippetEditor) {
+      return;
+    }
+    const { chip } = textSnippetEditor;
+    chip.remove();
+    setTextSnippetEditor(null);
+    syncContent();
+  }, [syncContent, textSnippetEditor]);
+
   const handleSelectFilesAndFolders = useCallback(async () => {
     try {
       const selected = await window.snow.selectFiles(
@@ -908,6 +1105,10 @@ export const ChatInputView = ({
         projectName={projectName}
         onClose={() => setIsRoleEditorOpen(false)}
       />
+      <FileChangesPanel
+        open={isFileChangesOpen}
+        onClose={() => setIsFileChangesOpen(false)}
+      />
       <div className="input-content" ref={mentionAnchorRef}>
         <FileMentionPopup
           ref={mentionPopupRef}
@@ -961,9 +1162,18 @@ export const ChatInputView = ({
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
-            onMouseMove={showImagePreview}
-            onMouseLeave={scheduleHideImagePreview}
-            onClick={handleChipRemove}
+            onMouseMove={(event) => {
+              showImagePreview(event);
+              showTextSnippetPreview(event);
+            }}
+            onMouseLeave={() => {
+              scheduleHideImagePreview();
+              scheduleHideTextSnippetPreview();
+            }}
+            onClick={(event) => {
+              handleChipRemove(event);
+              handleTextSnippetClick(event);
+            }}
           />
           {imagePreview &&
             createPortal(
@@ -993,6 +1203,78 @@ export const ChatInputView = ({
               >
                 <img src={imageLightbox} alt="fullscreen" />
               </div>,
+              document.body
+            )}
+          {textSnippetPreview &&
+            createPortal(
+              <div
+                className="text-snippet-preview"
+                style={{
+                  left: textSnippetPreview.x,
+                  top: textSnippetPreview.y,
+                  transform: "translate(-50%, calc(-100% - 8px))",
+                }}
+                onMouseEnter={cancelHideTextSnippetPreview}
+                onMouseLeave={scheduleHideTextSnippetPreview}
+              >
+                <pre className="text-snippet-preview-content">
+                  {textSnippetPreview.content}
+                </pre>
+              </div>,
+              document.body
+            )}
+          {textSnippetEditor &&
+            createPortal(
+              <Modal
+                open={true}
+                title={t("chatInput.textSnippetEditorTitle")}
+                description={t("chatInput.textSnippetEditorDescription", {
+                  values: { count: textSnippetEditor.content.length },
+                })}
+                closeLabel={t("common.cancel")}
+                onClose={() => setTextSnippetEditor(null)}
+                size="large"
+                footer={
+                  <div className="text-snippet-editor-footer">
+                    <button
+                      type="button"
+                      className="text-snippet-editor-btn danger"
+                      onClick={handleTextSnippetEditorDelete}
+                    >
+                      {t("common.delete")}
+                    </button>
+                    <div className="text-snippet-editor-footer-right">
+                      <button
+                        type="button"
+                        className="text-snippet-editor-btn secondary"
+                        onClick={() => setTextSnippetEditor(null)}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-snippet-editor-btn primary"
+                        onClick={handleTextSnippetEditorSave}
+                      >
+                        {t("common.confirm")}
+                      </button>
+                    </div>
+                  </div>
+                }
+              >
+                <div className="text-snippet-editor-body">
+                  <textarea
+                    className="text-snippet-editor-textarea"
+                    value={textSnippetEditor.content}
+                    onChange={(e) =>
+                      setTextSnippetEditor((prev) =>
+                        prev ? { ...prev, content: e.target.value } : prev
+                      )
+                    }
+                    rows={16}
+                  />
+                </div>
+              </Modal>,
               document.body
             )}
           <div className="input-toolbar">
@@ -1063,11 +1345,16 @@ export const ChatInputView = ({
                 <button
                   className={`toolbar-btn model ${
                     modelError ? "model-error" : ""
-                  }${isStreaming ? " is-disabled" : ""}`}
+                  }${isStreaming || isSubAgentConversation ? " is-disabled" : ""}`}
                   aria-label={labels.selectModel}
                   aria-expanded={isModelMenuOpen}
                   onClick={handleToggleModelMenu}
-                  disabled={isStreaming}
+                  disabled={isStreaming || isSubAgentConversation}
+                  title={
+                    isSubAgentConversation
+                      ? t("chat.subAgentModelFixed")
+                      : labels.selectModel
+                  }
                   type="button"
                 >
                   {modelError ? (
@@ -1474,6 +1761,7 @@ export const ChatInputView = ({
               <TokenUsageRing
                 tokenUsage={tokenUsage}
                 maxContextTokens={runtimeApiConfig?.maxContextTokens ?? null}
+                isLoading={isLoadingApiConfig}
               />
               <div className="input-action-buttons">
                 {isStreaming || isAborting ? (

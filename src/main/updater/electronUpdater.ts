@@ -5,6 +5,8 @@ import { app, ipcMain, type BrowserWindow } from "electron";
 import electronUpdater from "electron-updater";
 import { snowLog } from "../../utils/snowLogger";
 import { markCloseConfirmed } from "../app/mainWindow";
+import { applySessionProxy } from "../app/sessionProxy";
+import { native } from "../native/nativeBridge";
 import {
   getUpdateStatus,
   setUpdateStatus,
@@ -31,6 +33,9 @@ const broadcastStatus = (): void => {
 // 执行一次更新检查，统一处理错误日志
 const checkForUpdatesAction = async (): Promise<void> => {
   try {
+    // electron-updater 使用独立的 "electron-updater" 分区会话发请求，
+    // 每次检查前同步代理设置，确保检查与下载都走配置的代理
+    await applySessionProxy(native);
     await autoUpdater.checkForUpdates();
   } catch (error) {
     snowLog.error({
@@ -155,6 +160,8 @@ export const initElectronUpdater = (mainWindow: BrowserWindow): void => {
   // 用户点击"立即更新" → 开始下载
   ipcMain.handle("updater:download-update", async () => {
     try {
+      // 下载前同步代理设置，确保更新包下载走配置的代理
+      await applySessionProxy(native);
       setUpdateStatus({ downloading: true, progress: 0, error: null });
       await autoUpdater.downloadUpdate();
       return getUpdateStatus();

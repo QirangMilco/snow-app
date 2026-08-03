@@ -11,7 +11,7 @@ use crate::storage::{
     SensitiveCommandConfigInput, SensitiveCommandConfigRecord, SensitiveCommandMatchResult,
     SubAgentConfigInput, SubAgentConfigRecord, SystemPromptItemInput, SystemPromptItemRecord,
     WorkspaceDirectoryInput,
-    WorkspaceDirectoryRecord, MemoCountSummary, MemoPage, MemoRecord,
+    WorkspaceDirectoryRecord, MemoCountSummary, MemoPage, MemoRecord, UserMessageSummary,
 };
 use crate::hooks::{HookExecuteInput, HookExecuteResult};
 use crate::storage::services::fs_explorer::{DirectoryEntry, FileContentResult, FileSearchResult};
@@ -1137,6 +1137,17 @@ pub async fn append_tool_message(
 #[napi]
 pub async fn list_chat_messages(conversation_id: String) -> napi::Result<Vec<ChatMessageRecord>> {
     tokio::task::spawn_blocking(move || crate::storage::list_chat_messages(conversation_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// Lightweight list of user messages for the chat UI's user-message rail.
+/// Runs on a blocking thread so the Node.js event loop is never blocked.
+#[napi]
+pub async fn list_user_messages(
+    conversation_id: String,
+) -> napi::Result<Vec<UserMessageSummary>> {
+    tokio::task::spawn_blocking(move || crate::storage::list_user_messages(conversation_id))
         .await
         .map_err(map_spawn_error)?
 }

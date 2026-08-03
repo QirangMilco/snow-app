@@ -36,10 +36,9 @@ const parseTodoResult = (
       return null;
     }
 
-    if (
-      typeof parsed.error === "string" ||
-      typeof parsed.message === "string"
-    ) {
+    // A `message` field is only an accompanying hint (e.g. "no TODOs yet"),
+    // it does not invalidate a well-formed todo list.
+    if (typeof parsed.error === "string") {
       return null;
     }
 

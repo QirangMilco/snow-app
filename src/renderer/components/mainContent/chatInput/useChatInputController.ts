@@ -32,6 +32,7 @@ import {
   createChipHtml,
   createCommitChipHtml,
   createImageChipHtml,
+  createTextSnippetChipHtml,
   parseContentSegments,
   renumberImageChips,
 } from "./fileTagUtils";
@@ -174,22 +175,26 @@ export const useChatInputController = ({
         }
         setIsSubAgentConversation(subAgentConversation);
 
-        // Sub-agent conversations are strictly bound to the agent's
-        // configProfile: if the profile is missing, fail fast instead of
-        // silently routing to the global active profile (which could send a
-        // sub-agent task to the wrong provider/model).
-        const runtimeConfig = subAgentConversation
-          ? (configs.find(
+        // Sub-agent conversations resolve their profile from the agent's
+        // configProfile: a specified-but-missing profile fails fast (the
+        // Rust backend hard-errors the same way); an empty profile follows
+        // the global active profile just like an unbound main conversation.
+        let runtimeConfig: ApiConfigRecord | null = null;
+        if (requestedProfile) {
+          runtimeConfig =
+            configs.find(
               (config) => config.profileName === requestedProfile
-            ) ?? null)
-          : requestedProfile
-            ? (configs.find(
-                (config) => config.profileName === requestedProfile
-              ) ??
+            ) ?? null;
+          if (!runtimeConfig && !subAgentConversation) {
+            runtimeConfig =
               configs.find((config) => config.isActive) ??
               configs[0] ??
-              null)
-            : configs.find((config) => config.isActive) ?? configs[0] ?? null;
+              null;
+          }
+        } else {
+          runtimeConfig =
+            configs.find((config) => config.isActive) ?? configs[0] ?? null;
+        }
         if (!runtimeConfig) {
           throw new Error(
             requestedProfile
@@ -200,11 +205,15 @@ export const useChatInputController = ({
 
         setSelectedApiProfile(runtimeConfig.profileName);
         setRuntimeApiConfig(runtimeConfig);
-        // Prefer the model remembered on the conversation; fall back to the
-        // profile's default advanced model for new conversations.
+        // Sub-agent conversations always run with the profile's advanced
+        // model — the Rust backend resolves the sub-agent model from its
+        // configProfile on every request, so a model inherited from the
+        // parent conversation record would be misleading.
         const rememberedModel = conversation?.model?.trim() ?? "";
         setSelectedModel(
-          rememberedModel || runtimeConfig.advancedModel || ""
+          subAgentConversation
+            ? runtimeConfig.advancedModel || ""
+            : rememberedModel || runtimeConfig.advancedModel || ""
         );
         setThinkingValue(getThinkingValueFromConfig(runtimeConfig));
       } catch (error) {
@@ -367,6 +376,9 @@ export const useChatInputController = ({
           if (segment.type === "change") {
             return createChangeChipHtml(segment.tag);
           }
+          if (segment.type === "text-snippet") {
+            return createTextSnippetChipHtml(segment.tag);
+          }
           return createChipHtml(segment.tag);
         })
         .join("");
@@ -437,6 +449,9 @@ export const useChatInputController = ({
             }
             if (segment.type === "change") {
               return createChangeChipHtml(segment.tag);
+            }
+            if (segment.type === "text-snippet") {
+              return createTextSnippetChipHtml(segment.tag);
             }
             return createChipHtml(segment.tag);
           })

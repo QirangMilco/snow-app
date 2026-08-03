@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCcw,
   SearchCode,
+  Settings,
   Square,
   Trash2,
   X,
@@ -22,6 +23,7 @@ import type {
 import { useI18n } from "../../../i18n";
 import { useCodebaseEmbedding } from "../../../hooks/useCodebaseEmbedding";
 import { useCodebaseSync } from "../../../hooks/useCodebaseSync";
+import { APP_CONTROL_OPEN_SETTINGS_EVENT } from "../../../hooks/useAppControl";
 import { ConfirmDialog } from "../../common/ConfirmDialog";
 import { Modal } from "../../common/Modal";
 
@@ -293,6 +295,17 @@ export const ProjectCodebasePanel = ({
     }
   }, [projectId, loadIndexStats]);
 
+  // ── Open the codebase settings page from the embed error state ───────
+  // Dispatches the same event the app-control MCP tool uses, extended with
+  // the target settings view so the Sidebar can navigate directly there.
+  const handleOpenCodebaseSettings = useCallback((): void => {
+    window.dispatchEvent(
+      new CustomEvent(APP_CONTROL_OPEN_SETTINGS_EVENT, {
+        detail: { view: "codebase-settings" },
+      })
+    );
+  }, []);
+
   // ── Confirm disable while embedding is active ────────────────────────
   // User confirmed: cancel the in-progress embedding, clear the index and
   // related tables, then actually disable codebase indexing for the project.
@@ -401,6 +414,20 @@ export const ProjectCodebasePanel = ({
   const phaseLabel = embedding.embedProgress
     ? t(`projectCodebase.phase.${embedding.embedProgress.phase}`)
     : "";
+
+  // ── Embed error state: message + recoverability classification ───────
+  // `embedError` is captured by the hook both from the terminal progress
+  // event ("error" phase) and from rejected IPC calls, so it always holds
+  // the failure reason. Configuration-missing errors are not retryable —
+  // the user must configure the embedding model first, so we guide them
+  // to the codebase settings page instead of offering a retry button.
+  const embedErrorMessage =
+    embedding.embedError ?? embedding.embedProgress?.error ?? "";
+  const isEmbedConfigMissing =
+    embedding.embedState === "error" &&
+    /required|not configured|api key|base url|model name/i.test(
+      embedErrorMessage
+    );
 
   return (
     <>
@@ -658,7 +685,55 @@ export const ProjectCodebasePanel = ({
                   </div>
                 ) : null}
 
+                {embedding.embedState === "error" ? (
+                  <div className="project-codebase-embed-error">
+                    <div className="project-codebase-embed-error-header">
+                      <AlertCircle size={14} />
+                      <span>{t("projectCodebase.embedding.errorTitle")}</span>
+                    </div>
+                    {embedErrorMessage ? (
+                      <div className="project-codebase-embed-error-message">
+                        {embedErrorMessage}
+                      </div>
+                    ) : null}
+                    {isEmbedConfigMissing ? (
+                      <div className="project-codebase-embed-error-hint">
+                        {t("projectCodebase.embedding.errorConfigHint")}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="project-codebase-embed-actions">
+                  {embedding.embedState === "error" ? (
+                    <button
+                      className="project-codebase-embed-btn primary"
+                      onClick={() => {
+                        // Retry reuses the same flows as the start button:
+                        // resume the interrupted session when one exists,
+                        // otherwise start a fresh embedding run.
+                        if (embedding.resumableSession) {
+                          void embedding.resumeSession();
+                        } else {
+                          void embedding.startEmbedding();
+                        }
+                      }}
+                      type="button"
+                    >
+                      <RotateCcw size={14} />
+                      <span>{t("projectCodebase.embedding.retry")}</span>
+                    </button>
+                  ) : null}
+                  {embedding.embedState === "error" && isEmbedConfigMissing ? (
+                    <button
+                      className="project-codebase-embed-btn"
+                      onClick={handleOpenCodebaseSettings}
+                      type="button"
+                    >
+                      <Settings size={14} />
+                      <span>{t("projectCodebase.embedding.openSettings")}</span>
+                    </button>
+                  ) : null}
                   {(embedding.embedState === "idle" ||
                     embedding.embedState === "completed") &&
                   !embedding.resumableSession ? (

@@ -8,23 +8,6 @@ export type ProjectDirectoryInfo = {
 const ROLE_FILE_NAME = "ROLE.md";
 const SETTINGS_FILE_PATH = ".snow/settings.json";
 
-/** 根据项目 ID 解析工作区目录（本地或 SSH）。 */
-export const resolveProjectDirectory = async (
-  projectId: string
-): Promise<ProjectDirectoryInfo | null> => {
-  const directories = await window.snow.listWorkspaceDirectories();
-  const matched = directories.find(
-    (directory) => directory.directoryId === projectId
-  );
-  if (!matched) {
-    return null;
-  }
-  return {
-    path: matched.path,
-    isSsh: matched.path.startsWith("ssh://"),
-  };
-};
-
 /** 构建 SSH 连接参数（复用 RoleEditorPanel 的凭证解析链路）。 */
 export const buildSshConnectParams = async (
   sshUrl: string

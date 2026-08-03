@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use super::super::database;
 use super::super::{
     ChatConversationPage, ChatConversationRecord, ChatMessagePage, ChatMessageRecord,
-    ConversationSearchResult,
+    ConversationSearchResult, UserMessageSummary,
 };
 
 #[derive(Clone, Debug)]
@@ -178,10 +178,11 @@ pub fn load_context_messages(
         .map_err(|error| database::database_error(database_path, "load chat context", error))
 }
 
-pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<'_>) -> Result<()> {
+pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<'_>) -> Result<Vec<String>> {
     database::open_connection(database_path)
         .and_then(|mut connection| {
             let transaction = connection.transaction()?;
+            let mut persisted_user_message_ids = Vec::new();
             let title = create_title(input.request_messages);
             let preview = create_snippet(input.response_content, 180);
             // Context compaction also persists the real token usage so the
@@ -233,7 +234,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                 // post-compaction agent loop. Treat the boundary as a user
                 // message: its checkpoint captures the pre-compaction working
                 // directory state.
-                insert_message(
+                let message_id = insert_message(
                     &transaction,
                     input.conversation_id,
                     "user",
@@ -248,6 +249,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                     "[]",
                     0,
                 )?;
+                persisted_user_message_ids.push(message_id);
             } else {
                 for (index, message) in input.request_messages.iter().enumerate() {
                     let checkpoint_id = if index == 0 && normalize_role(&message.role) == "user" {
@@ -265,7 +267,7 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                     } else {
                         "{}"
                     };
-                    insert_message(
+                    let message_id = insert_message(
                         &transaction,
                         input.conversation_id,
                         &message.role,
@@ -280,6 +282,9 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                         "[]",
                         index,
                     )?;
+                    if normalize_role(&message.role) == "user" {
+                        persisted_user_message_ids.push(message_id);
+                    }
                 }
 
                 insert_message(
@@ -344,7 +349,8 @@ pub fn store_chat_exchange(database_path: &Path, input: &StoreChatExchangeInput<
                 ],
             )?;
 
-            transaction.commit()
+            transaction.commit()?;
+            Ok(persisted_user_message_ids)
         })
         .map_err(|error| database::database_error(database_path, "store chat exchange", error))
 }
@@ -1150,6 +1156,41 @@ pub fn list_chat_messages(
         .map_err(|error| database::database_error(database_path, "list chat messages", error))
 }
 
+/// Fetch only user-role messages (excluding context-compaction markers) for
+/// a conversation. Returns just id, content and created_at — enough for the
+/// chat UI's user-message rail to preview and navigate. Because it skips the
+/// heavy thinking/tool_calls_json columns and filters on role, it stays fast
+/// even for conversations with thousands of messages.
+pub fn list_user_messages(
+    database_path: &Path,
+    conversation_id: &str,
+) -> Result<Vec<UserMessageSummary>> {
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            let mut statement = connection.prepare(
+                "SELECT id,
+                        content,
+                        created_at
+                   FROM chat_messages
+                  WHERE conversation_id = ?1
+                    AND role = 'user'
+                    AND (status = '' OR status IS NULL OR status != 'context_compaction')
+                  ORDER BY id ASC",
+            )?;
+
+            let rows = statement.query_map(params![conversation_id], |row| {
+                Ok(UserMessageSummary {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })?;
+
+            rows.collect()
+        })
+        .map_err(|error| database::database_error(database_path, "list user messages", error))
+}
+
 pub fn list_chat_messages_paginated(
     database_path: &Path,
     conversation_id: &str,
@@ -1628,7 +1669,8 @@ fn insert_message(
     thinking_blocks_json: &str,
     tool_calls_json: &str,
     index: usize,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<String> {
+    let id = database::create_snowflake_id();
     connection.execute(
         "INSERT INTO chat_messages (
            id,
@@ -1649,7 +1691,7 @@ fn insert_message(
            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, datetime('now', 'localtime')
          )",
         params![
-            database::create_snowflake_id(),
+            id,
             create_chat_id(&format!("msg{index}")),
             conversation_id,
             normalize_role(role),
@@ -1665,7 +1707,7 @@ fn insert_message(
         ],
     )?;
 
-    Ok(())
+    Ok(id)
 }
 
 fn normalize_role(role: &str) -> &str {

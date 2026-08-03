@@ -9,7 +9,7 @@ import { PENDING_SESSION_KEY } from "../utils/conversationTypes";
 import {
   deleteCheckpoints,
   directoryIdToPath,
-  killRunningBashExecutions,
+  killRunningToolExecutions,
 } from "../utils/conversationHelpers";
 
 /**
@@ -60,7 +60,7 @@ export const useRollback = (ctx: ConversationContextValue) => {
 
       // Kill every in-flight bash subprocess before truncating the
       // conversation, so no orphaned OS process keeps running afterwards.
-      killRunningBashExecutions(session.messages);
+      killRunningToolExecutions(session.messages);
 
       const messages = session.messages;
       const targetIndex = messages.findIndex((m) => m.id === messageId);
@@ -258,7 +258,8 @@ export const useRollback = (ctx: ConversationContextValue) => {
         void window.snow
           .deleteConversation(convId)
           .then(() => {
-            ctx.setConversationVersion((version) => version + 1);
+            // 会话已被删除：刷新侧边栏列表，移除该会话
+            ctx.setConversationListVersion((version) => version + 1);
           })
           .catch(() => {
             // Best effort
@@ -272,7 +273,13 @@ export const useRollback = (ctx: ConversationContextValue) => {
         ctx.setActiveId(undefined);
       } else if (convId && responseId) {
         ctx.updateSessionField(key, "tokenUsage", null);
-        void window.snow.truncateConversation(convId, responseId).catch(() => {
+        void window.snow.truncateConversation(convId, responseId).then(() => {
+          // Bump version so dependent components (user-message rail) re-fetch
+          // the updated message list after truncation.
+          ctx.setConversationVersion((version) => version + 1);
+          // 截断会改变会话记录（消息数/预览/更新时间）：同步侧边栏列表
+          ctx.setConversationListVersion((version) => version + 1);
+        }).catch(() => {
           // Best effort — database persistence must not block the UI refresh.
         });
       }
@@ -288,6 +295,7 @@ export const useRollback = (ctx: ConversationContextValue) => {
       ctx.updateSessionField,
       ctx.updateSessionMessages,
       ctx.setConversationVersion,
+      ctx.setConversationListVersion,
       ctx.setActiveId,
       ctx.setDraftToRestore,
       ctx.setRollbackPreview,

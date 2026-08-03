@@ -5,6 +5,7 @@ import type { TokenUsage } from "../../../../preload";
 type TokenUsageRingProps = {
   tokenUsage: TokenUsage | null;
   maxContextTokens?: number | null;
+  isLoading?: boolean;
 };
 
 const RING_SIZE = 18;
@@ -15,6 +16,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 export const TokenUsageRing = ({
   tokenUsage,
   maxContextTokens,
+  isLoading = false,
 }: TokenUsageRingProps): React.JSX.Element | null => {
   const { locale, t } = useI18n();
   const [showTooltip, setShowTooltip] = useState(false);
@@ -64,6 +66,32 @@ export const TokenUsageRing = ({
       cacheLength,
     };
   }, [tokenUsage, maxContextTokens]);
+
+  // API 配置加载期间 maxContextTokens 尚未就绪，此时用 total 作为分母
+  // 会算出 ratio=1 的虚假满状态。渲染空环占位保持布局稳定，等配置
+  // 加载完成后再计算并显示真实比例。
+  if (isLoading) {
+    return (
+      <div className="token-usage-ring-wrapper">
+        <svg
+          width={RING_SIZE}
+          height={RING_SIZE}
+          viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+          className="token-usage-ring"
+        >
+          <circle
+            cx={RING_SIZE / 2}
+            cy={RING_SIZE / 2}
+            r={RADIUS}
+            fill="none"
+            strokeWidth={STROKE_WIDTH}
+            className="token-usage-ring-bg"
+          />
+        </svg>
+        <span className="token-usage-ring-text">--</span>
+      </div>
+    );
+  }
 
   if (!segments) {
     return null;

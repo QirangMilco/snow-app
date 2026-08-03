@@ -72,19 +72,29 @@ pub(super) fn build_gemini_payload(
                 continue;
             }
             let results = match message.tool_results_json {
-                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_json(raw),
+                Some(ref raw) => crate::api::conversation::tool_messages::parse_tool_results_with_images(
+                    raw,
+                    database_path,
+                    skip_image_parsing,
+                ),
                 None => Vec::new(),
             };
-            for (name, _call_id, result) in &results {
-                let response_content = if result.is_empty() {
-                    serde_json::json!({"result": "ok"})
+            for tool_result in &results {
+                let has_images = !tool_result.images.is_empty();
+                let text = tool_result.text.clone();
+                let response_content = if text.is_empty() {
+                    if has_images {
+                        serde_json::json!({"result": "[image attached]"})
+                    } else {
+                        serde_json::json!({"result": "ok"})
+                    }
                 } else {
-                    serde_json::json!({"result": result})
+                    serde_json::json!({"result": text})
                 };
-                let tool_name = if name.is_empty() {
+                let tool_name = if tool_result.name.is_empty() {
                     "unknown_tool".to_string()
                 } else {
-                    name.clone()
+                    tool_result.name.clone()
                 };
                 contents.push(json!({
                     "role": "function",
@@ -95,6 +105,27 @@ pub(super) fn build_gemini_payload(
                         }
                     }],
                 }));
+                // functionResponse only accepts plain JSON, so the screenshot
+                // base64 must travel in a following user message as inlineData
+                // parts.
+                if !tool_result.images.is_empty() {
+                    let image_parts: Vec<Value> = tool_result
+                        .images
+                        .iter()
+                        .map(|image| {
+                            json!({
+                                "inlineData": {
+                                    "mimeType": image.media_type,
+                                    "data": image.data,
+                                }
+                            })
+                        })
+                        .collect();
+                    contents.push(json!({
+                        "role": "user",
+                        "parts": image_parts,
+                    }));
+                }
             }
             continue;
         }

@@ -9,6 +9,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
 
 use super::super::service::McpService;
 use super::super::tools::McpTool;
@@ -146,6 +147,7 @@ impl GrepService {
         &self,
         args: &Value,
         on_remote_workspace_command: &RemoteWorkspaceCallback,
+        cancel_token: Option<&CancellationToken>,
     ) -> napi::Result<Value> {
         if args
             .get("path")
@@ -156,6 +158,7 @@ impl GrepService {
                 on_remote_workspace_command,
                 "grep-search",
                 args,
+                cancel_token,
             )
             .await;
         }
@@ -587,9 +590,11 @@ fn search_file(
 /// Parse grep/ripgrep/native output into structured match objects.
 ///
 /// All backends output: `file_path:line_number:matched_content`
-/// The path may contain colons on Windows (e.g. C:\...), so we parse
-/// from the right: the last colon splits content, the second-to-last
-/// splits the line number.
+/// The separator is the FIRST `:<digits>:` pair from the left. Parsing from
+/// the right would misparse every match whose content contains a colon
+/// (e.g. `case "x": y`), silently dropping the result; paths with embedded
+/// colons are rare (Windows drives) and are still skipped correctly because
+/// the lazy quantifier advances until a `:<digits>:` separator is found.
 fn parse_grep_output(output: &str) -> Vec<Value> {
     let mut matches = Vec::new();
 
@@ -602,16 +607,16 @@ fn parse_grep_output(output: &str) -> Vec<Value> {
     matches
 }
 
+static GREP_LINE_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+
 fn parse_grep_line(line: &str) -> Option<Value> {
-    let last_colon = line.rfind(':')?;
-    let content = &line[last_colon + 1..];
-
-    let before_content = &line[..last_colon];
-    let second_colon = before_content.rfind(':')?;
-    let line_num_str = &before_content[second_colon + 1..];
-    let file_path = &before_content[..second_colon];
-
-    let line_number: u64 = line_num_str.parse().ok()?;
+    let re = GREP_LINE_RE.get_or_init(|| {
+        Regex::new(r"^(.+?):(\d+):(.*)$").expect("invalid grep line regex")
+    });
+    let captures = re.captures(line)?;
+    let file_path = captures.get(1)?.as_str();
+    let line_number: u64 = captures.get(2)?.as_str().parse().ok()?;
+    let content = captures.get(3)?.as_str();
 
     Some(json!({
         "file": file_path,

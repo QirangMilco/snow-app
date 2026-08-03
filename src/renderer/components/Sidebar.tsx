@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { MainSidebarContent } from "./sidebar/MainSidebarContent";
 import { ProjectExplorerContent } from "./sidebar/ProjectExplorerContent";
 import { SettingsSidebarContent } from "./sidebar/SettingsSidebarContent";
+import { SETTINGS_VIEW_IDS } from "./sidebar/settingsItems";
 import { shortcutEvents } from "./shortcutEvents";
 import { APP_CONTROL_OPEN_SETTINGS_EVENT } from "../hooks/useAppControl";
+import type { MainContentView } from "./mainContent/types";
 import type { SidebarContentKey, SidebarContentProps } from "./sidebar/types";
 
 type SidebarProps = {
@@ -64,13 +66,22 @@ export const Sidebar = ({
   }, [activeDirectory, handleSwitchToExplorer]);
 
   useEffect(() => {
-    const handler = () => {
+    const handler = (event: Event) => {
       setActiveContent("settings");
+      // The event may carry a target settings view (e.g. opened from the
+      // project codebase panel when the embedding configuration is missing),
+      // so the sidebar can navigate directly to the right settings page.
+      const detail = (event as CustomEvent<{ view?: string }>).detail;
+      const view = detail?.view as MainContentView | undefined;
+      if (view && SETTINGS_VIEW_IDS.has(view)) {
+        onSelectMainView(view);
+      }
     };
     window.addEventListener(APP_CONTROL_OPEN_SETTINGS_EVENT, handler);
     return () => {
       window.removeEventListener(APP_CONTROL_OPEN_SETTINGS_EVENT, handler);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sidebarProps: SidebarContentProps = {

@@ -342,17 +342,49 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     [ctx.pendingToolAuthorizationRef, ctx.setPendingToolAuthorizations]
   );
 
-  const rejectAllToolAuthorizations = useCallback((): void => {
-    const pendingEntries = ctx.pendingToolAuthorizationRef.current;
-    pendingEntries.forEach((entry) =>
-      entry.resolve({
-        status: "rejected",
-        reason: "Tool execution interrupted",
-      })
-    );
-    pendingEntries.clear();
-    ctx.setPendingToolAuthorizations([]);
-  }, [ctx.pendingToolAuthorizationRef, ctx.setPendingToolAuthorizations]);
+  /**
+   * Reject pending tool authorizations, scoped to a single session when a
+   * sessionKey is provided.
+   *
+   * The pending map is global across all conversations, so an abort in one
+   * conversation must only settle the authorizations belonging to that
+   * conversation — otherwise force-sending a pending message in session A
+   * would silently reject a tool authorization prompt waiting in session B.
+   * When sessionKey is omitted (component unmount cleanup) every pending
+   * entry is rejected.
+   */
+  const rejectToolAuthorizations = useCallback(
+    (sessionKey?: string): void => {
+      const pendingEntries = ctx.pendingToolAuthorizationRef.current;
+      const targetAuthorizationIds: string[] = [];
+      pendingEntries.forEach((entry, authorizationId) => {
+        if (
+          sessionKey !== undefined &&
+          entry.toolCall.authorizationConversationId !== sessionKey
+        ) {
+          return;
+        }
+        entry.resolve({
+          status: "rejected",
+          reason: "Tool execution interrupted",
+        });
+        targetAuthorizationIds.push(authorizationId);
+      });
+      targetAuthorizationIds.forEach((authorizationId) =>
+        pendingEntries.delete(authorizationId)
+      );
+      if (targetAuthorizationIds.length > 0) {
+        ctx.setPendingToolAuthorizations((current) =>
+          current.filter(
+            (toolCall) =>
+              !toolCall.authorizationId ||
+              !targetAuthorizationIds.includes(toolCall.authorizationId)
+          )
+        );
+      }
+    },
+    [ctx.pendingToolAuthorizationRef, ctx.setPendingToolAuthorizations]
+  );
 
   const requestToolAuthorization = useCallback(
     (
@@ -586,8 +618,8 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
 
   // 卸载时清理所有待处理授权
   useEffect(
-    () => () => rejectAllToolAuthorizations(),
-    [rejectAllToolAuthorizations]
+    () => () => rejectToolAuthorizations(),
+    [rejectToolAuthorizations]
   );
 
   return {
@@ -605,7 +637,7 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     refreshGoalModeTokenBudget,
     setGoalModeTokenBudget,
     settleToolAuthorization,
-    rejectAllToolAuthorizations,
+    rejectToolAuthorizations,
     requestToolAuthorization,
     requestToolAuthorizations,
     approveToolAuthorizationAlways,

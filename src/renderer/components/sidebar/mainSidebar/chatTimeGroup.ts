@@ -9,6 +9,20 @@ export type TimeGroup = {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+type TimeTranslate = (key: string, options?: { defaultValue?: string }) => string;
+
+const WEEKDAY_KEYS = [
+  "sidebar.chatWeekdaySun",
+  "sidebar.chatWeekdayMon",
+  "sidebar.chatWeekdayTue",
+  "sidebar.chatWeekdayWed",
+  "sidebar.chatWeekdayThu",
+  "sidebar.chatWeekdayFri",
+  "sidebar.chatWeekdaySat",
+];
+
+const WEEKDAY_FALLBACKS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
 /**
  * Parse a SQLite datetime string ("YYYY-MM-DD HH:MM:SS" in local time)
  * into a JavaScript Date object.
@@ -56,11 +70,15 @@ export const getTimeGroup = (date: Date, now: Date): TimeGroupKey => {
 /**
  * Format a short time label for display on a chat item.
  * - Today: "HH:mm"
- * - Yesterday: "昨天" / "Yesterday" (caller provides via i18n)
- * - This week: weekday name
+ * - Yesterday: "yesterday" (caller provides via i18n)
+ * - This week: localized weekday name
  * - Earlier: "M/D"
  */
-export const formatTimeLabel = (date: Date, now: Date): string => {
+export const formatTimeLabel = (
+  date: Date,
+  now: Date,
+  t?: TimeTranslate
+): string => {
   const group = getTimeGroup(date, now);
 
   if (group === "today") {
@@ -74,8 +92,10 @@ export const formatTimeLabel = (date: Date, now: Date): string => {
   }
 
   if (group === "last7days") {
-    const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    return weekdays[date.getDay()];
+    const index = date.getDay();
+    return t
+      ? t(WEEKDAY_KEYS[index], { defaultValue: WEEKDAY_FALLBACKS[index] })
+      : WEEKDAY_FALLBACKS[index];
   }
 
   return `${date.getMonth() + 1}/${date.getDate()}`;

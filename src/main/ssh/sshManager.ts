@@ -172,9 +172,20 @@ export const listSshDirectory = (
   });
 };
 
+export type SshCommandOptions = {
+  /** Upper bound for the command lifetime; the exec channel is closed and the
+   *  remote process signalled on timeout. Defaults to 5 minutes as an absolute
+   *  safety net so an SSH exec can never hang forever. */
+  timeoutMs?: number;
+  /** External cancellation (e.g. conversation stop); aborts the same way as a
+   *  timeout. */
+  signal?: AbortSignal;
+};
+
 export const executeSshCommand = (
   sessionId: string,
-  command: string
+  command: string,
+  options?: SshCommandOptions
 ): Promise<string> => {
   return new Promise((resolve, reject) => {
     const session = sessions.get(sessionId);
@@ -183,17 +194,98 @@ export const executeSshCommand = (
       return;
     }
 
-    session.client.exec(command, (err, stream) => {
-      if (err) {
-        reject(new Error(`Failed to execute remote command: ${err.message}`));
+    const { timeoutMs = 300_000, signal } = options ?? {};
+    let settled = false;
+    let streamRef: import("ssh2").ClientChannel | undefined;
+    let timer: NodeJS.Timeout | undefined;
+
+    // Single-settlement state machine: exactly one of exec callback failure,
+    // stream error, stream close, client error, client close, timeout or
+    // cancellation resolves the Promise. Any later event is ignored.
+    const cleanup = (): void => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+      session.client.removeListener("error", onClientError);
+      session.client.removeListener("close", onClientClose);
+    };
+
+    const terminate = (): void => {
+      // Best-effort: signal the remote process group and close the exec
+      // channel so the pending wait settles instead of hanging forever.
+      try {
+        streamRef?.signal("KILL");
+      } catch {
+        // Channel may already be gone.
+      }
+      try {
+        streamRef?.close();
+      } catch {
+        // Channel may already be gone.
+      }
+    };
+
+    const settleAndReject = (error: Error): void => {
+      if (settled) {
         return;
       }
+      settled = true;
+      cleanup();
+      terminate();
+      reject(error);
+    };
+
+    const onAbort = (): void => {
+      settleAndReject(new Error("Remote command cancelled"));
+    };
+    const onClientError = (err: Error): void => {
+      settleAndReject(new Error(`SSH connection error: ${err.message}`));
+    };
+    const onClientClose = (): void => {
+      settleAndReject(new Error("SSH connection closed before command completed"));
+    };
+
+    if (signal?.aborted) {
+      reject(new Error("Remote command cancelled"));
+      return;
+    }
+    session.client.on("error", onClientError);
+    session.client.on("close", onClientClose);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    timer = setTimeout(() => {
+      settleAndReject(new Error(`Remote command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    session.client.exec(command, (err, stream) => {
+      if (err) {
+        settleAndReject(
+          new Error(`Failed to execute remote command: ${err.message}`)
+        );
+        return;
+      }
+      streamRef = stream;
 
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => stdout.push(chunk));
-      stream.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      stream.on("data", (chunk: Buffer) => {
+        if (!settled) {
+          stdout.push(chunk);
+        }
+      });
+      stream.stderr.on("data", (chunk: Buffer) => {
+        if (!settled) {
+          stderr.push(chunk);
+        }
+      });
       stream.on("close", (exitCode: number | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
         const errorOutput = Buffer.concat(stderr).toString("utf-8").trim();
         if (exitCode !== 0) {
           reject(
@@ -206,7 +298,7 @@ export const executeSshCommand = (
         resolve(Buffer.concat(stdout).toString("utf-8"));
       });
       stream.on("error", (streamError: Error) => {
-        reject(
+        settleAndReject(
           new Error(`Failed to execute remote command: ${streamError.message}`)
         );
       });

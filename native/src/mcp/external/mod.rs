@@ -18,6 +18,10 @@ const DISCOVERY_CONCURRENCY: usize = 4;
 const SERVER_NAME_MAX_LEN: usize = 18;
 const TOOL_NAME_MAX_LEN: usize = 24;
 
+/// 外部 MCP 服务器工具获取的默认超时（毫秒）：120 秒。
+/// 服务器配置中显式设置了 timeout_ms（>0）时优先使用配置值。
+const DEFAULT_DISCOVERY_TIMEOUT_MS: u64 = 120_000;
+
 // Built-in MCP server names, used to exclude external tools with the same name.
 // Kept in sync with `tools::BUILTIN_SERVER_IDS`.
 const BUILTIN_SERVER_NAMES: &[&str] = super::tools::BUILTIN_SERVER_IDS;
@@ -227,23 +231,49 @@ async fn discover_config_tools(
     config: McpServerConfigRecord,
     server_name: String,
 ) -> Result<Vec<McpTool>> {
-    let client = ExternalMcpClient::connect(&config).await?;
-    let result = client.list_all_tools().await;
+    let timeout_ms = config
+        .timeout_ms
+        .filter(|value| *value > 0)
+        .map(|value| value as u64)
+        .unwrap_or(DEFAULT_DISCOVERY_TIMEOUT_MS);
+    // 连接与工具列表共享同一个截止时间，保证整个获取流程有总预算；
+    // 超时后仍显式 close，避免 stdio 子进程 / HTTP 连接残留。
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+    let server_label = config.name.clone();
+
+    let client = match tokio::time::timeout_at(deadline, ExternalMcpClient::connect(&config)).await
+    {
+        Ok(client) => client?,
+        Err(_) => {
+            return Err(Error::from_reason(format!(
+                "External MCP server {server_label} timed out after {timeout_ms}ms while connecting"
+            )))
+        }
+    };
+
+    let result = tokio::time::timeout_at(deadline, client.list_all_tools()).await;
     client.close().await;
 
-    result.map(|tools| {
-        let tool_names = public_tool_names(&tools);
-        tools
-            .into_iter()
-            .map(|tool| {
-                let tool_name = tool_names
-                    .get(&tool.name)
-                    .cloned()
-                    .unwrap_or_else(|| sanitize_name(&tool.name, TOOL_NAME_MAX_LEN, "tool"));
-                to_public_tool(&config, &server_name, tool_name, tool)
-            })
-            .collect()
-    })
+    let tools = match result {
+        Ok(tools) => tools?,
+        Err(_) => {
+            return Err(Error::from_reason(format!(
+                "External MCP server {server_label} timed out after {timeout_ms}ms while listing tools"
+            )))
+        }
+    };
+
+    let tool_names = public_tool_names(&tools);
+    Ok(tools
+        .into_iter()
+        .map(|tool| {
+            let tool_name = tool_names
+                .get(&tool.name)
+                .cloned()
+                .unwrap_or_else(|| sanitize_name(&tool.name, TOOL_NAME_MAX_LEN, "tool"));
+            to_public_tool(&config, &server_name, tool_name, tool)
+        })
+        .collect())
 }
 
 fn to_public_tool(

@@ -160,8 +160,8 @@ impl McpService for BrowserService {
                         },
                         "fullPage": {
                             "type": "boolean",
-                            "description": "Capture the full scrollable page instead of only the viewport (default true).",
-                            "default": true
+                            "description": "Capture the full scrollable page instead of only the viewport (default false).",
+                            "default": false
                         }
                     }
                 }),

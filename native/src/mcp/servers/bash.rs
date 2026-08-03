@@ -334,12 +334,24 @@ impl BashService {
         if let Some(remote_working_directory) = remote_working_directory {
             let mut remote_args = args.clone();
             remote_args["workingDirectory"] = Value::String(remote_working_directory);
-            return execute_remote_workspace_command(
+            // Register a cancellation token for the remote execution so the
+            // stop button / session abort can settle the pending Electron
+            // promise immediately (mirrors the local-process registration
+            // further down). The id is streamed as a `tool_execution` chunk
+            // so the frontend can target this call for cancellation.
+            let tool_execution_id = Uuid::new_v4().to_string();
+            let cancel_token =
+                crate::api::cancel::register_tool_execution(&tool_execution_id);
+            emit_stream_chunk(&on_chunk, "tool_execution", tool_execution_id.clone());
+            let result = execute_remote_workspace_command(
                 on_remote_workspace_command,
                 "bash-terminal-execute",
                 &remote_args,
+                Some(&cancel_token),
             )
             .await;
+            crate::api::cancel::unregister_tool_execution(&tool_execution_id);
+            return result;
         }
 
         let shell_path = load_terminal_shell_path().await?;

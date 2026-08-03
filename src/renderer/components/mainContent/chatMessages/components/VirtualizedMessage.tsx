@@ -58,7 +58,11 @@ export const VirtualizedMessage = memo(
       // here: when visible the element must size to its content so the
       // ResizeObserver can measure the true height for future placeholder use.
       return (
-        <div className="virtualized-message is-visible" ref={setRef}>
+        <div
+          className="virtualized-message is-visible"
+          ref={setRef}
+          data-message-id={id}
+        >
           {children}
         </div>
       );
@@ -73,6 +77,7 @@ export const VirtualizedMessage = memo(
       <div
         className="virtualized-message is-placeholder"
         ref={setRef}
+        data-message-id={id}
         style={{ height: `${placeholderHeight}px` }}
         aria-hidden="true"
       />

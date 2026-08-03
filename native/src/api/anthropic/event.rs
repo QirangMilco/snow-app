@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use napi::bindgen_prelude::*;
 use serde_json::Value;
 
-use crate::api::common::{push_trimmed_string, read_path_i64, read_string};
+use crate::api::common::{push_trimmed_string, read_path_i64, read_string, truncate_utf8_safe};
 use crate::storage::services::chat_conversations::ChatTokenUsage;
 
 /// Process a raw SSE event block (text between two separators) for the
@@ -230,7 +230,7 @@ fn process_anthropic_event(
                                 tool_name,
                                 index,
                                 parse_err,
-                                &accumulated[..accumulated.len().min(200)]
+                                truncate_utf8_safe(&accumulated, 200)
                             ));
                         }
                     }

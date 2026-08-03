@@ -2,8 +2,12 @@ import { Minimize2 } from "lucide-react";
 import type { ChatCommand } from "./types";
 
 export const createCompactCommand = (
-  onCompactConversation: (model?: string) => void | Promise<void>,
+  onCompactConversation: (
+    model?: string,
+    apiProfile?: string
+  ) => void | Promise<void>,
   model: string | undefined,
+  apiProfile: string | undefined,
   description: string,
   disabled: boolean
 ): ChatCommand => ({
@@ -13,6 +17,6 @@ export const createCompactCommand = (
   icon: Minimize2,
   disabled,
   execute: () => {
-    void onCompactConversation(model);
+    void onCompactConversation(model, apiProfile);
   },
 });

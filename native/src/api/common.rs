@@ -141,6 +141,24 @@ pub(crate) fn push_trimmed_string(value: Option<&Value>, chunks: &mut Vec<String
     }
 }
 
+/// Truncate a string to at most `max_bytes` bytes without splitting a UTF-8
+/// character in half. Returns a slice of the original string; use `.to_string()`
+/// if an owned value is needed.
+///
+/// Slicing `&value[..value.len().min(max_bytes)]` directly panics when the cut
+/// lands inside a multi-byte character (e.g. CJK text), which can abort the
+/// whole streaming task. This helper always walks back to a char boundary.
+pub(crate) fn truncate_utf8_safe(value: &str, max_bytes: usize) -> &str {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
 /// Push reasoning/thinking text from a Chat Completions delta or message object
 /// into a chunk vector, normalising the three field shapes providers emit:
 ///

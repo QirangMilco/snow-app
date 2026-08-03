@@ -43,7 +43,6 @@ export const useConversationSession = (ctx: ConversationContextValue) => {
             messages: [],
             messageRecords: [],
             summary: "",
-            conversationType: "main",
             isStreaming: false,
             isAborting: false,
             isPaused: false,
