@@ -40,6 +40,122 @@ const MAX_READ_CHARS: usize = 120_000;
 /// 逐行剥离前缀后重试匹配。
 const LINE_PREFIX_REGEX: &str = r"^\s*\d+[\s\|:]*";
 
+/// 低价值目录（依赖/构建产物/生成物）：读取其中文件会浪费大量上下文。
+/// 与 grep 工具的 SKIP_DIRS 语义对齐，filesystem-read 默认跳过这些目录，
+/// AI 明确需要时可通过 `allowIgnored: true` 放行。
+/// 注意：`.snow` 不在此清单中——它是项目内的配置/计划目录；仅对主目录
+/// 的**直接子级** `~/.snow`（应用配置与内置文档）做拦截，见 `is_home_snow`。
+/// 匹配为大小写不敏感（有意行为：macOS/Windows 文件系统不区分大小写，
+/// Linux 上的大写变体同样拦截，allowIgnored 可放行）。
+const LOW_VALUE_DIR_COMPONENTS: &[&str] = &[
+    "node_modules", ".git", ".svn", ".hg", "target", "dist", "out",
+    "build", ".next", ".nuxt", ".cache", ".turbo", "__pycache__",
+    ".pytest_cache", ".venv", "venv", ".idea", ".vscode", "coverage",
+    ".nyc_output", "release",
+];
+
+/// 用户主目录下的依赖/包管理器缓存路径片段（任意层级组件序列匹配）。
+/// 例如 ~/go/pkg/mod 的组件序列 ["go", "pkg", "mod"]。
+const HOME_CACHE_PATH_FRAGMENTS: &[&[&str]] = &[
+    &["go", "pkg", "mod"],
+    &["go", "pkg", "sumdb"],
+    &[".cargo", "registry"],
+    &[".cargo", "git"],
+    &[".npm"],
+    &[".pnpm-store"],
+    &[".yarn"],
+    &[".bun"],
+    &[".deno"],
+    &[".gradle"],
+    &[".m2"],
+    &[".nuget"],
+];
+
+/// home 组件缓存：进程内 home 目录不变，避免每次调用重建 Vec。
+static HOME_COMPONENTS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// 判断路径是否位于低价值目录（依赖/构建产物/缓存）中，返回原因。
+/// - 任意路径组件命中 `LOW_VALUE_DIR_COMPONENTS`（大小写不敏感，覆盖
+///   macOS/Windows 大小写不敏感文件系统上的变体绕过）；
+/// - 或路径位于用户主目录下（组件级前缀比较，支持 `~` 展开）且组件序列
+///   命中 `HOME_CACHE_PATH_FRAGMENTS`。
+pub(crate) fn low_value_path_reason(path: &Path) -> Option<String> {
+    let home = dirs_next::home_dir();
+    // `~` 前缀展开为绝对路径，避免 `~/go/pkg/mod` 这类写法绕过拦截。
+    let expanded_path = if let (Some(home), Ok(rest)) = (home.as_ref(), path.strip_prefix("~")) {
+        home.join(rest)
+    } else {
+        path.to_path_buf()
+    };
+
+    let components: Vec<String> = expanded_path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        .collect();
+
+    for name in &components {
+        if LOW_VALUE_DIR_COMPONENTS.contains(&name.as_str()) {
+            return Some(format!("inside a \"{}\" directory", name));
+        }
+    }
+
+    if let Some(home) = home {
+        let home_components = HOME_COMPONENTS.get_or_init(|| {
+            home.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        });
+        // 组件级前缀比较：避免 /Users/qirang2/... 被误判为 ~/ 前缀。
+        if components.len() >= home_components.len()
+            && components[..home_components.len()] == home_components[..]
+        {
+            // 仅当 `.snow` 是 home 的**直接子级**时拦截（~/.snow 及其内容）：
+            // 保护应用配置与内置文档，同时 home 树下项目内的 `.snow`
+            // （如 ~/Documents/projects/x/.snow/plan）保持可读。
+            if components.get(home_components.len()).map(String::as_str) == Some(".snow") {
+                return Some("inside home cache directory \".snow\"".to_string());
+            }
+            for frag in HOME_CACHE_PATH_FRAGMENTS {
+                let frag_lower: Vec<String> = frag.iter().map(|f| f.to_lowercase()).collect();
+                if components.windows(frag_lower.len()).any(|w| w == frag_lower) {
+                    return Some(format!(
+                        "inside home cache directory \"{}\"",
+                        frag.join("/")
+                    ));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// 低价值路径拦截的纯逻辑（不依赖 napi，可单测）：
+/// 返回 `Some(skipped_json)` 表示命中并应返回引导提示；`None` 表示放行。
+/// 目录：整条路径任意组件命中即拦；文件：仅检查其所在目录——避免项目
+/// 根下恰好叫 build/release 等的文件被误伤，与目录列举的过滤语义对称。
+fn low_value_skip_json(path: &Path, allow_ignored: bool) -> Option<Value> {
+    if allow_ignored {
+        return None;
+    }
+    let target = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let reason = low_value_path_reason(target)?;
+    Some(json!({
+        "content": format!(
+            "Path is {}. Reading dependency/build/cache files is skipped by default to protect the context window. \
+             If you genuinely need this file (e.g. debugging a dependency), call filesystem-read again with \
+             allowIgnored=true and only read the specific file you need.",
+            reason
+        ),
+        "skipped": true,
+        "reason": reason
+    }))
+}
+
 pub struct FilesystemService;
 
 impl FilesystemService {
@@ -60,7 +176,7 @@ impl McpService for FilesystemService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "read".to_string(),
-                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Text file encoding is auto-detected (UTF-8, UTF-16/32 with BOM, GBK/GB18030, Big5, Shift_JIS, EUC-KR, windows-1252, etc.) and decoded to UTF-8. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once. Files larger than 256 KB are truncated to the first 256 KB / 120K characters with a [content truncated] marker when no startLine/endLine is given - pass startLine/endLine to page through the remaining lines.".to_string(),
+                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Text file encoding is auto-detected (UTF-8, UTF-16/32 with BOM, GBK/GB18030, Big5, Shift_JIS, EUC-KR, windows-1252, etc.) and decoded to UTF-8. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once. Files larger than 256 KB are truncated to the first 256 KB / 120K characters with a [content truncated] marker when no startLine/endLine is given - pass startLine/endLine to page through the remaining lines. Dependency/build/cache paths (node_modules, target, dist, ~/go/pkg/mod, ~/.cargo/registry, etc.) are skipped by default with a guidance message - do NOT read them for understanding third-party code; use grep to find usage sites in the project instead, and only pass allowIgnored=true when you genuinely need a specific dependency file (e.g. debugging).".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -75,6 +191,10 @@ impl McpService for FilesystemService {
                         "endLine": {
                             "type": "number",
                             "description": "Optional ending line number (1-indexed). Pair with startLine to page through large files and Office documents."
+                        },
+                        "allowIgnored": {
+                            "type": "boolean",
+                            "description": "Optional. Default false. Set true to allow reading files inside dependency/build/cache directories that are skipped by default (node_modules, target, dist, ~/go/pkg/mod, ~/.cargo/registry, etc.). Only use when you genuinely need a specific dependency file."
                         }
                     },
                     "required": ["filePath"]
@@ -200,8 +320,12 @@ impl FilesystemService {
 
         let start_line = args.get("startLine").and_then(|value| value.as_u64());
         let end_line = args.get("endLine").and_then(|value| value.as_u64());
+        let allow_ignored = args
+            .get("allowIgnored")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
 
-        read_path(file_path, start_line, end_line)
+        read_path(file_path, start_line, end_line, allow_ignored)
     }
 
     fn execute_replace_edit(&self, args: &Value) -> napi::Result<Value> {
@@ -923,6 +1047,7 @@ fn read_path(
     file_path: &str,
     start_line: Option<u64>,
     end_line: Option<u64>,
+    allow_ignored: bool,
 ) -> napi::Result<Value> {
     let file_path = normalize_path(file_path);
 
@@ -935,6 +1060,13 @@ fn read_path(
 
     let path = Path::new(&file_path);
 
+    // 低价值路径拦截：依赖/构建产物/缓存目录默认不读取，返回引导提示
+    // 而非文件内容（防止 node_modules、~/go/pkg/mod 等一次性撑爆上下文）。
+    // AI 明确需要时可传 allowIgnored=true 放行。
+    if let Some(skip) = low_value_skip_json(path, allow_ignored) {
+        return Ok(skip);
+    }
+
     if path.is_dir() {
         let entries = fs::read_dir(path).map_err(|error| {
             Error::new(
@@ -945,8 +1077,18 @@ fn read_path(
 
         let mut items: Vec<String> = Vec::new();
         for entry in entries.flatten() {
+            let entry_path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            let prefix = if entry.path().is_dir() { "/" } else { "" };
+            // 过滤低价值目录（依赖/构建产物/缓存），避免 AI 因看到
+            // node_modules 等条目而展开它们；allowIgnored=true 时列出
+            // 全部条目（与读取拦截的放行语义一致）。
+            if entry_path.is_dir()
+                && !allow_ignored
+                && low_value_path_reason(&entry_path).is_some()
+            {
+                continue;
+            }
+            let prefix = if entry_path.is_dir() { "/" } else { "" };
             items.push(format!("{}{}", name, prefix));
         }
         items.sort();
@@ -1199,4 +1341,103 @@ fn format_numbered_lines(
         "endLine": end,
         "truncated": truncated
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn low_value_dir_components_are_detected() {
+        assert!(low_value_path_reason(Path::new("/proj/node_modules/lodash/index.js")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/target/debug/app")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/src/.venv/bin/python")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/.git/objects/ab")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/dist/bundle.js")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/.next/cache")).is_some());
+    }
+
+    #[test]
+    fn normal_project_paths_are_allowed() {
+        assert!(low_value_path_reason(Path::new("/proj/src/main.rs")).is_none());
+        assert!(low_value_path_reason(Path::new("/proj/package.json")).is_none());
+        // 项目内自建目录名相似但不命中黑名单
+        assert!(low_value_path_reason(Path::new("/proj/build-scripts/deploy.sh")).is_none());
+        assert!(low_value_path_reason(Path::new("/proj/mod/local.go")).is_none());
+    }
+
+    #[test]
+    fn home_cache_fragments_are_detected() {
+        let home = dirs_next::home_dir().expect("home directory should resolve in tests");
+        let go_mod = home.join("go/pkg/mod/github.com/user/repo@v1.0.0/main.go");
+        assert!(low_value_path_reason(&go_mod).is_some(), "go/pkg/mod 应被拦截");
+
+        let cargo = home.join(".cargo/registry/src/index.crates.io-xxx/lib.rs");
+        assert!(low_value_path_reason(&cargo).is_some(), ".cargo/registry 应被拦截");
+
+        let npm = home.join(".npm/_cacache/content-v2/abc");
+        assert!(low_value_path_reason(&npm).is_some(), ".npm 应被拦截");
+
+        // 主目录下但非缓存路径不应误伤
+        let projects = home.join("Documents/projects/my-app/src/lib.rs");
+        assert!(low_value_path_reason(&projects).is_none());
+
+        // ~/.snow 及其内容被拦截（应用配置/内置文档保护）
+        assert!(low_value_path_reason(&home.join(".snow/config.json")).is_some(), "~/.snow 应被拦截");
+        assert!(low_value_path_reason(&home.join(".snow/docs/reference.md")).is_some(), "~/.snow/docs 应被拦截");
+        // home 树下项目内的 .snow 保持可读（B1 修复：仅 home 直接子级拦截）
+        let project_snow = home.join("Documents/projects/my-app/.snow/plan/task.md");
+        assert!(low_value_path_reason(&project_snow).is_none(), "home 树下项目 .snow 不应被拦截");
+    }
+
+    #[test]
+    fn tilde_and_case_variants_are_detected() {
+        // `~` 前缀展开后命中 home 缓存（W2 修复）
+        assert!(low_value_path_reason(Path::new("~/go/pkg/mod/github.com/x/y/main.go")).is_some());
+        assert!(low_value_path_reason(Path::new("~/.cargo/registry/src/lib.rs")).is_some());
+
+        // 大小写变体（macOS/Windows 大小写不敏感文件系统）
+        assert!(low_value_path_reason(Path::new("/proj/NODE_MODULES/lodash/index.js")).is_some());
+        assert!(low_value_path_reason(Path::new("/proj/Target/debug/app")).is_some());
+    }
+
+    #[test]
+    fn similar_home_prefix_is_not_misjudged() {
+        if let Some(home) = dirs_next::home_dir() {
+            // 组件级前缀比较：/Users/qirang2/... 不应被当作 ~/ 前缀
+            let home_str = home.to_string_lossy().to_string();
+            let similar = format!("{}2/other-user/go/pkg/mod/x.go", home_str);
+            // 仅当兄弟路径确实含缓存片段且不在 home 前缀下时，才会因组件
+            // 黑名单命中（go 不在黑名单）——期望是不拦截
+            assert!(low_value_path_reason(Path::new(&similar)).is_none());
+        }
+    }
+
+    #[test]
+    fn low_value_skip_json_blocks_and_allows() {
+        let dir = std::env::temp_dir().join(format!("snow-test-{}", std::process::id()));
+        let file = dir.join("node_modules/pkg/index.js");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "module.exports = 1;\n").unwrap();
+
+        // 默认拦截：返回 skipped 引导提示
+        let blocked = low_value_skip_json(&file, false).expect("node_modules 下应被拦截");
+        assert_eq!(blocked["skipped"], json!(true));
+        assert!(blocked["content"].as_str().unwrap().contains("skipped by default"));
+
+        // allowIgnored=true 放行（返回 None，由 read_path 正常读取）
+        assert!(low_value_skip_json(&file, true).is_none());
+
+        // 项目内同名文件（非目录）不误伤（W5 修复）
+        let build_file = dir.join("build");
+        std::fs::write(&build_file, "#! /bin/sh\necho build\n").unwrap();
+        assert!(low_value_skip_json(&build_file, false).is_none(), "同名文件不应被拦截");
+
+        // 同名目录仍拦截
+        let build_dir = dir.join("dist");
+        std::fs::create_dir_all(&build_dir).unwrap();
+        assert!(low_value_skip_json(&build_dir, false).is_some(), "同名目录应被拦截");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

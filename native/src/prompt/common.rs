@@ -281,3 +281,20 @@ pub(crate) fn get_platform_section(shell_type: &str) -> String {
          {guidance}"
     )
 }
+
+/// 文件读取纪律：约束模型避免读取依赖/构建产物/缓存目录，控制单次读取量。
+/// 与 filesystem-read 工具的低价值路径拦截（allowIgnored）配合，形成
+/// "提示层 + 工具层"双层防护，从源头防止上下文被依赖代码撑爆。
+pub(crate) fn get_file_reading_discipline_section() -> String {
+    "\n\n## File Reading Discipline\n\n\
+     - NEVER read dependency, build-output, or cache directories: `node_modules`, `target`, `dist`, \
+     `build`, `.next`, `.venv`, `__pycache__`, `.git`, `~/.cargo/registry`, `~/go/pkg/mod`, `~/.npm`, \
+     and similar. They are generated artifacts or third-party code — reading them wastes the context \
+     window, and the filesystem-read tool skips them by default with a guidance message.\n\
+     - To understand a third-party library: grep for its usage sites inside the project, or consult the \
+     official documentation. Only if you genuinely need a specific dependency file (e.g. debugging) call \
+     filesystem-read with `allowIgnored=true` and read that one file — never a whole dependency tree.\n\
+     - Read only the parts you need: page large files with startLine/endLine instead of loading them \
+     whole, and locate symbols with grep before reading a file."
+        .to_string()
+}

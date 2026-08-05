@@ -1,6 +1,6 @@
 use super::common::{
-    apply_role_override, get_current_time_info, get_platform_section,
-    get_working_directory_section, read_active_role,
+    apply_role_override, get_current_time_info, get_file_reading_discipline_section,
+    get_platform_section, get_working_directory_section, read_active_role,
 };
 use std::path::Path;
 
@@ -35,6 +35,7 @@ pub fn build_goal_mode_system_prompt(
     let working_dir_section = get_working_directory_section(working_directory);
     let platform_section = get_platform_section(shell_type);
     let budget_section = get_budget_section(token_budget);
+    let discipline_section = get_file_reading_discipline_section();
 
     // 有用户覆盖用覆盖，无覆盖用内置默认模板（解析永不失败）。
     let template = crate::storage::services::feature_prompts::resolve_feature_prompt(
@@ -45,20 +46,20 @@ pub fn build_goal_mode_system_prompt(
     match read_active_role(working_directory, remote_role_content, remote_include_global_rules) {
         // Override mode: role content replaces the entire template.
         Some((role_content, true)) => format!(
-            "{role_content}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
+            "{role_content}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
         ),
 
         // Normal mode: role content replaces the default role text.
         Some((role_content, false)) => {
             let prompt = apply_role_override(&template, &role_content);
             format!(
-                "{prompt}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
+                "{prompt}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
             )
         }
 
         // No ROLE.md found — use the goal mode template as-is.
         None => format!(
-            "{template}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
+            "{template}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}{budget_section}"
         ),
     }
 }

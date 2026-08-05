@@ -407,6 +407,12 @@ export function ApiSettingsFormFields({
               min={0}
               disabled={disabled}
             />
+            <small className="api-settings-hint-text">
+              {t("settings.apiMaxContextHint", {
+                defaultValue:
+                  "Leave empty to budget context at 128,000 tokens. Models with a larger window: set your actual max context here.",
+              })}
+            </small>
           </label>
           <label className="api-settings-field">
             <span>

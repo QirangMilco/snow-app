@@ -43,7 +43,6 @@ const SKIP_DIRS: &[&str] = &[
     "build",
     ".next",
     ".nuxt",
-    ".snow",
     ".cache",
     ".turbo",
     "__pycache__",
@@ -184,6 +183,26 @@ impl GrepService {
             .and_then(Value::as_str)
             .unwrap_or(".");
 
+        // 低价值路径拦截：与 filesystem-read 一致，显式搜索依赖/缓存目录
+        // 时返回引导提示而非搜索结果（默认搜索根 "." 不受影响——递归遍历
+        // 由 ripgrep --glob 排除与 native walker 的 SKIP_DIRS 双重防护，
+        // parse_grep_output 还会兜底过滤低价值路径的命中行）。
+        if search_path != "." {
+            if let Some(reason) = super::filesystem::low_value_path_reason(Path::new(search_path))
+            {
+                return Ok(json!({
+                    "content": format!(
+                        "Search path is {}. Searching dependency/build/cache directories is skipped by default to protect the context window. \
+                         Search the project source directory instead, or consult official documentation for third-party code. \
+                         If you genuinely need to inspect a specific dependency file, use filesystem-read with allowIgnored=true on that file.",
+                        reason
+                    ),
+                    "skipped": true,
+                    "reason": reason
+                }));
+            }
+        }
+
         let file_glob = args
             .get("fileGlob")
             .and_then(Value::as_str)
@@ -312,6 +331,13 @@ async fn run_ripgrep(
     }
 
     cmd.arg("--max-count").arg("500");
+
+    // 显式排除低价值目录（与 SKIP_DIRS 一致）：rg 默认只跳过隐藏目录并
+    // 遵循 .gitignore，对 node_modules/target/dist 等非隐藏目录必须显式
+    // 排除，否则搜索结果会混入依赖/构建产物文件。
+    for dir in SKIP_DIRS {
+        cmd.arg("--glob").arg(format!("!**/{dir}/**"));
+    }
 
     if let Some(glob) = file_glob {
         cmd.arg("--glob").arg(glob);
@@ -600,6 +626,13 @@ fn parse_grep_output(output: &str) -> Vec<Value> {
 
     for line in output.lines() {
         if let Some(parsed) = parse_grep_line(line) {
+            // 兜底防御：过滤低价值路径（依赖/构建/缓存目录）的命中行。
+            // ripgrep 的 --glob 排除与 native walker 的 SKIP_DIRS 是主防线，
+            // 这里保证任何绕过（如路径变体）都不会把依赖代码混进结果。
+            let file = parsed.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            if super::filesystem::low_value_path_reason(Path::new(file)).is_some() {
+                continue;
+            }
             matches.push(parsed);
         }
     }

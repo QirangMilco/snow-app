@@ -32,6 +32,12 @@ const OUTPUT_RESERVE_RATIO: f64 = 0.2;
 /// 每条消息的固定 token 开销（角色标记、消息分隔符等）。
 const MESSAGE_OVERHEAD_TOKENS: usize = 8;
 
+/// 未配置 max_context_tokens 时的保守默认窗口（token）。
+/// 128k 覆盖主流小窗口模型（GPT-4o 等）；更大窗口（Claude 200k、
+/// Gemini 1M 等）的用户应在 API 设置中配置 maxContextTokens 以充分利用
+/// 窗口。输入预算 = 窗口 × 80%（预留输出空间）。
+const DEFAULT_CONTEXT_TOKENS: i32 = 128_000;
+
 pub struct PreparedConversationRequest {
     pub conversation_id: String,
     pub messages: Vec<ChatContextMessage>,
@@ -193,8 +199,13 @@ pub fn prepare_context_request(
 
     // 按 max_context_tokens 预算截断历史：system prompt 与当前请求消息
     // 必须完整保留，只从最旧的历史消息开始丢弃，并预留 20% 输出空间，
-    // 防止输入超出模型上下文窗口导致请求被拒。
-    apply_context_budget(&mut messages, &current_messages, request.max_context_tokens);
+    // 防止输入超出模型上下文窗口导致请求被拒。未配置窗口时用保守默认值
+    // 兜底，避免防护在用户未填写 maxContextTokens 时完全失效。
+    let limit = request
+        .max_context_tokens
+        .filter(|limit| *limit > 0)
+        .unwrap_or(DEFAULT_CONTEXT_TOKENS);
+    apply_context_budget(&mut messages, &current_messages, Some(limit));
 
     messages.extend(current_messages.iter().cloned());
 
@@ -412,4 +423,126 @@ fn resolve_default_shell(database_path: &std::path::Path) -> String {
     }
 
     crate::exports::terminal::detect_shell_family(&shell_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn msg(role: &str, content: &str) -> ChatContextMessage {
+        ChatContextMessage {
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls_json: None,
+            tool_results_json: None,
+            thinking: None,
+            thinking_blocks_json: None,
+        }
+    }
+
+    /// system 消息：4 个 ASCII 字符 -> estimate = 4/4 + 1 = 2，+8 开销 = 10
+    fn system_msg() -> ChatContextMessage {
+        msg("system", "abcd")
+    }
+
+    /// 400 个 ASCII 字符的历史消息 -> estimate = 400/4 + 1 = 101，+8 = 109
+    fn history_msg(index: usize) -> ChatContextMessage {
+        msg("user", &format!("h{index}{}", "x".repeat(397)))
+    }
+
+    #[test]
+    fn estimate_text_tokens_ascii_cjk_mixed() {
+        // 400 ASCII -> 400/4 + 1 = 101
+        assert_eq!(estimate_text_tokens(&"a".repeat(400)), 101);
+        // 400 CJK -> 1 token/字符 + 1 下限 = 401
+        assert_eq!(estimate_text_tokens(&"汉".repeat(400)), 401);
+        // 混合：201 个非 CJK（200 ASCII + 1 空格）+ 200 CJK -> 200 + 201/4 + 1 = 251
+        assert_eq!(
+            estimate_text_tokens(&format!("{} {}", "a".repeat(200), "汉".repeat(200))),
+            251
+        );
+        // 空字符串 -> 1
+        assert_eq!(estimate_text_tokens(""), 1);
+    }
+
+    #[test]
+    fn estimate_message_tokens_includes_thinking_blocks() {
+        let base = msg("assistant", "abcd");
+        let with_thinking = ChatContextMessage {
+            thinking_blocks_json: Some("t".repeat(400).to_string()),
+            ..base
+        };
+        // 400 字符 thinking_blocks -> 101 tokens
+        assert_eq!(
+            estimate_message_tokens(&with_thinking),
+            estimate_message_tokens(&msg("assistant", "abcd")) + 101
+        );
+    }
+
+    #[test]
+    fn budget_none_or_non_positive_keeps_all() {
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2)];
+        let original_len = messages.len();
+        apply_context_budget(&mut messages, &[], None);
+        assert_eq!(messages.len(), original_len);
+
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2)];
+        apply_context_budget(&mut messages, &[], Some(0));
+        assert_eq!(messages.len(), original_len);
+
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2)];
+        apply_context_budget(&mut messages, &[], Some(-5));
+        assert_eq!(messages.len(), original_len);
+    }
+
+    #[test]
+    fn budget_plenty_keeps_everything() {
+        // 3 条历史 * 109 + system 10 = 337；limit=5000 -> input_budget=4000，足够
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2), history_msg(3)];
+        let original = messages.clone();
+        apply_context_budget(&mut messages, &[], Some(5000));
+        assert_eq!(messages.len(), original.len());
+        assert!(messages.iter().zip(&original).all(|(a, b)| a.content == b.content));
+    }
+
+    #[test]
+    fn budget_tight_drops_oldest_keeps_latest() {
+        // system 10 + 3*109 = 337 > 240（limit=300 -> input_budget=240）
+        // 从后往前：最后两条 218 <= 240，再加第一条 327 > 240 -> 丢弃第一条
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2), history_msg(3)];
+        apply_context_budget(&mut messages, &[], Some(300));
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, "abcd"); // system 保留
+        assert_eq!(messages[1].content, history_msg(2).content); // 最新两条保留
+        assert_eq!(messages[2].content, history_msg(3).content);
+    }
+
+    #[test]
+    fn budget_exhausted_keeps_system_and_latest_only() {
+        // limit=30 -> input_budget=24；任何一条历史（109）都放不下
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2), history_msg(3)];
+        apply_context_budget(&mut messages, &[], Some(30));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "abcd"); // system
+        assert_eq!(messages[1].content, history_msg(3).content); // 最新一条历史
+    }
+
+    #[test]
+    fn current_messages_consume_budget_first() {
+        // current 900 ASCII chars -> 900/4+1+8 = 234；limit=300 -> input_budget=240
+        // history_budget = 240 - 234 = 6，放不下任何历史 -> system + 最新一条
+        let current = vec![msg("user", &format!("c{}", "y".repeat(899)))];
+        let mut messages = vec![system_msg(), history_msg(1), history_msg(2)];
+        apply_context_budget(&mut messages, &current, Some(300));
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content, "abcd");
+        assert_eq!(messages[1].content, history_msg(2).content);
+    }
+
+    #[test]
+    fn system_only_short_circuits() {
+        let mut messages = vec![system_msg()];
+        apply_context_budget(&mut messages, &[], Some(1));
+        assert_eq!(messages.len(), 1);
+    }
 }

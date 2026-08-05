@@ -1,6 +1,6 @@
 use super::common::{
-    apply_role_override, get_current_time_info, get_platform_section,
-    get_working_directory_section, read_active_role,
+    apply_role_override, get_current_time_info, get_file_reading_discipline_section,
+    get_platform_section, get_working_directory_section, read_active_role,
 };
 
 /// Generate the built-in system prompt with dynamic context (current time, working directory, platform info).
@@ -30,6 +30,7 @@ pub fn build_system_prompt(
     let time_info = get_current_time_info();
     let working_dir_section = get_working_directory_section(working_directory);
     let platform_section = get_platform_section(shell_type);
+    let discipline_section = get_file_reading_discipline_section();
 
     match read_active_role(
         working_directory,
@@ -38,18 +39,18 @@ pub fn build_system_prompt(
     ) {
         // Override mode: role content replaces the entire template.
         Some((role_content, true)) => {
-            format!("{role_content}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}")
+            format!("{role_content}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}")
         }
 
         // Normal mode: role content replaces the default role text.
         Some((role_content, false)) => {
             let prompt = apply_role_override(SYSTEM_PROMPT_TEMPLATE, &role_content);
-            format!("{prompt}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}")
+            format!("{prompt}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}")
         }
 
         // No ROLE.md found — use the default template as-is.
         None => format!(
-            "{SYSTEM_PROMPT_TEMPLATE}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}"
+            "{SYSTEM_PROMPT_TEMPLATE}\n\n{discipline_section}\n\n{platform_section}\n\n{working_dir_section}\n\n{time_info}"
         ),
     }
 }

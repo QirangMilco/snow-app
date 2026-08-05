@@ -797,6 +797,7 @@ export const zhTW = {
   "settings.apiAdvancedModel": "進階模型",
   "settings.apiBasicModel": "基礎模型",
   "settings.apiMaxContext": "最大上下文（tokens）",
+  "settings.apiMaxContextHint": "留空時上下文預算按 128,000 tokens 計算；更大窗口的模型請填寫實際最大上下文",
   "settings.apiMaxTokens": "最大輸出 tokens",
   "settings.apiSetActive": "啟用配置",
   "settings.apiSupportsVision": "支援視覺",

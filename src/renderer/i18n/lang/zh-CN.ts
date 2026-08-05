@@ -801,6 +801,7 @@ export const zhCN = {
   "settings.apiAdvancedModel": "高级模型",
   "settings.apiBasicModel": "基础模型",
   "settings.apiMaxContext": "最大上下文（tokens）",
+  "settings.apiMaxContextHint": "留空时上下文预算按 128,000 tokens 计算；更大窗口的模型请填写实际最大上下文",
   "settings.apiMaxTokens": "最大输出 tokens",
   "settings.apiSetActive": "启用配置",
   "settings.apiSupportsVision": "支持视觉",

@@ -829,6 +829,7 @@ export const en = {
   "settings.apiAdvancedModel": "Advanced model",
   "settings.apiBasicModel": "Basic model",
   "settings.apiMaxContext": "Max context (tokens)",
+  "settings.apiMaxContextHint": "Leave empty to budget context at 128,000 tokens. Models with a larger window: set your actual max context here.",
   "settings.apiMaxTokens": "Max tokens",
   "settings.apiSetActive": "Enable profile",
   "settings.apiSupportsVision": "Supports vision",

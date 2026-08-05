@@ -32,6 +32,7 @@ type RemoteWorkspaceCommandArgs = {
   occurrence?: unknown;
   content?: unknown;
   overwrite?: unknown;
+  allowIgnored?: unknown;
   pattern?: unknown;
   path?: unknown;
   fileGlob?: unknown;
@@ -41,6 +42,36 @@ type RemoteWorkspaceCommandArgs = {
   command?: unknown;
   workingDirectory?: unknown;
   timeout?: unknown;
+};
+
+/**
+ * 远程低价值目录清单：与 Rust 端 LOW_VALUE_DIR_COMPONENTS 对齐。
+ * 远程 node_modules / target 等目录同样会撑爆上下文，需在 SSH 链路上拦截。
+ */
+const REMOTE_LOW_VALUE_DIRS = new Set([
+  "node_modules", ".git", ".svn", ".hg", "target", "dist", "out",
+  "build", ".next", ".nuxt", ".cache", ".turbo", "__pycache__",
+  ".pytest_cache", ".venv", "venv", ".idea", ".vscode", "coverage",
+  ".nyc_output", "release",
+]);
+
+/**
+ * 判断 ssh:// 远程路径是否位于低价值目录，返回命中的目录名（无则 null）。
+ * 只匹配 ssh:// 之后的路径部分（host 不参与匹配）；大小写精确匹配
+ * （Linux 远程主机常见；macOS 大小写不敏感远程上的变体可绕过，风险低，
+ * 与本地的大小写不敏感策略有意不一致，避免误伤 Linux 上的大写目录）。
+ */
+const remoteLowValueDir = (sshPath: string): string | null => {
+  const schemeEnd = sshPath.indexOf("://");
+  const pathStart =
+    schemeEnd >= 0 ? sshPath.indexOf("/", schemeEnd + 3) : -1;
+  const remotePart = pathStart >= 0 ? sshPath.slice(pathStart + 1) : "";
+  for (const part of remotePart.split("/")) {
+    if (REMOTE_LOW_VALUE_DIRS.has(part)) {
+      return part;
+    }
+  }
+  return null;
 };
 
 type RemoteWorkspaceSearchMatch = {
@@ -348,9 +379,7 @@ const buildRemoteGrepCommand = (
     flags.push("-i");
   }
   flags.push(
-    "--exclude-dir=.git",
-    "--exclude-dir=node_modules",
-    "--exclude-dir=target"
+    ...[...REMOTE_LOW_VALUE_DIRS].map((dir) => `--exclude-dir=${dir}`)
   );
   const glob = shellGlobExpression(fileGlob);
   const script = [
@@ -409,12 +438,25 @@ const executeFilesystemRead = async (
   return withSshSession(workspacePath, async (sessionId, remotePath) => {
     try {
       const entries = await listSshDirectory(sessionId, remotePath);
+      // 确认为目录后才做低价值拦截（与本地 is_dir 对称：名为 build 等的
+      // 文件不误拦）。allowIgnored=true 时列出全部条目。
+      if (args.allowIgnored !== true) {
+        const lowValue = remoteLowValueDir(workspacePath);
+        if (lowValue) {
+          return {
+            content: `Path is inside a "${lowValue}" directory. Reading dependency/build/cache files is skipped by default to protect the context window. If you genuinely need this file (e.g. debugging a dependency), call filesystem-read again with allowIgnored=true and only read the specific file you need.`,
+            skipped: true,
+            reason: `inside a "${lowValue}" directory`,
+          };
+        }
+      }
       return {
         content: entries
           .map((entry) => `${entry.name}${entry.isDirectory ? "/" : ""}`)
           .join("\n"),
       };
     } catch {
+      // 文件：直接读取（单文件读取由 readTextFile 的大小上限兜底）
       return readTextFile(workspacePath, startLine, endLine);
     }
   });
@@ -490,6 +532,22 @@ const executeGrepSearch = async (
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.path, "path");
   const pattern = ensureString(args.pattern, "pattern");
+
+  // 低价值路径拦截：与本地 grep-search 一致，显式搜索依赖/缓存目录时
+  // 返回引导提示（默认搜索根不受影响——远程 grep 在递归时由
+  // --exclude-dir 跳过这些目录）。
+  const rawPath = typeof args.path === "string" ? args.path : ".";
+  if (rawPath !== "." && rawPath !== "") {
+    const lowValue = remoteLowValueDir(workspacePath);
+    if (lowValue) {
+      return {
+        content: `Search path is inside a "${lowValue}" directory. Searching dependency/build/cache directories is skipped by default to protect the context window. Search the project source directory instead, or consult official documentation for third-party code. If you genuinely need to inspect a specific dependency file, use filesystem-read with allowIgnored=true on that file.`,
+        skipped: true,
+        reason: `inside a "${lowValue}" directory`,
+      };
+    }
+  }
+
   const fileGlob =
     typeof args.fileGlob === "string" && args.fileGlob.trim()
       ? args.fileGlob.trim()
