@@ -18,8 +18,10 @@ import { appendHookExecutionToMessage, runHook } from "./hookOutcome";
 import { extractFileChangeFromTool } from "./fileChangeTracking";
 import {
   PARENT_PLAN_APPROVAL_REQUIRED,
+  beginStreamMetricsIteration,
   createStreamChunkHandler,
   createStreamIdHandler,
+  resetRunStreamMetrics,
 } from "./agentLoopHelpers";
 
 // ---------------------------------------------------------------------------
@@ -104,7 +106,11 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
     };
 
     try {
-      config = await window.snow.getSubAgentConfig(agentId);
+      // 项目级子代理优先：先查当前项目（dirId）下的配置，未命中再回退全局。
+      config = dirId
+        ? ((await window.snow.getSubAgentConfig(agentId, dirId)) ??
+          (await window.snow.getSubAgentConfig(agentId)))
+        : await window.snow.getSubAgentConfig(agentId);
       if (!config) {
         return JSON.stringify({
           success: false,
@@ -184,6 +190,11 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
       if (subSessionRef) {
         subSessionRef.isSending = true;
         subSessionRef.isAbortRequested = false;
+        // Sub-agents never run Plan/Goal Mode (Rust forces both off on the
+        // sub-agent request path). Zero the inherited defaults so the ref
+        // stays truthful for any future reader.
+        subSessionRef.planMode = false;
+        subSessionRef.goalMode = false;
       }
       // Register this sub-agent on the parent session so aborting the main
       // flow can cascade the cancellation down to it (and its children).
@@ -193,6 +204,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
         parentSessionRef.childSubAgentIds.add(subConvId);
       }
       ctx.updateSessionField(subConvId, "isStreaming", true);
+      resetRunStreamMetrics(ctx, subConvId);
       // Anchor the accumulating timer start for the sub-agent session so
       // its StreamMetrics timer is independent of the parent session.
       ctx.updateSessionField(subConvId, "streamStartedAt", Date.now());
@@ -238,6 +250,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
           subAssistantMessage,
         ]);
 
+        beginStreamMetricsIteration(ctx, subConvId);
         const subStreamPromise = window.snow.createResponseStream(
           {
             messages: subMessages,
@@ -630,7 +643,10 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
               allowedTools,
               // These booleans carry only the parent conversation's Rust
               // write-gate state; they do not enable Plan Mode for the sub-agent.
-              ctx.planModeRef.current,
+              // Read from the parent session's own ref so a background parent
+              // keeps its gate even after the user switches conversations.
+              ctx.sessionsRefData.current.get(parentConversationId)?.planMode ??
+                ctx.planModeRef.current,
               planApprovedSessionKeysRef.current.has(parentConversationId)
             );
           } catch (err) {
@@ -812,11 +828,9 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
       ctx.updateSessionField(subConvId, "isAborting", false);
       ctx.removeStreamingId(subConvId);
 
-      // Persist and broadcast the terminal status immediately — before the
-      // completion hook, which may be slow — so the input box and the send
-      // guards flip as soon as the run loop has ended.
-      await window.snow.updateSubAgentSessionStatus(subConvId, "completed", "");
-
+      // Broadcast the terminal status FIRST — immediately after the flag, so
+      // the UI hides the input box as soon as possible. Persisting to the DB
+      // and running the (possibly slow) completion hook happen afterwards.
       ctx.setSubAgentSessionEvent({
         parentConversationId,
         conversationId: subConversationId,
@@ -826,6 +840,9 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
         timestamp: Date.now(),
         toolCallInteractionId,
       });
+
+      // Persist the terminal status so it survives an app restart.
+      await window.snow.updateSubAgentSessionStatus(subConvId, "completed", "");
 
       // Flush user messages queued while the sub-agent was busy (inserting
       // messages mid-run is allowed). A finished sub-agent conversation no
@@ -894,10 +911,8 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
         ctx.updateSessionField(subConversationId, "isAborting", false);
         ctx.removeStreamingId(subConversationId);
 
-        await window.snow
-          .updateSubAgentSessionStatus(subConversationId, "failed", "")
-          .catch(() => {});
-
+        // Same ordering as the success path: broadcast the failed status
+        // first so the UI hides the input box immediately.
         ctx.setSubAgentSessionEvent({
           parentConversationId,
           conversationId: subConversationId,
@@ -907,6 +922,10 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
           timestamp: Date.now(),
           toolCallInteractionId,
         });
+
+        await window.snow
+          .updateSubAgentSessionStatus(subConversationId, "failed", "")
+          .catch(() => {});
 
         // Same rationale as the success path: queued insertions must not be
         // lost when the failed sub-agent conversation becomes read-only.

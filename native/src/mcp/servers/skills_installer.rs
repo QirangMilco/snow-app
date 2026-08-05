@@ -170,8 +170,10 @@ fn load_installed_skills() -> Vec<InstalledSkillRecord> {
     }
 }
 
-fn save_installed_skills(records: &[InstalledSkillRecord]) -> napi::Result<()> {
-    let registry_path = get_registry_path();
+fn save_installed_skills_at(
+    records: &[InstalledSkillRecord],
+    registry_path: &Path,
+) -> napi::Result<()> {
     if let Some(parent) = registry_path.parent() {
         fs::create_dir_all(parent).map_err(|e| {
             Error::new(
@@ -186,27 +188,89 @@ fn save_installed_skills(records: &[InstalledSkillRecord]) -> napi::Result<()> {
             format!("Failed to serialize skill registry: {e}"),
         )
     })?;
-    fs::write(&registry_path, json).map_err(|e| {
+    let parent = registry_path.parent().ok_or_else(|| {
         Error::new(
             Status::GenericFailure,
-            format!("Failed to write skill registry: {e}"),
+            format!("Registry path has no parent: {}", registry_path.display()),
         )
     })?;
+    let file_name = registry_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("skills-registry.json");
+    let temporary = parent.join(format!(".{file_name}.snow-stage-{}", uuid::Uuid::new_v4()));
+    let backup = parent.join(format!(
+        ".{file_name}.snow-previous-{}",
+        uuid::Uuid::new_v4()
+    ));
+    if let Err(error) = fs::write(&temporary, json) {
+        let _ = fs::remove_file(&temporary);
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("Failed to write staged skill registry: {error}"),
+        ));
+    }
+
+    let had_previous = registry_path.exists();
+    if had_previous {
+        fs::rename(registry_path, &backup).map_err(|e| {
+            let _ = fs::remove_file(&temporary);
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to preserve existing skill registry: {e}"),
+            )
+        })?;
+    }
+    if let Err(error) = fs::rename(&temporary, registry_path) {
+        if had_previous {
+            if let Err(restore_error) = fs::rename(&backup, registry_path) {
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    format!(
+                        "Failed to replace skill registry: {error}. Automatic restoration failed: {restore_error}. Recovery data was kept at {}",
+                        parent.display()
+                    ),
+                ));
+            }
+        }
+        let _ = fs::remove_file(&temporary);
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("Failed to replace skill registry: {error}"),
+        ));
+    }
+    if had_previous {
+        let _ = fs::remove_file(&backup);
+    }
     Ok(())
 }
 
-fn upsert_record(record: InstalledSkillRecord) -> napi::Result<()> {
-    let mut records = load_installed_skills();
-    let idx = records.iter().position(|r| {
-        r.id == record.id && r.location == record.location
-    });
+fn save_installed_skills(records: &[InstalledSkillRecord]) -> napi::Result<()> {
+    save_installed_skills_at(records, &get_registry_path())
+}
+
+fn upsert_record_at(record: InstalledSkillRecord, registry_path: &Path) -> napi::Result<()> {
+    let mut records = if registry_path.exists() {
+        let content = fs::read_to_string(registry_path).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to read skill registry: {e}"),
+            )
+        })?;
+        serde_json::from_str::<Vec<InstalledSkillRecord>>(&content).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let idx = records
+        .iter()
+        .position(|r| r.id == record.id && r.location == record.location);
     match idx {
         Some(i) => {
             records[i] = record;
         }
         None => records.push(record),
     }
-    save_installed_skills(&records)
+    save_installed_skills_at(&records, registry_path)
 }
 
 fn remove_record(skill_id: &str, location: &str) -> napi::Result<()> {
@@ -588,6 +652,150 @@ fn remove_dir_if_exists(dir: &Path) -> napi::Result<()> {
     Ok(())
 }
 
+struct DirectoryCommit {
+    target: PathBuf,
+    staging_root: PathBuf,
+    staged: PathBuf,
+    backup: PathBuf,
+    committed: bool,
+    replaced_target: bool,
+    preserve_recovery: bool,
+}
+
+impl DirectoryCommit {
+    fn prepare(source: &Path, target: PathBuf) -> napi::Result<Self> {
+        if !source.is_dir() {
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!("Directory source does not exist: {}", source.display()),
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Skill destination has no parent: {}", target.display()),
+            )
+        })?;
+        fs::create_dir_all(parent).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to create skill destination directory: {e}"),
+            )
+        })?;
+        let target_name = target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("skill");
+        let staging_root = parent.join(format!(
+            ".{target_name}.snow-stage-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&staging_root).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to create local Skill staging directory: {e}"),
+            )
+        })?;
+        let staged = staging_root.join("new");
+        if let Err(error) = copy_dir(source, &staged) {
+            let _ = fs::remove_dir_all(&staging_root);
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!("Failed to stage Skill directory: {error}"),
+            ));
+        }
+        Ok(Self {
+            target,
+            backup: staging_root.join("previous"),
+            staged,
+            staging_root,
+            committed: false,
+            replaced_target: false,
+            preserve_recovery: false,
+        })
+    }
+
+    fn restore_previous(&mut self) -> std::io::Result<()> {
+        if self.replaced_target && self.backup.exists() {
+            fs::rename(&self.backup, &self.target)?;
+        }
+        Ok(())
+    }
+
+    fn commit(&mut self) -> napi::Result<()> {
+        if self.committed {
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Skill directory transaction is already committed: {}",
+                    self.target.display()
+                ),
+            ));
+        }
+        if self.target.exists() {
+            fs::rename(&self.target, &self.backup).map_err(|e| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Failed to preserve existing Skill directory: {e}"),
+                )
+            })?;
+            self.replaced_target = true;
+        }
+        if let Err(error) = fs::rename(&self.staged, &self.target) {
+            if let Err(restore_error) = self.restore_previous() {
+                self.preserve_recovery = true;
+                return Err(Error::new(
+                    Status::GenericFailure,
+                    format!(
+                        "Failed to commit Skill directory: {error}. Automatic restoration failed: {restore_error}. Recovery data was kept at {}",
+                        self.staging_root.display()
+                    ),
+                ));
+            }
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!("Failed to commit Skill directory: {error}"),
+            ));
+        }
+        self.committed = true;
+        Ok(())
+    }
+
+    fn rollback(&mut self) -> napi::Result<()> {
+        if !self.committed {
+            return Ok(());
+        }
+        if let Err(error) = fs::remove_dir_all(&self.target) {
+            self.preserve_recovery = true;
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Failed to remove new Skill directory: {error}. Recovery data was kept at {}",
+                    self.staging_root.display()
+                ),
+            ));
+        }
+        if let Err(error) = self.restore_previous() {
+            self.preserve_recovery = true;
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Failed to restore previous Skill directory: {error}. Recovery data was kept at {}",
+                    self.staging_root.display()
+                ),
+            ));
+        }
+        self.committed = false;
+        Ok(())
+    }
+
+    fn cleanup(&self) {
+        if !self.preserve_recovery {
+            let _ = fs::remove_dir_all(&self.staging_root);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Install logic
 // ---------------------------------------------------------------------------
@@ -667,12 +875,34 @@ fn install_single_skill_from_dir(
     raw_url: &str,
     sub_dir_override: Option<&str>,
 ) -> napi::Result<SkillInstallResult> {
+    install_single_skill_from_dir_with_registry(
+        skill_source_dir,
+        parsed,
+        sha_info,
+        location,
+        project_root,
+        raw_url,
+        sub_dir_override,
+        &get_registry_path(),
+    )
+}
+
+fn install_single_skill_from_dir_with_registry(
+    skill_source_dir: &Path,
+    parsed: &ParsedGitHubUrl,
+    sha_info: &ShaInfo,
+    location: &str,
+    project_root: Option<&Path>,
+    raw_url: &str,
+    sub_dir_override: Option<&str>,
+    registry_path: &Path,
+) -> napi::Result<SkillInstallResult> {
     let metadata = read_skill_metadata(skill_source_dir);
     let skill_id = derive_skill_id(&metadata, &parsed.repo);
 
     let dest_dir = get_skill_directory(&skill_id, location, project_root);
-    remove_dir_if_exists(&dest_dir)?;
-    copy_dir(skill_source_dir, &dest_dir)?;
+    let mut directory_commit = DirectoryCommit::prepare(skill_source_dir, dest_dir.clone())?;
+    directory_commit.commit()?;
 
     let installed_at = chrono::Utc::now().to_rfc3339();
     let record = InstalledSkillRecord {
@@ -692,12 +922,25 @@ fn install_single_skill_from_dir(
             owner: parsed.owner.clone(),
             repo: parsed.repo.clone(),
             r#ref: parsed.r#ref.clone(),
-            sub_dir: sub_dir_override.map(|s| s.to_string()).or_else(|| parsed.sub_dir.clone()),
+            sub_dir: sub_dir_override
+                .map(|s| s.to_string())
+                .or_else(|| parsed.sub_dir.clone()),
         },
         installed_at: installed_at.clone(),
         commit_sha: commit_sha_opt(&sha_info.sha),
     };
-    upsert_record(record)?;
+    if let Err(error) = upsert_record_at(record, registry_path) {
+        if let Err(rollback_error) = directory_commit.rollback() {
+            directory_commit.cleanup();
+            return Err(Error::new(
+                Status::GenericFailure,
+                format!("Failed to update Skill registry: {error}. {rollback_error}"),
+            ));
+        }
+        directory_commit.cleanup();
+        return Err(error);
+    }
+    directory_commit.cleanup();
 
     Ok(SkillInstallResult {
         success: true,
@@ -960,3 +1203,4 @@ fn resolve_project_root(project_id: &str) -> napi::Result<Option<PathBuf>> {
         )?;
     Ok(project_path.map(PathBuf::from))
 }
+

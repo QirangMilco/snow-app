@@ -45,6 +45,37 @@ pub fn tool_calls_as_gemini_parts(tool_calls_json: &str) -> Vec<Value> {
         .collect()
 }
 
+/// Convert stored tool_calls_json (any provider format) into OpenAI Chat
+/// Completions `tool_calls` entries.
+///
+/// Chat Completions requires the nested shape
+/// `{"id":"...","type":"function","function":{"name":"...","arguments":"..."}}`
+/// with `arguments` serialized as a JSON string. Stored history may come
+/// from any provider — notably OpenAI Responses items
+/// (`{"type":"function_call","call_id":"...","name":"...","arguments":"..."}`),
+/// which Chat Completions endpoints reject with
+/// `unknown variant function_call, expected function` when passed through
+/// verbatim (see issue #26: switching from a Responses-model conversation
+/// to a Chat-model one). Normalizing here keeps the tool calls (including
+/// their arguments) intact across request-method switches.
+pub fn tool_calls_as_chat_completions(tool_calls_json: &str) -> Vec<Value> {
+    normalize_tool_calls(tool_calls_json)
+        .into_iter()
+        .map(|entry| {
+            let arguments = serde_json::to_string(&entry.input)
+                .unwrap_or_else(|_| "{}".to_string());
+            serde_json::json!({
+                "id": entry.id,
+                "type": "function",
+                "function": {
+                    "name": entry.name,
+                    "arguments": arguments,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Parse tool_results_json into (name, callId, result) tuples.
 pub fn parse_tool_results_json(raw: &str) -> Vec<(String, String, String)> {
     serde_json::from_str::<Vec<Value>>(raw)
@@ -175,9 +206,10 @@ fn normalize_tool_calls(tool_calls_json: &str) -> Vec<NormalizedToolCall> {
                 .to_string();
 
             // --- input ---
-            // Anthropic stores an object under "input". OpenAI Chat /
-            // Responses store a JSON string under "arguments". Gemini stores
-            // an object under "functionCall.args".
+            // Anthropic stores an object under "input". OpenAI Chat nests a
+            // JSON string under "function.arguments"; OpenAI Responses uses a
+            // top-level "arguments". Gemini stores an object under
+            // "functionCall.args".
             let input = if let Some(input_val) = call.get("input") {
                 if input_val.is_object() {
                     input_val.clone()
@@ -186,9 +218,14 @@ fn normalize_tool_calls(tool_calls_json: &str) -> Vec<NormalizedToolCall> {
                 } else {
                     serde_json::json!({})
                 }
-            } else if let Some(arguments) = call.get("arguments") {
-                // OpenAI Responses sometimes stores arguments as a parsed
-                // object; OpenAI Chat stores them as a JSON string.
+            } else if let Some(arguments) = call
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .or_else(|| call.get("arguments"))
+            {
+                // OpenAI Chat nests a JSON string under "function.arguments";
+                // OpenAI Responses uses a top-level "arguments" that is
+                // sometimes a parsed object instead of a string.
                 if arguments.is_object() {
                     arguments.clone()
                 } else if let Some(s) = arguments.as_str() {

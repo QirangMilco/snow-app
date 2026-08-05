@@ -40,10 +40,26 @@ export type FocusBrowserTabPayload = {
   instanceId: string;
 };
 
+export type OpenFilePayload = {
+  /** 完整文件路径（支持相对路径的绝对化后的路径或 ssh:// 路径） */
+  filePath: string;
+  /** tab 标题与语法高亮推断用文件名；缺省时从 filePath 提取。 */
+  fileName?: string;
+  /** 是否为远程（SSH）文件。 */
+  isSsh?: boolean;
+  /** SSH 工作区 URL，用于在右侧面板按现有凭证链路建立/复用会话。 */
+  sshWorkspacePath?: string;
+  /** 远程会话 ID（已有会话时可直接传入）。 */
+  sshSessionId?: string | null;
+  /** 需要定位到的行号（1-based）。 */
+  focusLine?: number;
+};
+
 type RightPanelEventMap = {
   "open-file-diff-preview": (payload: OpenFileDiffPreviewPayload) => void;
   "open-browser-tab": (payload: OpenBrowserTabPayload) => void;
   "focus-browser-tab": (payload: FocusBrowserTabPayload) => void;
+  "open-file": (payload: OpenFilePayload) => void;
   "request-expand": () => void;
 };
 
@@ -53,6 +69,7 @@ const listeners: {
   "open-file-diff-preview"?: Set<(payload: OpenFileDiffPreviewPayload) => void>;
   "open-browser-tab"?: Set<(payload: OpenBrowserTabPayload) => void>;
   "focus-browser-tab"?: Set<(payload: FocusBrowserTabPayload) => void>;
+  "open-file"?: Set<(payload: OpenFilePayload) => void>;
   "request-expand"?: Set<() => void>;
 } = {};
 

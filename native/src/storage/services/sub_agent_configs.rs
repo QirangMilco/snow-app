@@ -131,13 +131,15 @@ You are a versatile task execution agent with full tool access, capable of handl
 - browser-navigate: Navigate browser to an HTTP/HTTPS URL and wait for loading.
 - browser-click: Click page content using CSS selector or visible text.
 - browser-screenshot: Capture page as PNG. Returns base64 image data.
-- browser-devtools: Inspect page metadata, console messages, or open DevTools.
+- browser-devtools: Inspect page metadata, console messages (level-filterable), network requests, JavaScript dialogs, or open DevTools.
+- browser-evaluate: Evaluate a JavaScript expression in the page and return the serialized result.
+- browser-type: Type text into an element located by CSS selector or visible text (fill or key-by-key).
 
 ### TODO Tools (Task Planning)
 - todo-todo-manage: Manage session TODO list. Actions: get, add, update, delete. Use for multi-step task tracking. Mark items completed immediately after each step.
 
 ### User Interaction (Clarification)
-- user-interaction-askUserQuestion: Ask the user a concise question with multiple choice options. Use when a decision or missing detail must be clarified before continuing.
+- user-interaction-askUserQuestion: Pause and engage the user for input before continuing. Use to ask a concise question when a decision or detail needs clarification, or to wait for the user to complete a manual action you need assistance with before proceeding.
 
 ### Skills (Specialized Knowledge)
 - skills-skill-execute: Execute a skill within the main conversation. Invoke with skill id only (no arguments).
@@ -207,27 +209,33 @@ You are a versatile task execution agent with full tool access, capable of handl
 
 const DEFAULT_GENERAL_AGENT_TOOLS_JSON: &str = r#"["*"]"#;
 
-pub fn list_sub_agent_configs(database_path: &Path) -> Result<Vec<SubAgentConfigRecord>> {
+pub fn list_sub_agent_configs(
+    database_path: &Path,
+    project_id: Option<&str>,
+) -> Result<Vec<SubAgentConfigRecord>> {
     database::open_connection(database_path)
-        .and_then(|connection| query_sub_agent_configs(&connection))
+        .and_then(|connection| query_sub_agent_configs(&connection, project_id))
         .map_err(|error| database::database_error(database_path, "list sub-agent configs", error))
 }
 
 pub fn get_sub_agent_config(
     database_path: &Path,
     agent_id: &str,
+    project_id: Option<&str>,
 ) -> Result<Option<SubAgentConfigRecord>> {
     let normalized_agent_id = agent_id.trim();
     if normalized_agent_id.is_empty() {
         return Err(Error::from_reason("Sub-agent id is required"));
     }
+    let normalized_project_id = normalize_project_id(project_id);
 
     database::open_connection(database_path)
         .and_then(|connection| {
-            let mut configs = query_sub_agent_configs(&connection)?;
-            let found = configs
-                .drain(..)
-                .find(|config| config.agent_id == normalized_agent_id);
+            let mut configs = query_sub_agent_configs(&connection, None)?;
+            let found = configs.drain(..).find(|config| {
+                config.agent_id == normalized_agent_id
+                    && config.project_id == normalized_project_id
+            });
             Ok(found)
         })
         .map_err(|error| database::database_error(database_path, "get sub-agent config", error))
@@ -242,12 +250,18 @@ pub fn upsert_sub_agent_config(
         .map_err(|error| database::database_error(database_path, "upsert sub-agent config", error))
 }
 
-pub fn delete_sub_agent_config(database_path: &Path, agent_id: &str) -> Result<()> {
+pub fn delete_sub_agent_config(
+    database_path: &Path,
+    agent_id: &str,
+    project_id: Option<&str>,
+) -> Result<()> {
+    let normalized_project_id = normalize_project_id(project_id);
     database::open_connection(database_path)
         .and_then(|connection| {
             connection.execute(
-                "DELETE FROM sub_agent_configs WHERE agent_id = ?1 AND builtin = 0",
-                [agent_id],
+                "DELETE FROM sub_agent_configs
+                  WHERE agent_id = ?1 AND project_id = ?2 AND builtin = 0",
+                params![agent_id, normalized_project_id],
             )?;
             Ok(())
         })
@@ -269,10 +283,11 @@ pub fn seed_default_sub_agent_configs(database_path: &Path) -> Result<()> {
                    builtin,
                    sort_order,
                    source,
+                   project_id,
                    created_at,
                    updated_at
                  ) VALUES (
-                   ?1, 'agent_general', 'General Purpose Agent', ?2, ?3, ?4, '', 1, 0, 'builtin', datetime('now', 'localtime'), datetime('now', 'localtime')
+                   ?1, 'agent_general', 'General Purpose Agent', ?2, ?3, ?4, '', 1, 0, 'builtin', '', datetime('now', 'localtime'), datetime('now', 'localtime')
                  )",
                 params![
                     database::create_snowflake_id(),
@@ -286,10 +301,20 @@ pub fn seed_default_sub_agent_configs(database_path: &Path) -> Result<()> {
         .map_err(|error| database::database_error(database_path, "seed default sub-agent configs", error))
 }
 
+/// 规范化 project_id：None/空白 → 空字符串（全局）；否则返回去空白后的值。
+fn normalize_project_id(project_id: Option<&str>) -> String {
+    match project_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(id) => id.to_string(),
+        None => String::new(),
+    }
+}
+
 fn query_sub_agent_configs(
     connection: &Connection,
+    project_id: Option<&str>,
 ) -> rusqlite::Result<Vec<SubAgentConfigRecord>> {
-    let mut statement = connection.prepare(
+    let normalized_project_id = normalize_project_id(project_id);
+    let mut sql = String::from(
         "SELECT id,
                 agent_id,
                 name,
@@ -300,35 +325,51 @@ fn query_sub_agent_configs(
                 builtin,
                 sort_order,
                 source,
+                project_id,
                 updated_at
-           FROM sub_agent_configs
-          ORDER BY sort_order ASC, id ASC",
-    )?;
+           FROM sub_agent_configs",
+    );
+    if !normalized_project_id.is_empty() {
+        sql.push_str(" WHERE project_id = ?1");
+    }
+    sql.push_str(" ORDER BY sort_order ASC, id ASC");
 
-    let rows = statement.query_map([], |row| {
-        let builtin: i64 = row.get(7)?;
-        Ok(SubAgentConfigRecord {
-            id: row.get(0)?,
-            agent_id: row.get(1)?,
-            name: row.get(2)?,
-            description: row.get(3)?,
-            system_prompt: row.get(4)?,
-            tools_json: row.get(5)?,
-            config_profile: row.get(6)?,
-            builtin: builtin != 0,
-            sort_order: row.get(8)?,
-            source: row.get(9)?,
-            updated_at: row.get(10)?,
-        })
-    })?;
+    let mut statement = connection.prepare(&sql)?;
+    let rows = if normalized_project_id.is_empty() {
+        statement.query_map([], map_sub_agent_config_row)?
+    } else {
+        statement.query_map(params![normalized_project_id], map_sub_agent_config_row)?
+    };
 
     rows.collect()
+}
+
+fn map_sub_agent_config_row(row: &rusqlite::Row) -> rusqlite::Result<SubAgentConfigRecord> {
+    let builtin: i64 = row.get(7)?;
+    Ok(SubAgentConfigRecord {
+        id: row.get(0)?,
+        agent_id: row.get(1)?,
+        name: row.get(2)?,
+        description: row.get(3)?,
+        system_prompt: row.get(4)?,
+        tools_json: row.get(5)?,
+        config_profile: row.get(6)?,
+        builtin: builtin != 0,
+        sort_order: row.get(8)?,
+        source: row.get(9)?,
+        project_id: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
 }
 
 fn upsert_sub_agent_config_with_connection(
     connection: &Connection,
     item: &SubAgentConfigInput,
 ) -> rusqlite::Result<()> {
+    let project_id = match item.project_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        Some(id) => id.to_string(),
+        None => String::new(),
+    };
     connection.execute(
         "INSERT INTO sub_agent_configs (
            id,
@@ -341,12 +382,13 @@ fn upsert_sub_agent_config_with_connection(
            builtin,
            sort_order,
            source,
+           project_id,
            created_at,
            updated_at
          ) VALUES (
-           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now', 'localtime'), datetime('now', 'localtime')
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, datetime('now', 'localtime'), datetime('now', 'localtime')
          )
-         ON CONFLICT(agent_id) DO UPDATE SET
+         ON CONFLICT(agent_id, project_id) DO UPDATE SET
            name = excluded.name,
            description = excluded.description,
            system_prompt = excluded.system_prompt,
@@ -367,6 +409,7 @@ fn upsert_sub_agent_config_with_connection(
             item.builtin as i32,
             item.sort_order,
             item.source,
+            project_id,
         ],
     )?;
 

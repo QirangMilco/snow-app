@@ -6,7 +6,7 @@
 //! `stream` modules so that this file stays focused on orchestration.
 
 mod event;
-mod payload;
+pub(crate) mod payload;
 mod stream;
 
 use std::collections::HashMap;
@@ -181,8 +181,9 @@ async fn create_gemini_response_async(
             return Err(error);
         }
     };
-    let raw_response_json = serde_json::to_string(&streamed_response.raw_events)
-        .unwrap_or_else(|_| "[]".to_string());
+    // See chat/mod.rs: assistant raw_events are not needed for replay, so we
+    // skip serializing the full SSE chunk array to avoid DB bloat.
+    let raw_response_json = "{}";
 
     if streamed_response.status != "cancelled"
         && streamed_response.content.is_empty()

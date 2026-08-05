@@ -18,6 +18,12 @@ export type ChatInputProps = {
   draftToRestore?: string | null;
   autoSendToken?: number;
   onDraftRestored?: () => void;
+  /** 按会话持久化输入草稿（文本+图片 chip），切换会话/新建会话时
+   *  ChatInput 会卸载，草稿由调用方（ConversationContext）保存，
+   *  重新挂载后通过 getInputDraft 恢复、发送后 clearInputDraft。 */
+  saveInputDraft?: (conversationId: string | undefined, content: string) => void;
+  getInputDraft?: (conversationId: string | undefined) => string | undefined;
+  clearInputDraft?: (conversationId: string | undefined) => void;
   pendingMessages?: string[];
   onWithdrawPendingMessage?: (index: number) => string | null;
   onSendPendingMessageNow?: (index: number) => void;

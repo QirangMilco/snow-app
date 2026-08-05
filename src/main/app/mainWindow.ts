@@ -150,6 +150,13 @@ export const createWindow = (): BrowserWindow => {
     killAllPtyForWebContents(mainWindow.webContents);
   });
 
+  // 渲染进程每次主框架导航（含开发模式 Ctrl+R 刷新）后，旧页面的 PTY
+  // 监听器已随页面销毁，残留会话会持续占用 shell 进程。这里统一清理，
+  // 避免 PTY 泄漏。首次 loadURL 时会话表为空，kill 空集无副作用。
+  mainWindow.webContents.on("did-navigate", () => {
+    killAllPtyForWebContents(mainWindow.webContents);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url).catch((error) => {
       console.error("Failed to open external URL:", error);

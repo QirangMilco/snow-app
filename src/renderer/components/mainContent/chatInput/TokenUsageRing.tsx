@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../../i18n";
 import type { TokenUsage } from "../../../../preload";
 
@@ -8,7 +8,8 @@ type TokenUsageRingProps = {
   isLoading?: boolean;
 };
 
-const RING_SIZE = 18;
+// 与发送按钮 (.send-btn) 保持相同的 28x28 尺寸
+const RING_SIZE = 28;
 const STROKE_WIDTH = 2.5;
 const RADIUS = (RING_SIZE - STROKE_WIDTH) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
@@ -67,6 +68,17 @@ export const TokenUsageRing = ({
     };
   }, [tokenUsage, maxContextTokens]);
 
+  // 组件在 isLoading / !segments 分支会提前 return，导致绑定
+  // onMouseEnter/Leave 的交互 wrapper 被卸载，mouseleave 事件丢失，
+  // showTooltip 被卡在 true。当数据恢复后组件重新挂载交互分支时，
+  // tooltip 会在鼠标未悬停的情况下莫名弹出。这里在进入非交互分支前
+  // 重置状态，避免悬挂的 true 值。
+  useEffect(() => {
+    if (isLoading || !segments) {
+      setShowTooltip(false);
+    }
+  }, [isLoading, segments]);
+
   // API 配置加载期间 maxContextTokens 尚未就绪，此时用 total 作为分母
   // 会算出 ratio=1 的虚假满状态。渲染空环占位保持布局稳定，等配置
   // 加载完成后再计算并显示真实比例。
@@ -98,6 +110,7 @@ export const TokenUsageRing = ({
   }
 
   const formatTokens = (value: number): string => value.toLocaleString(locale);
+  const percent = Math.round(segments.ratio * 100);
   const tooltipContent = (
     <div className="token-usage-tooltip">
       <div className="token-usage-tooltip-row">
@@ -188,6 +201,7 @@ export const TokenUsageRing = ({
           r={RADIUS}
           fill="none"
           strokeWidth={STROKE_WIDTH}
+          strokeLinecap="butt"
           className="token-usage-ring-input"
           strokeDasharray={`${segments.inputLength} ${
             CIRCUMFERENCE - segments.inputLength
@@ -200,6 +214,7 @@ export const TokenUsageRing = ({
           r={RADIUS}
           fill="none"
           strokeWidth={STROKE_WIDTH}
+          strokeLinecap="butt"
           className="token-usage-ring-output"
           strokeDasharray={`${segments.outputLength} ${
             CIRCUMFERENCE - segments.outputLength
@@ -212,6 +227,7 @@ export const TokenUsageRing = ({
           r={RADIUS}
           fill="none"
           strokeWidth={STROKE_WIDTH}
+          strokeLinecap="butt"
           className="token-usage-ring-cache"
           strokeDasharray={`${segments.cacheLength} ${
             CIRCUMFERENCE - segments.cacheLength
@@ -219,8 +235,12 @@ export const TokenUsageRing = ({
           strokeDashoffset={-(segments.inputLength + segments.outputLength)}
         />
       </svg>
-      <span className="token-usage-ring-text">
-        {(segments.ratio * 100).toFixed(1)}%
+      <span
+        className={`token-usage-ring-text${
+          percent === 100 ? " is-compact" : ""
+        }`}
+      >
+        {percent}%
       </span>
       {showTooltip && tooltipContent}
     </div>

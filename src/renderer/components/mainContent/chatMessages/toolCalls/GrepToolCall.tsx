@@ -287,10 +287,24 @@ export const GrepToolCall = ({
                   key={`${filePath}-${groupIdx}`}
                   className="tool-call-grep-file-group"
                 >
-                  <div className="tool-call-grep-file-header" title={filePath}>
+                  <div
+                    className="tool-call-grep-file-header"
+                    title={filePath}
+                    data-path={filePath}
+                  >
                     <FileCode size={12} aria-hidden="true" />
-                    <span className="tool-call-grep-file-name">{fileName}</span>
-                    <span className="tool-call-grep-file-path">{filePath}</span>
+                    <span
+                      className="tool-call-grep-file-name"
+                      data-path={filePath}
+                    >
+                      {fileName}
+                    </span>
+                    <span
+                      className="tool-call-grep-file-path"
+                      data-path={filePath}
+                    >
+                      {filePath}
+                    </span>
                     <span className="tool-call-grep-file-count">
                       {fileMatches.length}
                     </span>
@@ -300,6 +314,8 @@ export const GrepToolCall = ({
                       <div
                         key={`${match.line}-${matchIdx}`}
                         className="tool-call-grep-match-line"
+                        data-path={filePath}
+                        data-line={match.line}
                       >
                         <span className="tool-call-grep-line-num">
                           <Hash size={9} aria-hidden="true" />

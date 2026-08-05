@@ -51,6 +51,7 @@ export const normalizeSubAgentConfig = (
   const description = toText(source.description).trim();
   const configProfile = toText(source.configProfile).trim();
   const builtin = agentId === BUILTIN_GENERAL_AGENT_ID;
+  const rawProjectId = toText(source.projectId).trim();
 
   if (!name) {
     throw new Error("Sub-agent name is required");
@@ -73,5 +74,6 @@ export const normalizeSubAgentConfig = (
     builtin,
     sortOrder: toInteger(source.sortOrder, 0),
     source: builtin ? SUB_AGENT_SOURCE_BUILTIN : SUB_AGENT_SOURCE_MANUAL,
+    projectId: rawProjectId || undefined,
   };
 };

@@ -30,7 +30,6 @@ pub(super) struct ChatCompletionStreamResult {
     pub status: String,
     pub token_usage: ChatTokenUsage,
     pub tool_calls_json: String,
-    pub raw_events: Vec<Value>,
     pub tool_parse_errors: Vec<String>,
     pub total_duration_ms: i64,
 }
@@ -88,7 +87,6 @@ pub(super) async fn collect_chat_completions_stream(
                     status: String::from("cancelled"),
                     token_usage: ChatTokenUsage::default(),
                     tool_calls_json: "[]".to_string(),
-                    raw_events: Vec::new(),
                     tool_parse_errors: Vec::new(),
                     total_duration_ms: stream_start.elapsed().as_millis() as i64,
                 });
@@ -111,7 +109,6 @@ pub(super) async fn collect_chat_completions_stream(
                         status: String::from("cancelled"),
                         token_usage: ChatTokenUsage::default(),
                         tool_calls_json: "[]".to_string(),
-                        raw_events: Vec::new(),
                         tool_parse_errors: Vec::new(),
                         total_duration_ms: stream_start.elapsed().as_millis() as i64,
                     });
@@ -495,7 +492,6 @@ pub(super) async fn collect_chat_completions_stream(
         status: response_status,
         token_usage,
         tool_calls_json,
-        raw_events,
         tool_parse_errors,
         total_duration_ms: stream_start.elapsed().as_millis() as i64,
     })

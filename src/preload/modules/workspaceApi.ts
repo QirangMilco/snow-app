@@ -1,6 +1,7 @@
-import { ipcRenderer, type IpcRendererEvent } from "electron";
+import { ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type {
   DirectoryEntry,
+  DroppedPathEntry,
   FileContentResult,
   FileSearchAgentProgress,
   FileSearchResult,
@@ -150,4 +151,28 @@ export const workspaceApi = {
     dialogTitle?: string
   ): Promise<{ path: string; isDirectory: boolean }[] | null> =>
     ipcRenderer.invoke("workspace-directories:select-files", dialogTitle),
+  /**
+   * 解析拖入编辑区的外部文件为真实磁盘路径列表。
+   *
+   * contextIsolation 下渲染进程无法直接访问 webUtils.getPathForFile，
+   * 由 preload 通过该函数将 File 对象逐一解析为绝对路径，再交由主进程
+   * 异步查询每个路径是否为目录，返回统一的结构供渲染层生成对应 chip。
+   */
+  resolveDroppedFiles: async (
+    files: File[]
+  ): Promise<DroppedPathEntry[]> => {
+    const paths = files
+      .map((file) => {
+        try {
+          return webUtils.getPathForFile(file);
+        } catch {
+          return null;
+        }
+      })
+      .filter((path): path is string => typeof path === "string" && path.length > 0);
+    if (paths.length === 0) {
+      return [];
+    }
+    return ipcRenderer.invoke("workspace-directories:resolve-dropped-paths", paths);
+  },
 };

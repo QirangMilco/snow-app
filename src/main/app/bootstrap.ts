@@ -24,6 +24,10 @@ import {
 } from "./imageProxyProtocol";
 import { applySessionProxy } from "./sessionProxy";
 import { ensureBuiltinDocs, ensureBuiltinSkills } from "./ensureBuiltinSkills";
+import {
+  initBrowserDialogHandler,
+  initBrowserNetworkRecorder,
+} from "../ipc/handlers/browserNetworkRecorder";
 
 export const bootstrapApplication = (): void => {
   // ─── Chromium 启动加速开关（必须在 whenReady 之前）─────────────────────
@@ -120,6 +124,11 @@ export const bootstrapApplication = (): void => {
     // IPC 注册放在窗口创建之后 — 渲染进程 boot-loader 阶段不需要 IPC，
     // 等 React 挂载后才会发起 invoke 调用，此时注册早已完成。
     registerIpcHandlers(native);
+
+    // 浏览器调试数据收集：网络请求记录 + JavaScript 弹窗捕获（幂等）。
+    // 需在 app ready 且 defaultSession 可用后初始化。
+    initBrowserNetworkRecorder();
+    initBrowserDialogHandler();
 
     // 渲染进程保存代理设置后通知主进程重新应用会话代理。
     ipcMain.handle("proxy-browser-settings:apply", () =>

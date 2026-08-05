@@ -87,14 +87,14 @@ impl McpService for UserInteractionService {
         vec![McpTool {
             server_id: SERVER_ID.to_string(),
             name: TOOL_NAME.to_string(),
-            description: "Ask the user one concise question when a decision or missing detail must be clarified before continuing. The interaction is always multi-select: the user may choose any combination of the provided options and may add one or more arbitrary free-text answers. Call this tool by itself, never in parallel with other tools, because subsequent work must use the user's answer."
+            description: "Pause and engage the user for input before continuing. Use this tool for two purposes: (1) ask a concise question when a decision or missing detail must be clarified before proceeding; (2) wait for the user to complete a manual action you need assistance with — for example when you need the user to perform an operation you cannot do yourself, confirm something in the real world, or verify a result you cannot check. In this case phrase the message as a wait request and let the user reply once they are done. The interaction is always multi-select: the user may choose any combination of the provided options and may add one or more arbitrary free-text answers. Call this tool by itself, never in parallel with other tools, because subsequent work must use the user's answer."
                 .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": "A concise, focused question describing the single decision that needs clarification."
+                        "description": "A concise, focused message describing either the decision that needs clarification or the manual action the user should complete before you can continue."
                     },
                     "options": {
                         "type": "array",

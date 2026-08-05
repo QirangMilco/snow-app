@@ -14,6 +14,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   GithubSkillRecord,
+  ImportResourceRecord,
+  ImportResourceReleaseDisposition,
+  ImportResourceSource,
   SkillDefinition,
   WorkspaceDirectoryRecord,
 } from "../../../preload";
@@ -21,6 +24,7 @@ import { useI18n } from "../../i18n";
 import { AutoDismissNotice } from "../AutoDismissNotice";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { GitHubLogo } from "../common/GitHubLogo";
+import { ManagedImportResourceActions } from "./importConfig/ManagedImportResourceActions";
 
 type SkillsSettingsPanelProps = {
   activeDirectory?: WorkspaceDirectoryRecord | null;
@@ -75,20 +79,28 @@ export function SkillsSettingsPanel({
   const [installUrl, setInstallUrl] = useState("");
   const [isInstalling, setIsInstalling] = useState(false);
   const [uninstallingSkillId, setUninstallingSkillId] = useState("");
+  const [releasingResourceId, setReleasingResourceId] = useState("");
   const [pendingUninstallSkill, setPendingUninstallSkill] =
     useState<SkillDefinition | null>(null);
+  const [importResources, setImportResources] = useState<ImportResourceRecord[]>([]);
+  const [pendingRelease, setPendingRelease] = useState<{
+    resource: ImportResourceRecord;
+    source: ImportResourceSource;
+    disposition: ImportResourceReleaseDisposition;
+  } | null>(null);
 
   const loadSkills = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     setError("");
 
     try {
-      const [globalSkills, effectiveSkills, githubRecords] = await Promise.all([
+      const [globalSkills, effectiveSkills, githubRecords, managedResources] = await Promise.all([
         window.snow.listAvailableSkills(),
         activeDirectory
           ? window.snow.listAvailableSkills(activeDirectory.directoryId)
           : Promise.resolve([]),
         window.snow.listGithubSkills(),
+        window.snow.listManagedImportResources(),
       ]);
       const globalSkillIds = new Set(globalSkills.map((skill) => skill.id));
       const projectSkills = effectiveSkills.filter(
@@ -100,6 +112,7 @@ export function SkillsSettingsPanel({
         project: projectSkills,
       });
       setGithubSkills(githubRecords);
+      setImportResources(managedResources);
     } catch (loadError) {
       setSkillsByScope(EMPTY_SKILLS_BY_SCOPE);
       setError(
@@ -122,6 +135,10 @@ export function SkillsSettingsPanel({
       setStatus("");
 
       try {
+        const importResource = importResources.find((resource) =>
+          resource.resourceType === "skill" &&
+          (resource.targetPath === skill.path || resource.targetId === skill.path)
+        );
         await window.snow.setSkillEnabled(
           skill.location === "project"
             ? activeDirectory?.directoryId
@@ -129,6 +146,14 @@ export function SkillsSettingsPanel({
           skill.id,
           nextEnabled
         );
+        const source = importResource?.sources[0];
+        if (importResource && source) {
+          await window.snow.releaseManagedImportResource({
+            resourceId: importResource.resourceId,
+            sourceId: source.sourceId,
+            disposition: "adopt",
+          });
+        }
         await loadSkills();
         setStatus(
           t(
@@ -154,7 +179,7 @@ export function SkillsSettingsPanel({
         setUpdatingSkillId("");
       }
     },
-    [activeDirectory?.directoryId, loadSkills, t]
+    [activeDirectory?.directoryId, importResources, loadSkills, t]
   );
 
   const handleInstall = useCallback(async (): Promise<void> => {
@@ -277,6 +302,53 @@ export function SkillsSettingsPanel({
       setUninstallingSkillId("");
     }
   }, [pendingUninstallSkill, activeDirectory?.directoryId, loadSkills, t]);
+
+  const requestRelease = useCallback(
+    (
+      resource: ImportResourceRecord,
+      source: ImportResourceSource,
+      disposition: ImportResourceReleaseDisposition
+    ): void => setPendingRelease({ resource, source, disposition }),
+    []
+  );
+
+  const confirmRelease = useCallback(async (): Promise<void> => {
+    const pending = pendingRelease;
+    if (!pending) {
+      return;
+    }
+    setPendingRelease(null);
+    setReleasingResourceId(pending.resource.resourceId);
+    setError("");
+    setStatus("");
+    try {
+      await window.snow.releaseManagedImportResource({
+        resourceId: pending.resource.resourceId,
+        sourceId: pending.source.sourceId,
+        disposition: pending.disposition,
+      });
+      await loadSkills();
+      setStatus(
+        pending.disposition === "adopt"
+          ? t("settings.importResourceKeepCopySuccess", {
+              defaultValue: "Kept the local copy and removed its import link.",
+            })
+          : t("settings.importResourceRemoveSuccess", {
+              defaultValue: "Removed the imported resource association.",
+            })
+      );
+    } catch (releaseError) {
+      setError(
+        releaseError instanceof Error
+          ? releaseError.message
+          : t("settings.importResourceRemoveError", {
+              defaultValue: "Failed to remove imported resource.",
+            })
+      );
+    } finally {
+      setReleasingResourceId("");
+    }
+  }, [loadSkills, pendingRelease, t]);
 
   useEffect(() => {
     void loadSkills();
@@ -568,6 +640,11 @@ export function SkillsSettingsPanel({
             activeSkills.map((skill) => {
               const isUpdating = updatingSkillId === skill.id;
               const isUninstalling = uninstallingSkillId === skill.id;
+              const importResource = importResources.find((resource) =>
+                resource.resourceType === "skill" &&
+                (resource.targetPath === skill.path || resource.targetId === skill.path)
+              );
+              const isReleasing = importResource?.resourceId === releasingResourceId;
               const isGithubInstalled = githubSkillIds.has(skill.id);
               const toggleLabel = skill.enabled
                 ? t("settings.skillsDisable", { defaultValue: "Disable Skill" })
@@ -596,7 +673,7 @@ export function SkillsSettingsPanel({
                         type="checkbox"
                         checked={skill.enabled}
                         onChange={() => void toggleSkillEnabled(skill)}
-                        disabled={isLoading || Boolean(updatingSkillId) || isInstalling}
+                        disabled={isLoading || Boolean(updatingSkillId) || isInstalling || Boolean(releasingResourceId)}
                         hidden
                       />
                       <span className="toggle-slider" />
@@ -665,6 +742,18 @@ export function SkillsSettingsPanel({
                         )}
                       </button>
                     )}
+                    {isReleasing && <Loader2 size={13} className="spin" />}
+                    <ManagedImportResourceActions
+                      resource={importResource}
+                      isBusy={
+                        isLoading ||
+                        Boolean(updatingSkillId) ||
+                        isInstalling ||
+                        Boolean(uninstallingSkillId) ||
+                        Boolean(releasingResourceId)
+                      }
+                      onRelease={requestRelease}
+                    />
                   </div>
                 </div>
               );
@@ -687,6 +776,30 @@ export function SkillsSettingsPanel({
         variant="danger"
         onConfirm={() => void confirmUninstall()}
         onCancel={() => setPendingUninstallSkill(null)}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingRelease)}
+        title={pendingRelease?.disposition === "adopt"
+          ? t("settings.importResourceKeepCopy", { defaultValue: "Keep local copy" })
+          : t("settings.importResourceRemove", { defaultValue: "Remove imported resource" })}
+        message={pendingRelease?.disposition === "adopt"
+          ? t("settings.importResourceKeepCopyConfirm", {
+              defaultValue: "Keep this local copy and remove its import association?",
+            })
+          : pendingRelease && pendingRelease.resource.sourceCount > 1
+            ? t("settings.importResourceUnlinkConfirm", {
+                defaultValue: "Remove this source association? Other sources will keep the resource available.",
+              })
+            : t("settings.importResourceRemoveConfirm", {
+                defaultValue: "Remove this import association and delete the Snow-managed resource?",
+              })}
+        confirmLabel={pendingRelease?.disposition === "adopt"
+          ? t("settings.importResourceKeepCopy", { defaultValue: "Keep copy" })
+          : t("settings.remove", { defaultValue: "Remove" })}
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        variant={pendingRelease?.disposition === "adopt" ? "default" : "danger"}
+        onConfirm={() => void confirmRelease()}
+        onCancel={() => setPendingRelease(null)}
       />
     </div>
   );

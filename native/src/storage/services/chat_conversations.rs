@@ -1,8 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::Utc;
 use napi::bindgen_prelude::*;
-use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
+use rusqlite::{
+    params, params_from_iter, Connection, OptionalExtension, Row, ToSql, TransactionBehavior,
+};
 
 use super::super::database;
 use super::super::{
@@ -851,6 +854,76 @@ pub fn list_sub_agent_conversations(
         })
 }
 
+/// 批量查询多个父会话的子代理会话（单条 SQL，避免 N+1 查询）。
+pub fn list_sub_agent_conversations_by_parents(
+    database_path: &Path,
+    parent_conversation_ids: &[String],
+) -> Result<HashMap<String, Vec<ChatConversationRecord>>> {
+    if parent_conversation_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            let placeholders = in_clause_placeholders(parent_conversation_ids.len());
+            let mut statement = connection.prepare(&format!(
+                "SELECT conversation.conversation_id,
+                        conversation.title,
+                        conversation.summary,
+                        conversation.last_message_preview,
+                        conversation.message_count,
+                        conversation.model,
+                        conversation.status,
+                        conversation.directory_id,
+                        conversation.forked_from_conversation_id,
+                        conversation.fork_message_count,
+                        conversation.created_at,
+                        conversation.updated_at,
+                        conversation.input_tokens,
+                        conversation.output_tokens,
+                        conversation.cache_creation_input_tokens,
+                        conversation.cache_read_input_tokens,
+                        'sub_agent',
+                        sub_agent.parent_conversation_id,
+                        sub_agent.agent_id,
+                        sub_agent.agent_name,
+                        sub_agent.run_status,
+                        sub_agent.error_message,
+                        COALESCE(conversation.total_duration_ms, 0),
+                        COALESCE(conversation.emoji, ''),
+                        COALESCE(conversation.api_profile_name, '')
+                   FROM sub_agent_sessions AS sub_agent
+                   JOIN chat_conversations AS conversation
+                     ON conversation.conversation_id = sub_agent.conversation_id
+                  WHERE sub_agent.parent_conversation_id IN ({placeholders})
+                  ORDER BY sub_agent.created_at ASC, sub_agent.id ASC"
+            ))?;
+
+            let rows = statement.query_map(
+                params_from_iter(parent_conversation_ids.iter()),
+                |row| {
+                    let parent_id = row.get::<_, String>(17)?;
+                    let record = map_chat_conversation_row(row)?;
+                    Ok((parent_id, record))
+                },
+            )?;
+
+            let mut grouped: HashMap<String, Vec<ChatConversationRecord>> = HashMap::new();
+            for row in rows {
+                let (parent_id, record) = row?;
+                grouped.entry(parent_id).or_default().push(record);
+            }
+            Ok(grouped)
+        })
+        .map_err(|error| {
+            database::database_error(
+                database_path,
+                "list sub-agent conversations by parents",
+                error,
+            )
+        })
+}
+
 pub fn create_sub_agent_session(
     database_path: &Path,
     conversation_id: &str,
@@ -1110,6 +1183,146 @@ pub fn delete_conversation(
     transaction
         .commit()
         .map_err(|error| database::database_error(database_path, "delete conversation", error))?;
+
+    Ok(())
+}
+
+/// 生成 `IN (?, ?, ...)` 子句占位符。
+fn in_clause_placeholders(count: usize) -> String {
+    std::iter::repeat("?")
+        .take(count)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 批量删除会话，语义与单条 [delete_conversation] 完全一致：
+/// 选中父会话时其直接子代理会话随级联删除，消息与 todo 一并清理。
+/// 与逐条删除相比，只打开一次数据库、使用单个事务，避免 N+1 查询。
+pub fn delete_conversations(
+    database_path: &Path,
+    conversation_ids: &[String],
+) -> Result<()> {
+    if conversation_ids.is_empty() {
+        return Ok(());
+    }
+
+    // 去重并保持传入顺序
+    let mut seen = HashSet::new();
+    let unique_ids: Vec<String> = conversation_ids
+        .iter()
+        .filter(|id| seen.insert(id.as_str()))
+        .cloned()
+        .collect();
+
+    if unique_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut connection = database::open_connection(database_path)
+        .map_err(|error| database::database_error(database_path, "delete conversations", error))?;
+
+    // 与单条删除一致：先取写锁快照，避免 WAL 下读后写升级导致 BUSY_SNAPSHOT
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| database::database_error(database_path, "delete conversations", error))?;
+
+    // 一次查出所有直接子代理会话 id（覆盖全部选中父会话）
+    let mut all_target_ids = unique_ids.clone();
+    {
+        let placeholders = in_clause_placeholders(unique_ids.len());
+        let mut statement = transaction
+            .prepare(&format!(
+                "SELECT conversation_id
+                   FROM sub_agent_sessions
+                  WHERE parent_conversation_id IN ({placeholders})"
+            ))
+            .map_err(|error| {
+                database::database_error(database_path, "list sub-agent sessions", error)
+            })?;
+        let rows = statement
+            .query_map(params_from_iter(unique_ids.iter()), |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| {
+                database::database_error(database_path, "list sub-agent sessions", error)
+            })?;
+        for child_id in rows {
+            let child_id = child_id.map_err(|error| {
+                database::database_error(database_path, "list sub-agent sessions", error)
+            })?;
+            if !all_target_ids.contains(&child_id) {
+                all_target_ids.push(child_id);
+            }
+        }
+    }
+
+    // SQLite 默认变量数上限为 999，分块执行避免超出
+    const MAX_VARIABLES: usize = 400;
+    for chunk in all_target_ids.chunks(MAX_VARIABLES) {
+        let placeholders = in_clause_placeholders(chunk.len());
+        transaction
+            .execute(
+                &format!(
+                    "DELETE FROM chat_messages WHERE conversation_id IN ({placeholders})"
+                ),
+                params_from_iter(chunk.iter()),
+            )
+            .map_err(|error| {
+                database::database_error(database_path, "delete chat messages", error)
+            })?;
+        transaction
+            .execute(
+                &format!(
+                    "DELETE FROM todo_items WHERE session_id IN ({placeholders})"
+                ),
+                params_from_iter(chunk.iter()),
+            )
+            .map_err(|error| {
+                database::database_error(database_path, "delete todo items", error)
+            })?;
+    }
+
+    // 删除子代理会话关联行：父会话被删时其子代理行一并删除
+    for chunk in unique_ids.chunks(MAX_VARIABLES) {
+        let placeholders = in_clause_placeholders(chunk.len());
+        let mut params: Vec<&dyn ToSql> = Vec::with_capacity(chunk.len() * 2);
+        for id in chunk {
+            params.push(id);
+        }
+        for id in chunk {
+            params.push(id);
+        }
+        transaction
+            .execute(
+                &format!(
+                    "DELETE FROM sub_agent_sessions
+                      WHERE parent_conversation_id IN ({placeholders})
+                         OR conversation_id IN ({placeholders})"
+                ),
+                params_from_iter(params),
+            )
+            .map_err(|error| {
+                database::database_error(database_path, "delete sub-agent sessions", error)
+            })?;
+    }
+
+    for chunk in all_target_ids.chunks(MAX_VARIABLES) {
+        let placeholders = in_clause_placeholders(chunk.len());
+        transaction
+            .execute(
+                &format!(
+                    "DELETE FROM chat_conversations WHERE conversation_id IN ({placeholders})"
+                ),
+                params_from_iter(chunk.iter()),
+            )
+            .map_err(|error| {
+                database::database_error(database_path, "delete conversation", error)
+            })?;
+    }
+
+    transaction
+        .commit()
+        .map_err(|error| database::database_error(database_path, "delete conversations", error))?;
 
     Ok(())
 }
@@ -1868,4 +2081,96 @@ fn create_chat_id(prefix: &str) -> String {
         .timestamp_nanos_opt()
         .unwrap_or_else(|| Utc::now().timestamp_micros() * 1_000);
     format!("{prefix}-{timestamp}-{}", std::process::id())
+}
+
+/// Per-conversation Plan/Goal Mode overrides. `None` means the conversation
+/// row does not exist and the caller follows the global default. Rows whose
+/// stored flags are NULL (legacy data) are read as `Some(false)` — NULL is
+/// synonymous with 0 (disabled).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ConversationModes {
+    pub plan_mode: Option<bool>,
+    pub goal_mode: Option<bool>,
+    pub goal_mode_token_budget: Option<i64>,
+}
+
+/// Read a conversation's Plan/Goal Mode overrides. Returns an all-`None`
+/// record when the conversation row does not exist.
+///
+/// Legacy compatibility: rows created before per-conversation modes existed
+/// (or before the mode columns were backfilled) carry NULL flags. NULL is
+/// read as disabled — synonymous with 0 — so old conversations open with
+/// both modes off instead of inheriting the global defaults. The token
+/// budget keeps NULL = "follow the global default budget".
+pub fn get_conversation_modes(
+    database_path: &Path,
+    conversation_id: &str,
+) -> Result<ConversationModes> {
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            connection
+                .query_row(
+                    "SELECT plan_mode, goal_mode, goal_mode_token_budget
+                       FROM chat_conversations
+                      WHERE conversation_id = ?1
+                      LIMIT 1",
+                    params![conversation_id],
+                    |row| {
+                        Ok(ConversationModes {
+                            plan_mode: Some(
+                                row.get::<_, Option<i64>>(0)?.map(|v| v != 0).unwrap_or(false),
+                            ),
+                            goal_mode: Some(
+                                row.get::<_, Option<i64>>(1)?.map(|v| v != 0).unwrap_or(false),
+                            ),
+                            goal_mode_token_budget: row.get::<_, Option<i64>>(2)?,
+                        })
+                    },
+                )
+                .optional()
+        })
+        .map(|record| record.unwrap_or_default())
+        .map_err(|error| {
+            database::database_error(database_path, "get conversation modes", error)
+        })
+}
+
+/// Upsert a conversation's Plan/Goal Mode overrides. Only the columns whose
+/// value is `Some` are updated; `None` leaves the stored override untouched.
+/// The row is created on first write (all other columns fall back to their
+/// defaults) so a mode can be recorded even before the first exchange.
+///
+/// The INSERT branch must supply `id`: SQLite evaluates NOT NULL constraints
+/// before resolving the upsert's UNIQUE conflict, so an omitted `id` aborts
+/// the statement with a NOT NULL violation even when the conversation row
+/// already exists.
+pub fn set_conversation_modes(
+    database_path: &Path,
+    conversation_id: &str,
+    plan_mode: Option<bool>,
+    goal_mode: Option<bool>,
+    goal_mode_token_budget: Option<i64>,
+) -> Result<()> {
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            connection.execute(
+                "INSERT INTO chat_conversations (
+                   id, conversation_id, plan_mode, goal_mode, goal_mode_token_budget
+                 )
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(conversation_id) DO UPDATE SET
+                   plan_mode = COALESCE(excluded.plan_mode, chat_conversations.plan_mode),
+                   goal_mode = COALESCE(excluded.goal_mode, chat_conversations.goal_mode),
+                   goal_mode_token_budget = COALESCE(excluded.goal_mode_token_budget, chat_conversations.goal_mode_token_budget)",
+                params![
+                    database::create_snowflake_id(),
+                    conversation_id,
+                    plan_mode.map(|v| if v { 1 } else { 0 }),
+                    goal_mode.map(|v| if v { 1 } else { 0 }),
+                    goal_mode_token_budget,
+                ],
+            )?;
+            Ok(())
+        })
+        .map_err(|error| database::database_error(database_path, "set conversation modes", error))
 }

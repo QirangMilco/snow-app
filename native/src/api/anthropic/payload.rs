@@ -15,7 +15,7 @@ use crate::storage::services::chat_conversations::ChatContextMessage;
 use crate::api::responses::ResponsesApiRequest;
 use crate::storage::ApiConfigRecord;
 
-const DEFAULT_MAX_TOKENS: i32 = 64000;
+pub(crate) const DEFAULT_MAX_TOKENS: i32 = 64000;
 
 /// Process-level persistent Anthropic user_id.
 ///
@@ -25,7 +25,7 @@ const DEFAULT_MAX_TOKENS: i32 = 64000;
 /// prompt-cache routing.
 static PERSISTENT_USER_ID: OnceLock<String> = OnceLock::new();
 
-fn get_persistent_user_id() -> &'static str {
+pub(crate) fn get_persistent_user_id() -> &'static str {
     PERSISTENT_USER_ID.get_or_init(|| {
         let session_id = Uuid::new_v4();
         let hash_input = format!("anthropic_user_{session_id}");
@@ -292,8 +292,6 @@ pub(super) fn build_anthropic_payload(
         "stream": true,
     });
 
-    payload["temperature"] = json!(0.7);
-
     // Build the `system` field.
     // the field exclusively (each prompt as an independent text block, with
     // cache_control on the last block). Otherwise the built-in system
@@ -323,8 +321,11 @@ pub(super) fn build_anthropic_payload(
     // Add metadata.user_id for tracking and caching (matches snow-cli behavior).
     payload["metadata"] = json!({ "user_id": get_persistent_user_id() });
 
-    if let Some(thinking) = build_anthropic_thinking(&api_config.config_json) {
+    if let Some((thinking, effort)) = build_anthropic_thinking(&api_config.config_json) {
         payload["thinking"] = thinking;
+        if let Some(effort) = effort {
+            payload["output_config"] = json!({ "effort": effort });
+        }
     }
 
     if let Some(tools) = tools {
@@ -339,6 +340,19 @@ pub(super) fn build_anthropic_payload(
     // from cache hits.  Matches snow-cli's convertToAnthropicMessages logic.
     // Skip the leading built-in prompt user message (index 0) when user
     // system prompts are present, since it already carries cache_control.
+    apply_last_user_message_cache_control(&mut payload, has_user_system_prompts);
+
+    Ok(payload)
+}
+
+/// Add `cache_control` to the last user message's last content block so
+/// Anthropic can cache the conversation prefix up to and including the last
+/// user turn. Shared by the main conversation flow and the file-search agent
+/// so both send identical parameters.
+pub(crate) fn apply_last_user_message_cache_control(
+    payload: &mut Value,
+    has_user_system_prompts: bool,
+) {
     if let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) {
         let total = messages.len();
         for index in (0..total).rev() {
@@ -381,8 +395,6 @@ pub(super) fn build_anthropic_payload(
             break;
         }
     }
-
-    Ok(payload)
 }
 
 fn normalize_anthropic_role(role: &str) -> &str {
@@ -392,7 +404,7 @@ fn normalize_anthropic_role(role: &str) -> &str {
     }
 }
 
-fn build_anthropic_thinking(config_json: &str) -> Option<Value> {
+pub(crate) fn build_anthropic_thinking(config_json: &str) -> Option<(Value, Option<String>)> {
     let parsed = serde_json::from_str::<Value>(config_json).ok()?;
     let thinking = parsed.get("snowcfg")?.get("thinking")?.as_object()?;
     let enabled = thinking
@@ -407,8 +419,8 @@ fn build_anthropic_thinking(config_json: &str) -> Option<Value> {
         .get("effort")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty() && *value != "none")?;
-    let _ = effort;
+        .filter(|value| !value.is_empty() && *value != "none")
+        .map(|value| value.to_string());
 
-    Some(json!({ "type": "adaptive" }))
+    Some((json!({ "type": "adaptive" }), effort))
 }

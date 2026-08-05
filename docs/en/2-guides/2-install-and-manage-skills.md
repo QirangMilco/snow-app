@@ -73,7 +73,7 @@ allowed_tools:
 - **Toggle**: Settings → Skills Settings → the switch in the list;
 - **Uninstall GitHub-installed skills**: Skills Settings → the Uninstall button;
 - **Uninstall manually**: delete the corresponding skill directory.
-- **Via the agent**: the agent can perform the same operations with the `skills-config` built-in service — `skills-config-list` to inspect the current state, `skills-config-setEnabled` to toggle a skill (global: rewrites the frontmatter; project: writes an app DB override), and `skills-config-installGithub` / `skills-config-uninstall` to install/uninstall (uninstall only works for GitHub-installed skills). See `3-reference/2-builtin-tools-reference.md`.
+- **Via the agent**: the agent can perform the same operations with the `config` built-in service — `config-list scope=skills` to inspect the current state, `config-set scope=skills value={enabled}` to toggle a skill (global: rewrites the frontmatter; project: writes an app DB override), and `config-set scope=skills value={url, location}` / `config-delete scope=skills` to install/uninstall (uninstall only works for GitHub-installed skills). See `3-reference/2-builtin-tools-reference.md`.
 
 ## 5. Built-in Skills
 

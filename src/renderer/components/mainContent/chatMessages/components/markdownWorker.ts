@@ -127,6 +127,73 @@ markdown.renderer.rules.table_open = (): string =>
   '<div class="table-wrapper">\n<table>\n';
 markdown.renderer.rules.table_close = (): string => "</table>\n</div>\n";
 
+/**
+ * linkify 会把 `README.md` 这类裸文本误识别为链接：`.md` 是 IANA 顶级域名
+ * （黑山共和国），`README.md` 会被转成 `http://README.md`，点击会打开
+ * 浏览器而不是右侧文件阅读器。这里把"单段 host + 文件扩展名 TLD"的伪链接
+ * 在 token 层面还原为纯文本（保留原文，不渲染成 <a>）。
+ */
+const FAKE_LINK_FILE_EXTENSIONS = new Set([
+  "md", "markdown", "txt", "log", "csv", "json", "js", "mjs", "cjs", "ts",
+  "tsx", "jsx", "css", "scss", "less", "html", "htm", "xml", "svg", "py",
+  "rb", "go", "rs", "java", "kt", "swift", "c", "h", "cpp", "cc", "hpp",
+  "cs", "php", "sh", "bash", "zsh", "yml", "yaml", "toml", "ini", "cfg",
+  "conf", "sql", "pdf", "doc", "docx", "xls", "xlsx", "zip", "tar", "gz",
+  "7z", "ai", "psd", "wasm", "map", "lock", "patch", "diff", "vue",
+  "svelte", "ttf", "woff", "woff2", "mp3", "mp4", "avi", "mov", "dmg",
+  "exe", "dll", "bat", "cmd", "ps1", "reg", "env", "npmrc", "yarnrc",
+  "editorconfig", "gitignore",
+]);
+
+const isFakeLinkUrl = (href: string): boolean => {
+  if (!/^https?:\/\//i.test(href)) {
+    return false;
+  }
+  try {
+    const url = new URL(href);
+    // 仅处理单段 host（形如 README.md、design.ai）：无子域、无路径。
+    const match = url.hostname.match(/^[^.]+\.([a-z0-9]+)$/i);
+    if (!match) {
+      return false;
+    }
+    return FAKE_LINK_FILE_EXTENSIONS.has(match[1].toLowerCase());
+  } catch {
+    return false;
+  }
+};
+
+// 在 linkify 规则之后把伪链接 token 序列拍平成单个文本 token。
+markdown.core.ruler.after("linkify", "de-linkify-fake-links", (state) => {
+  for (const blockToken of state.tokens) {
+    if (blockToken.type !== "inline" || !blockToken.children) {
+      continue;
+    }
+    const children = blockToken.children;
+    for (let i = 0; i < children.length; i += 1) {
+      const token = children[i];
+      if (token.type !== "link_open") {
+        continue;
+      }
+      const href = token.attrGet("href") ?? "";
+      if (!isFakeLinkUrl(href)) {
+        continue;
+      }
+      // 收集 link_open 到对应 link_close 之间的文本，替换为纯文本 token。
+      let end = i + 1;
+      while (end < children.length && children[end].type !== "link_close") {
+        end += 1;
+      }
+      const text = children
+        .slice(i + 1, end)
+        .map((t) => t.content ?? "")
+        .join("");
+      const textToken = new state.Token("text", "", 0);
+      textToken.content = text;
+      children.splice(i, end - i + 1, textToken);
+    }
+  }
+});
+
 // 改写外部 http(s) 图片 URL 为 img-proxy:// 协议，使其符合渲染进程的
 // CSP（img-src 允许 img-proxy: 但不允许任意 https:）。主进程通过 net.fetch
 // 代理请求并校验 scheme 与 Content-Type，保证安全性。

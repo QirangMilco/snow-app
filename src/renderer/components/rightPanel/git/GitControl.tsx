@@ -1,16 +1,20 @@
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Copy,
   Diff,
+  FolderOpen,
   GitCommitHorizontal,
   GitGraph as GitGraphIcon,
   Loader2,
   RefreshCw,
   Sparkles,
   Square,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "../../common/ConfirmDialog";
+import { ContextMenu, type ContextMenuItem } from "../../common/ContextMenu";
 import type {
   GitFileStatus,
   GitRepoInfo,
@@ -31,6 +35,8 @@ type GitControlProps = {
   onFileSelect: (file: GitFileStatus | null) => void;
   onStatusChange?: (status: GitStatusResult | null) => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
+  /** 在文件所在目录打开终端。 */
+  onOpenTerminal?: (cwd: string) => void;
 };
 
 const isSelectedKey = (section: "staged" | "unstaged", path: string) =>
@@ -43,6 +49,7 @@ export const GitControl = ({
   onFileSelect,
   onStatusChange,
   onOpenFile,
+  onOpenTerminal,
 }: GitControlProps): React.JSX.Element => {
   const { t } = useI18n();
   const { status, isLoading, error, refresh } = useGitStatus(repoPath);
@@ -69,6 +76,12 @@ export const GitControl = ({
   const [operationError, setOperationError] = useState<{
     title: string;
     message: string;
+  } | null>(null);
+  // 顶部操作区（刷新/拉取/推送等图标按钮）右键菜单：提供与按钮一致的
+  // Git 操作入口，外加仓库路径复制/文件管理器/终端快捷项。
+  const [actionsContextMenu, setActionsContextMenu] = useState<{
+    x: number;
+    y: number;
   } | null>(null);
   const lastClickedPathRef = useRef<string | null>(null);
   const lastClickedSectionRef = useRef<"staged" | "unstaged" | null>(null);
@@ -465,6 +478,89 @@ export const GitControl = ({
     setOperationError(null);
   }, []);
 
+  /** 顶部操作区（刷新/拉取/推送等图标）右键菜单。 */
+  const buildActionsMenuItems = (): ContextMenuItem[] => {
+    const busy = actionInProgress !== null;
+    const repoBase = repoPath ?? "";
+    return [
+      {
+        id: "refresh",
+        label: t("git.refresh"),
+        icon: <RefreshCw size={13} strokeWidth={1.8} />,
+        disabled: busy || isRefreshing,
+        onClick: () => {
+          setActionsContextMenu(null);
+          handleRefresh();
+        },
+      },
+      {
+        id: "pull",
+        label: t("git.pull"),
+        icon: <ArrowDownToLine size={13} strokeWidth={1.8} />,
+        disabled: busy,
+        onClick: () => {
+          setActionsContextMenu(null);
+          handlePull();
+        },
+      },
+      {
+        id: "push",
+        label: t("git.push"),
+        icon: <ArrowUpFromLine size={13} strokeWidth={1.8} />,
+        disabled: busy,
+        onClick: () => {
+          setActionsContextMenu(null);
+          handlePush();
+        },
+      },
+      {
+        id: "copy-repo-path",
+        separator: true,
+        label: t("git.copyRepoPath", {
+          defaultValue: "Copy Repository Path",
+        }),
+        icon: <Copy size={13} strokeWidth={1.8} />,
+        disabled: !repoBase,
+        onClick: () => {
+          setActionsContextMenu(null);
+          void window.snow.writeClipboardText(repoBase).catch(() => {
+            // 剪贴板写入失败时静默忽略。
+          });
+        },
+      },
+      {
+        id: "reveal-repo",
+        label: t("git.revealInExplorer", {
+          defaultValue: "Show in Explorer",
+        }),
+        icon: <FolderOpen size={13} strokeWidth={1.8} />,
+        disabled: !repoBase,
+        onClick: () => {
+          setActionsContextMenu(null);
+          void window.snow.showItemInFolder(repoBase).catch(() => {
+            // 打开文件管理器失败时静默忽略。
+          });
+        },
+      },
+      ...(onOpenTerminal
+        ? [
+            {
+              id: "open-terminal",
+              label: t("git.openInTerminal", {
+                defaultValue: "Open in Terminal",
+              }),
+              icon: <TerminalIcon size={13} strokeWidth={1.8} />,
+              disabled: !repoBase,
+              onClick: () => {
+                setActionsContextMenu(null);
+                onOpenTerminal(repoBase);
+              },
+            },
+          ]
+        : []),
+    ];
+  };
+
   const handleGenerateCommitMessage = useCallback(() => {
     if (!repoPath || isGeneratingCommitMsg) {
       return;
@@ -573,6 +669,7 @@ export const GitControl = ({
               repos={repos}
               selectedRepoPath={repoPath ?? null}
               onSelect={onRepoSelect}
+              onOpenTerminal={onOpenTerminal}
             />
           </div>
         )}
@@ -582,7 +679,13 @@ export const GitControl = ({
             currentBranch={status.currentBranch}
             onBranchChanged={handleStatusChange}
           />
-          <div className="git-control-actions">
+          <div
+            className="git-control-actions"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setActionsContextMenu({ x: e.clientX, y: e.clientY });
+            }}
+          >
             <button
               type="button"
               className="icon-btn git-action-btn"
@@ -676,6 +779,7 @@ export const GitControl = ({
             onStageAll={handleStageAll}
             onDiscard={handleDiscardRequest}
             onOpenFile={handleOpenFile}
+            onOpenTerminal={onOpenTerminal}
           />
 
           <GitFileList
@@ -688,6 +792,7 @@ export const GitControl = ({
             onStageToggle={handleStageToggle}
             onUnstageAll={handleUnstageAll}
             onOpenFile={handleOpenFile}
+            onOpenTerminal={onOpenTerminal}
           />
 
           <div className="git-commit-section">
@@ -764,6 +869,15 @@ export const GitControl = ({
         onConfirm={handleDiscardConfirm}
         onCancel={handleDiscardCancel}
       />
+
+      {actionsContextMenu && (
+        <ContextMenu
+          x={actionsContextMenu.x}
+          y={actionsContextMenu.y}
+          items={buildActionsMenuItems()}
+          onClose={() => setActionsContextMenu(null)}
+        />
+      )}
 
       <ConfirmDialog
         open={operationError !== null}

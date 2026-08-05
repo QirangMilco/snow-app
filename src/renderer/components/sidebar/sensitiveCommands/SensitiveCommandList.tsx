@@ -103,7 +103,7 @@ export function SensitiveCommandList({
                     </td>
                     <td>
                       <label
-                        className="project-sensitive-command-switch"
+                        className="toggle-switch"
                         aria-label={activeLabel}
                         title={activeLabel}
                       >
@@ -112,8 +112,9 @@ export function SensitiveCommandList({
                           checked={command.enabled}
                           onChange={() => onToggleEnabled(command)}
                           disabled={isBusy}
+                          hidden
                         />
-                        <span aria-hidden="true" />
+                        <span className="toggle-slider" />
                       </label>
                     </td>
                     <td>

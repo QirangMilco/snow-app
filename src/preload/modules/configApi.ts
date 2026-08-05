@@ -79,17 +79,23 @@ export const configApi = {
       projectId,
       serverId
     ),
-  listSubAgentConfigs: (): Promise<SubAgentConfigRecord[]> =>
-    ipcRenderer.invoke("sub-agent-configs:list"),
-  getSubAgentConfig: (agentId: string): Promise<SubAgentConfigRecord | null> =>
-    ipcRenderer.invoke("sub-agent-configs:get", agentId),
+  listSubAgentConfigs: (projectId?: string): Promise<SubAgentConfigRecord[]> =>
+    ipcRenderer.invoke("sub-agent-configs:list", projectId),
+  getSubAgentConfig: (
+    agentId: string,
+    projectId?: string
+  ): Promise<SubAgentConfigRecord | null> =>
+    ipcRenderer.invoke("sub-agent-configs:get", agentId, projectId),
   upsertSubAgentConfig: (
     projectId: string | undefined,
     item: SubAgentConfigInput
   ): Promise<SubAgentConfigRecord[]> =>
     ipcRenderer.invoke("sub-agent-configs:upsert", projectId, item),
-  deleteSubAgentConfig: (agentId: string): Promise<SubAgentConfigRecord[]> =>
-    ipcRenderer.invoke("sub-agent-configs:delete", agentId),
+  deleteSubAgentConfig: (
+    agentId: string,
+    projectId?: string
+  ): Promise<SubAgentConfigRecord[]> =>
+    ipcRenderer.invoke("sub-agent-configs:delete", agentId, projectId),
   listSensitiveCommandConfigs: (): Promise<SensitiveCommandConfigRecord[]> =>
     ipcRenderer.invoke("sensitive-command-configs:list"),
   upsertSensitiveCommandConfig: (

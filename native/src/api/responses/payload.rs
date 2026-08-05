@@ -3,55 +3,37 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use async_openai::{config::OpenAIConfig, error::OpenAIError, Client};
 use napi::bindgen_prelude::*;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Value};
 
 use crate::api::common::inject_custom_headers;
-use crate::api::config::{
-    normalize_base_url, resolve_sdk_api_base_url, DEFAULT_OPENAI_BASE_URL,
-};
+use crate::api::config::{normalize_base_url, resolve_sdk_api_base_url};
 use crate::api::conversation::parse_chat_message_content;
 use crate::storage::services::chat_conversations::ChatContextMessage;
 use crate::api::responses::ResponsesApiRequest;
 use crate::storage::ApiConfigRecord;
 
-pub(super) fn resolve_effective_base_url(api_config: &ApiConfigRecord) -> String {
+/// Resolve the full HTTP endpoint URL for a Responses API request.
+///
+/// Mirrors `resolve_chat_completions_endpoint` in the Chat module: when the
+/// configured base URL is an explicit endpoint (`base_url_mode == "endpoint"`),
+/// it is used verbatim; otherwise the SDK base URL is combined with the
+/// `/responses` suffix.
+pub(super) fn resolve_responses_endpoint(api_config: &ApiConfigRecord) -> String {
     let normalized_base_url = normalize_base_url(&api_config.base_url);
-    let base_url = if normalized_base_url == DEFAULT_OPENAI_BASE_URL {
-        DEFAULT_OPENAI_BASE_URL.to_string()
-    } else {
+    if normalized_base_url.is_empty() {
+        return normalized_base_url;
+    }
+
+    if api_config.base_url_mode == "endpoint" {
         normalized_base_url
-    };
-
-    resolve_sdk_api_base_url(&base_url, &api_config.base_url_mode)
-}
-
-pub(super) async fn build_openai_client(
-    base_url: &str,
-    api_key: &str,
-    custom_headers: &HashMap<String, String>,
-) -> Result<Client<OpenAIConfig>> {
-    let config = OpenAIConfig::new()
-        .with_api_key(api_key)
-        .with_api_base(base_url);
-    let mut default_headers = HeaderMap::new();
-
-    inject_custom_headers(
-        &mut default_headers,
-        custom_headers,
-        &["content-type", "accept-encoding"],
-    )?;
-
-    let proxy_config = crate::api::http_client::load_proxy_config().await?;
-    let builder = proxy_config
-        .apply(reqwest::Client::builder().default_headers(default_headers))?;
-    let http_client = builder
-        .build()
-        .map_err(|error| Error::from_reason(format!("Failed to create HTTP client: {}", error)))?;
-
-    Ok(Client::with_config(config).with_http_client(http_client))
+    } else {
+        format!(
+            "{}/responses",
+            resolve_sdk_api_base_url(&normalized_base_url, &api_config.base_url_mode)
+        )
+    }
 }
 
 pub(super) fn build_responses_payload(
@@ -331,8 +313,6 @@ pub(super) fn build_responses_payload(
         payload["instructions"] = json!(instructions);
     }
 
-    payload["temperature"] = json!(0.7);
-
     if let Some(max_tokens) = api_config.max_tokens {
         if max_tokens > 0 {
             payload["max_output_tokens"] = json!(max_tokens);
@@ -370,7 +350,7 @@ fn normalize_message_role(role: &str) -> &str {
     }
 }
 
-fn build_responses_reasoning(config_json: &str) -> Option<Value> {
+pub(crate) fn build_responses_reasoning(config_json: &str) -> Option<Value> {
     let parsed = serde_json::from_str::<Value>(config_json).ok()?;
     let responses_reasoning = parsed
         .get("snowcfg")?
@@ -398,12 +378,33 @@ fn build_responses_reasoning(config_json: &str) -> Option<Value> {
 }
 
 // ---------------------------------------------------------------------------
-// Stream type aliases & error helpers
+// HTTP header building
 // ---------------------------------------------------------------------------
 
-pub(super) type ResponseValueStream =
-    std::pin::Pin<Box<dyn futures::Stream<Item = std::result::Result<Value, OpenAIError>> + Send>>;
+/// Build the HTTP header map for a Responses API request.
+///
+/// Sets `Authorization: Bearer` plus user-supplied custom headers (except
+/// `authorization`, `content-type`, and `accept-encoding` which are
+/// reserved).
+pub(super) fn build_header_map(
+    api_key: &str,
+    custom_headers: &HashMap<String, String>,
+) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|error| {
+            Error::from_reason(format!("Invalid authorization header value: {}", error))
+        })?,
+    );
 
-pub(super) fn is_stream_ended_error(error: &OpenAIError) -> bool {
-    matches!(error, OpenAIError::StreamError(stream_error) if stream_error.to_string() == "Stream ended")
+    inject_custom_headers(
+        &mut headers,
+        custom_headers,
+        &["content-type", "accept-encoding", "authorization"],
+    )?;
+
+    Ok(headers)
 }

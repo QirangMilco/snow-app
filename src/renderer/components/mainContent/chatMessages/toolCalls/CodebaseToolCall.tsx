@@ -497,12 +497,19 @@ export const CodebaseToolCall = ({
                   <div
                     className="tool-call-codebase-file-header"
                     title={filePath}
+                    data-path={filePath}
                   >
                     <FileCode size={12} aria-hidden="true" />
-                    <span className="tool-call-codebase-file-name">
+                    <span
+                      className="tool-call-codebase-file-name"
+                      data-path={filePath}
+                    >
                       {fileName}
                     </span>
-                    <span className="tool-call-codebase-file-path">
+                    <span
+                      className="tool-call-codebase-file-path"
+                      data-path={filePath}
+                    >
                       {filePath}
                     </span>
                     <span className="tool-call-codebase-file-count">
@@ -514,6 +521,8 @@ export const CodebaseToolCall = ({
                       <div
                         key={`${result.chunkIndex}-${matchIdx}`}
                         className="tool-call-codebase-match-line"
+                        data-path={filePath}
+                        data-line={result.startLine}
                       >
                         <span className="tool-call-codebase-line-info">
                           <Hash size={9} aria-hidden="true" />

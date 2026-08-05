@@ -5,6 +5,7 @@ import type {
   ApiModelsConfig,
   AppLogPage,
   CodebaseSettingsInput,
+  ConversationModesResult,
   DailyUsageBreakdown,
   DetectedTerminal,
   ImportSnowCliApiConfigsResult,
@@ -94,6 +95,21 @@ export const apiConfigApi = {
     ipcRenderer.invoke("settings:get-goal-mode-token-budget"),
   setGoalModeTokenBudget: (budget: number): Promise<void> =>
     ipcRenderer.invoke("settings:set-goal-mode-token-budget", budget),
+  getConversationModes: (conversationId: string): Promise<ConversationModesResult> =>
+    ipcRenderer.invoke("settings:get-conversation-modes", conversationId),
+  setConversationModes: (
+    conversationId: string,
+    planMode: boolean | null,
+    goalMode: boolean | null,
+    goalModeTokenBudget: number | null
+  ): Promise<void> =>
+    ipcRenderer.invoke(
+      "settings:set-conversation-modes",
+      conversationId,
+      planMode,
+      goalMode,
+      goalModeTokenBudget
+    ),
   getRequestLogging: (): Promise<boolean> =>
     ipcRenderer.invoke("settings:get-request-logging"),
   setRequestLogging: (enabled: boolean): Promise<void> =>
@@ -264,4 +280,8 @@ export const apiConfigApi = {
     settings: KeyboardShortcutsSettings
   ): Promise<void> =>
     ipcRenderer.invoke("settings:set-keyboard-shortcuts", settings),
+
+  /** 把 upload 目录下的相对路径解析为 data URL（如 imagegen 参考图缩略图），失败返回 null */
+  resolveUploadImage: (relativePath: string): Promise<string | null> =>
+    ipcRenderer.invoke("images:resolve-upload-image", relativePath),
 };

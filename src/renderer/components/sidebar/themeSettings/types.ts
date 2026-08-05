@@ -24,6 +24,7 @@ export type ThemePalette = {
   accentBlue: string;
   accentBlueBg: string;
   accentBlueText: string;
+  accentColor: string;
   onSolid: string;
   selectionBg: string;
   focusRing: string;

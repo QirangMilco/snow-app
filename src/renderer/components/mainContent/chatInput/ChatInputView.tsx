@@ -59,6 +59,9 @@ import { ProjectSkillsPanel } from "./ProjectSkillsPanel";
 import { RoleEditorPanel } from "./RoleEditorPanel";
 import { StreamMetrics } from "./StreamMetrics";
 import { useChatConversationContext } from "../chatMessages";
+import { directoryIdToPath } from "../chatMessages/utils/conversationHelpers";
+import { collectConversationFileChanges } from "../chatMessages/hooks/fileChangeTracking";
+import { useConversationFileChanges } from "./useConversationFileChanges";
 import { CommandPanel, type CommandPanelHandle } from "./commands/CommandPanel";
 import { createChatCommands } from "./commands/commandRegistry";
 import { FileChangesPanel } from "./commands/FileChangesPanel";
@@ -141,14 +144,35 @@ export const ChatInputView = ({
     handleNewChat,
     messages,
     activeConversationId,
+    conversationDirectoryId,
+    conversationVersion,
+    fileChangeStats,
     streamTokenCount,
     streamElapsedMs,
     streamTtftMs,
+    baselineCheckpointId,
     streamStartedAt,
     isPaused,
     handlePause,
     handleResume,
   } = useChatConversationContext();
+  const fallbackFileChanges = useMemo(() => {
+    if (!activeConversationId) {
+      return [];
+    }
+    return collectConversationFileChanges(
+      fileChangeStats,
+      activeConversationId
+    );
+  }, [activeConversationId, fileChangeStats]);
+  const conversationWorkDir = directoryIdToPath(conversationDirectoryId);
+  const conversationFileChanges = useConversationFileChanges({
+    baselineCheckpointId,
+    workDir: conversationWorkDir,
+    messages,
+    conversationVersion,
+    fallbackChanges: fallbackFileChanges,
+  });
   const isDraggingOverRef = useRef(false);
   const [isMentionOpen, setIsMentionOpen] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
@@ -289,9 +313,9 @@ export const ChatInputView = ({
     x: number;
     y: number;
   } | null>(null);
-  const textSnippetPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
+  const textSnippetPreviewTimerRef = useRef<ReturnType<
+    typeof setTimeout
+  > | null>(null);
   const [textSnippetEditor, setTextSnippetEditor] = useState<{
     chip: HTMLElement;
     content: string;
@@ -450,6 +474,37 @@ export const ChatInputView = ({
     [handleCloseCommand, restoreContent]
   );
 
+  /**
+   * 将单个图片文件读取为 dataUrl 并插入 image chip。
+   * 粘贴与拖入外部图片共用此逻辑，保持行为一致。
+   */
+  const insertImageFromFile = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        if (!dataUrl) {
+          return;
+        }
+
+        const mimeMatch = file.type.match(/^image\/([a-z]+)$/);
+        const ext = mimeMatch ? mimeMatch[1] : "png";
+        const imageTag: ImageTag = {
+          name: `image.${ext}`,
+          dataUrl,
+        };
+
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+        }
+        insertHtmlAtSelection(createImageChipHtml(imageTag));
+        syncContent();
+      };
+      reader.readAsDataURL(file);
+    },
+    [syncContent, textareaRef]
+  );
+
   const handleMentionDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>, tag: FileTag) => {
       event.dataTransfer.setData("application/json", JSON.stringify(tag));
@@ -468,6 +523,65 @@ export const ChatInputView = ({
 
       const jsonData = event.dataTransfer.getData("application/json");
       if (!jsonData) {
+        // 从文件管理器拖入的外部文件：dataTransfer.files 携带 File 对象。
+        // contextIsolation 下渲染进程无法直接读取真实路径，由 preload 的
+        // resolveDroppedFiles 解析路径并查询是否为目录。图片文件走 image
+        // chip（读取 dataUrl），其余文件/文件夹走 file chip（携带路径）。
+        const droppedFiles = event.dataTransfer.files;
+        if (droppedFiles && droppedFiles.length > 0) {
+          const files: File[] = [];
+          for (let i = 0; i < droppedFiles.length; i++) {
+            const file = droppedFiles.item(i);
+            if (file) {
+              files.push(file);
+            }
+          }
+          if (files.length > 0) {
+            void window.snow
+              .resolveDroppedFiles(files)
+              .then((entries) => {
+                if (entries.length === 0) {
+                  return;
+                }
+                const imageFiles: File[] = [];
+                const fileTags: FileTag[] = [];
+                // entries 顺序与 files 顺序一一对应；以 File.type 优先判断
+                // 图片，路径扩展名兜底（某些系统 File.type 可能为空）。
+                entries.forEach((entry, idx) => {
+                  const matchedFile = files[idx];
+                  const isImage =
+                    !entry.isDirectory &&
+                    ((matchedFile && matchedFile.type.startsWith("image/")) ||
+                      /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(
+                        entry.path
+                      ));
+                  if (isImage && matchedFile) {
+                    imageFiles.push(matchedFile);
+                  } else {
+                    const name =
+                      entry.path.split(/[\\/]/).filter(Boolean).pop() ||
+                      entry.path;
+                    fileTags.push({
+                      path: entry.path,
+                      name,
+                      isDirectory: entry.isDirectory,
+                    });
+                  }
+                });
+                if (imageFiles.length > 0) {
+                  for (const imageFile of imageFiles) {
+                    insertImageFromFile(imageFile);
+                  }
+                }
+                if (fileTags.length > 0) {
+                  insertFileTags(fileTags);
+                }
+              })
+              .catch(() => {
+                // 解析失败时静默处理
+              });
+          }
+        }
         return;
       }
 
@@ -586,13 +700,18 @@ export const ChatInputView = ({
         // Ignore invalid drag data
       }
     },
-    [insertFileTags, syncContent, textareaRef]
+    [insertFileTags, insertImageFromFile, syncContent, textareaRef]
   );
 
   const handleDragOver = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
-      const jsonData = event.dataTransfer.types.includes("application/json");
-      if (!jsonData) {
+      const types = event.dataTransfer.types;
+      // 应用内拖拽（文件/commit/change 标签）走 application/json；
+      // 从文件管理器拖入的外部文件走 Files。两者均需 preventDefault
+      // 才能允许 drop，否则浏览器默认拒绝（显示禁止光标）。
+      const allowed =
+        types.includes("application/json") || types.includes("Files");
+      if (!allowed) {
         return;
       }
       event.preventDefault();
@@ -748,28 +867,7 @@ export const ChatInputView = ({
           if (!file) {
             continue;
           }
-
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            if (!dataUrl) {
-              return;
-            }
-
-            const mimeMatch = file.type.match(/^image\/([a-z]+)$/);
-            const ext = mimeMatch ? mimeMatch[1] : "png";
-            const imageTag: ImageTag = {
-              name: `image.${ext}`,
-              dataUrl,
-            };
-
-            if (textareaRef.current) {
-              textareaRef.current.focus();
-            }
-            insertHtmlAtSelection(createImageChipHtml(imageTag));
-            syncContent();
-          };
-          reader.readAsDataURL(file);
+          insertImageFromFile(file);
         }
         return;
       }
@@ -844,7 +942,7 @@ export const ChatInputView = ({
       syncContent();
       checkInputTriggers();
     },
-    [syncContent, checkInputTriggers, textareaRef]
+    [syncContent, insertImageFromFile, checkInputTriggers, textareaRef]
   );
 
   const handleInput = useCallback(() => {
@@ -1062,7 +1160,8 @@ export const ChatInputView = ({
         setTextSnippetEditor({
           chip,
           content: parsed.content ?? "",
-          summary: parsed.summary ?? buildTextSnippetSummary(parsed.content ?? ""),
+          summary:
+            parsed.summary ?? buildTextSnippetSummary(parsed.content ?? ""),
         });
       } catch {
         // Ignore malformed data
@@ -1224,6 +1323,7 @@ export const ChatInputView = ({
       />
       <FileChangesPanel
         open={isFileChangesOpen}
+        changesOverride={conversationFileChanges}
         onClose={() => setIsFileChangesOpen(false)}
       />
       <div className="input-content" ref={mentionAnchorRef}>
@@ -1406,14 +1506,22 @@ export const ChatInputView = ({
                 onRefreshYoloMode={onRefreshYoloMode}
                 planMode={planMode}
                 isUpdatingPlanMode={isUpdatingPlanMode}
-                onPlanModeChange={onPlanModeChange}
+                onPlanModeChange={
+                  isSubAgentConversation ? undefined : onPlanModeChange
+                }
                 onRefreshPlanMode={onRefreshPlanMode}
                 goalMode={goalMode}
                 isUpdatingGoalMode={isUpdatingGoalMode}
-                onGoalModeChange={onGoalModeChange}
+                onGoalModeChange={
+                  isSubAgentConversation ? undefined : onGoalModeChange
+                }
                 onRefreshGoalMode={onRefreshGoalMode}
                 goalModeTokenBudget={goalModeTokenBudget}
-                onGoalModeTokenBudgetChange={onGoalModeTokenBudgetChange}
+                onGoalModeTokenBudgetChange={
+                  isSubAgentConversation
+                    ? undefined
+                    : onGoalModeTokenBudgetChange
+                }
                 autoScrollEnabled={autoScrollEnabled}
                 onAutoScrollChange={onAutoScrollChange}
               />
@@ -1464,7 +1572,9 @@ export const ChatInputView = ({
                 <button
                   className={`toolbar-btn model ${
                     modelError ? "model-error" : ""
-                  }${isStreaming || isSubAgentConversation ? " is-disabled" : ""}`}
+                  }${
+                    isStreaming || isSubAgentConversation ? " is-disabled" : ""
+                  }`}
                   aria-label={labels.selectModel}
                   aria-expanded={isModelMenuOpen}
                   onClick={handleToggleModelMenu}
@@ -1883,7 +1993,7 @@ export const ChatInputView = ({
                 isLoading={isLoadingApiConfig}
               />
               <div className="input-action-buttons">
-                {isStreaming || isAborting ? (
+                {(isStreaming || isAborting) && (
                   <button
                     className={`abort-btn ${isAborting ? "is-aborting" : ""}`}
                     aria-label={
@@ -1902,8 +2012,6 @@ export const ChatInputView = ({
                       <Square size={14} fill="currentColor" />
                     )}
                   </button>
-                ) : (
-                  <span className="abort-btn-placeholder" aria-hidden="true" />
                 )}
                 <button
                   className="send-btn"

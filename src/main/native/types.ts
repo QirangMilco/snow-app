@@ -1,3 +1,29 @@
+import type {
+  ImportResourceInput,
+  ImportResourceRecord,
+  ImportResourceRelease,
+  ImportResourceReleaseInput,
+} from "../../shared/importResources";
+import type {
+  PluginInput,
+  PluginMarketplaceInput,
+  PluginMarketplaceRecord,
+  PluginRecord,
+} from "../../shared/plugins";
+
+export type {
+  ImportResourceInput,
+  ImportResourceRecord,
+  ImportResourceRelease,
+  ImportResourceReleaseInput,
+};
+export type {
+  PluginInput,
+  PluginMarketplaceInput,
+  PluginMarketplaceRecord,
+  PluginRecord,
+};
+
 export type AppStorageInfo = {
   directoryPath: string;
   databasePath: string;
@@ -165,6 +191,14 @@ export type PrivacySettings = {
   mode: string;
   api: PrivacyApiConfig;
   toolResults: PrivacyToolResultsConfig;
+};
+
+/** Per-conversation Plan/Goal Mode overrides. `null` means the conversation
+ *  has never been configured and follows the global default. */
+export type ConversationModesResult = {
+  planMode: boolean | null;
+  goalMode: boolean | null;
+  goalModeTokenBudget: number | null;
 };
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -340,10 +374,14 @@ export type SystemPromptItemInput = {
   content: string;
   isActive: boolean;
   sortOrder: number;
+  scope?: "global" | "project";
+  projectId?: string;
 };
 
-export type SystemPromptItemRecord = SystemPromptItemInput & {
+export type SystemPromptItemRecord = Omit<SystemPromptItemInput, "scope"> & {
   id: string;
+  scope: "global" | "project";
+  projectId?: string;
   updatedAt: string;
 };
 
@@ -429,6 +467,19 @@ export type McpServerConfigInput = {
   source: string;
 };
 
+export type ProjectMcpServerImportInput = {
+  projectId: string;
+  input: McpServerConfigInput;
+};
+
+export type ImportDatabaseTransactionInput = {
+  mcpServers: McpServerConfigInput[];
+  projectMcpServers: ProjectMcpServerImportInput[];
+  systemPrompts: SystemPromptItemInput[];
+  plugins: PluginInput[];
+  importResources: ImportResourceInput[];
+};
+
 export type HookScope = "global" | "project";
 
 export type HookConfigInput = {
@@ -496,11 +547,15 @@ export type SubAgentConfigInput = {
   builtin: boolean;
   sortOrder: number;
   source: string;
+  /** 项目 ID；缺省/空表示全局子代理，指定后为项目级子代理。 */
+  projectId?: string;
 };
 
 export type SubAgentConfigRecord = SubAgentConfigInput & {
   id: string;
   updatedAt: string;
+  /** 项目 ID，空字符串表示全局子代理。 */
+  projectId: string;
 };
 
 export type SensitiveCommandConfigInput = {
@@ -617,6 +672,21 @@ export type ChatMessagePage = {
   items: ChatMessageRecord[];
   total: number;
   hasMore: boolean;
+};
+
+/** 图像管理系统（生成图片图库）记录 */
+export type ImageLibraryRecord = {
+  id: string;
+  relativePath: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number | null;
+  height: number | null;
+  prompt: string;
+  model: string;
+  provider: string;
+  createdAt: string;
 };
 
 export type UserMessageSummary = {
@@ -813,6 +883,21 @@ export type BrowserCommandResponse = {
   error?: string;
 };
 
+export type TerminalCommand = {
+  operation: string;
+  argsJson: string;
+};
+
+export type TerminalCommandRequest = TerminalCommand & {
+  commandId: string;
+};
+
+export type TerminalCommandResponse = {
+  commandId: string;
+  resultJson?: string;
+  error?: string;
+};
+
 export type UserQuestionCommand = {
   question: string;
   options: string[];
@@ -941,6 +1026,15 @@ export type NativeBridge = {
   setGoalMode: (enabled: boolean) => Promise<void>;
   getGoalModeTokenBudget: () => Promise<number>;
   setGoalModeTokenBudget: (budget: number) => Promise<void>;
+  getConversationModes: (
+    conversationId: string
+  ) => Promise<ConversationModesResult>;
+  setConversationModes: (
+    conversationId: string,
+    planMode: boolean | null,
+    goalMode: boolean | null,
+    goalModeTokenBudget: number | null
+  ) => Promise<void>;
   getRequestLogging: () => Promise<boolean>;
   setRequestLogging: (enabled: boolean) => Promise<void>;
   getRequestLoggingExpiry: () => Promise<number>;
@@ -973,6 +1067,7 @@ export type NativeBridge = {
     enabled: boolean
   ) => Promise<void>;
   checkProjectHasGitignore: (projectId: string) => Promise<boolean>;
+  checkProjectIsRemote: (projectId: string) => Promise<boolean>;
   startCodebaseEmbedding: (
     projectId: string,
     sessionId: string,
@@ -1070,6 +1165,24 @@ export type NativeBridge = {
     projectId: string,
     serverId: string
   ) => Promise<void>;
+  listImportResources: () => Promise<ImportResourceRecord[]>;
+  upsertImportResources: (items: ImportResourceInput[]) => Promise<void>;
+  commitImportTransaction: (
+    input: ImportDatabaseTransactionInput
+  ) => Promise<void>;
+  releaseImportResource: (
+    input: ImportResourceReleaseInput
+  ) => Promise<ImportResourceRelease>;
+  listPlugins: () => Promise<PluginRecord[]>;
+  upsertPlugins: (items: PluginInput[]) => Promise<void>;
+  setPluginState: (
+    pluginId: string,
+    state: PluginInput["state"]
+  ) => Promise<void>;
+  deletePlugin: (pluginId: string) => Promise<void>;
+  listPluginMarketplaces: () => Promise<PluginMarketplaceRecord[]>;
+  upsertPluginMarketplace: (item: PluginMarketplaceInput) => Promise<void>;
+  deletePluginMarketplace: (marketplaceId: string) => Promise<void>;
   listHookConfigs: (
     scope: HookScope,
     projectId?: string
@@ -1081,10 +1194,13 @@ export type NativeBridge = {
     projectId?: string
   ) => Promise<void>;
   executeHooks: (input: HookExecuteInput) => Promise<HookExecuteResult>;
-  listSubAgentConfigs: () => Promise<SubAgentConfigRecord[]>;
-  getSubAgentConfig: (agentId: string) => Promise<SubAgentConfigRecord | null>;
+  listSubAgentConfigs: (projectId?: string) => Promise<SubAgentConfigRecord[]>;
+  getSubAgentConfig: (
+    agentId: string,
+    projectId?: string
+  ) => Promise<SubAgentConfigRecord | null>;
   upsertSubAgentConfig: (item: SubAgentConfigInput) => Promise<void>;
-  deleteSubAgentConfig: (agentId: string) => Promise<void>;
+  deleteSubAgentConfig: (agentId: string, projectId?: string) => Promise<void>;
   listSensitiveCommandConfigs: () => Promise<SensitiveCommandConfigRecord[]>;
   upsertSensitiveCommandConfig: (
     item: SensitiveCommandConfigInput
@@ -1136,6 +1252,9 @@ export type NativeBridge = {
   listSubAgentConversations: (
     parentConversationId: string
   ) => Promise<ChatConversationRecord[]>;
+  listSubAgentConversationsByParents: (
+    parentConversationIds: string[]
+  ) => Promise<Record<string, ChatConversationRecord[]>>;
   createSubAgentSession: (
     conversationId: string,
     parentConversationId: string,
@@ -1165,11 +1284,10 @@ export type NativeBridge = {
     profileName: string
   ) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
+  deleteConversations: (conversationIds: string[]) => Promise<void>;
   appendToolMessage: (conversationId: string, content: string) => Promise<void>;
   listChatMessages: (conversationId: string) => Promise<ChatMessageRecord[]>;
-  listUserMessages: (
-    conversationId: string
-  ) => Promise<UserMessageSummary[]>;
+  listUserMessages: (conversationId: string) => Promise<UserMessageSummary[]>;
   listChatMessagesPaginated: (
     conversationId: string,
     beforeMessageId: string,
@@ -1251,6 +1369,7 @@ export type NativeBridge = {
     onRemoteWorkspaceCommand: (
       command: RemoteWorkspaceCommand
     ) => Promise<string>,
+    onTerminalCommand: (command: TerminalCommand) => Promise<string>,
     subAgentAllowedTools: string[] | undefined,
     planMode: boolean | undefined,
     planApproved: boolean | undefined
@@ -1331,7 +1450,8 @@ export type NativeBridge = {
   ) => Promise<CheckpointFileChange[]>;
   listCheckpointDiffs: (
     checkpointId: string,
-    workDir: string
+    workDir: string,
+    includeAll?: boolean
   ) => Promise<CheckpointFileDiff[]>;
   truncateConversationFromResponse: (
     conversationId: string,
@@ -1378,4 +1498,12 @@ export type NativeBridge = {
   deleteMemo: (memoId: string) => Promise<void>;
   getMemoCountSummary: (directoryId: string) => Promise<MemoCountSummary>;
   sha256File: (filePath: string) => Promise<string>;
+  getImageLibraryRoot: () => Promise<string>;
+  getImageLibraryDir: () => Promise<string>;
+  setImageLibraryDir: (dir: string) => Promise<void>;
+  listImageLibrary: () => Promise<ImageLibraryRecord[]>;
+  readImageLibraryFile: (relativePath: string) => Promise<string | null>;
+  deleteImageLibraryImage: (id: string) => Promise<void>;
+  countConversationImages: (conversationIds: string[]) => Promise<number>;
+  deleteConversationImages: (conversationIds: string[]) => Promise<number>;
 };

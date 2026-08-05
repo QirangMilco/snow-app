@@ -1,6 +1,6 @@
 [package]
 name = "snow_native"
-version = "0.1.15"
+version = "0.1.19"
 edition = "2021"
 license = "MIT"
 
@@ -8,7 +8,6 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-async-openai = { version = "0.30.1", features = ["byot"] }
 chrono = "0.4.38"
 blake3 = "1"
 sha2 = "0.10"
@@ -17,7 +16,7 @@ dirs-next = "2.0.0"
 futures = "0.3.31"
 napi = { version = "3.2.4", default-features = false, features = ["napi4", "async"] }
 napi-derive = "3.2.4"
-reqwest = { version = "0.12.5", features = ["blocking", "json", "stream", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12.5", features = ["blocking", "json", "stream", "multipart", "gzip", "brotli", "deflate"] }
 flate2 = "1"
 tar = "0.4"
 rusqlite = { version = "0.32.1", features = ["bundled"] }
@@ -87,3 +86,4 @@ opt-level = 1
 [profile.release]
 lto = "thin"
 codegen-units = 4
+

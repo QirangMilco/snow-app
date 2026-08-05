@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -160,7 +161,7 @@ impl McpService for BashService {
         vec![McpTool {
             server_id: SERVER_ID.to_string(),
             name: "terminal-execute".to_string(),
-            description: "Execute terminal commands like npm, git, build scripts, etc. BEST PRACTICE: For file modifications, prefer filesystem tools first. Primary use cases: (1) Running build/test/lint scripts, (2) Version control operations, (3) Package management, (4) System utilities.".to_string(),
+            description: "Execute terminal commands like npm, git, build scripts, etc. BEST PRACTICE: For file modifications, prefer filesystem tools first. Primary use cases: (1) Running build/test/lint scripts, (2) Version control operations, (3) Package management, (4) System utilities.\n\nLONG-RUNNING SERVICES (dev servers, watchers, databases): pass detach:true to run the command in the background. The call returns immediately with { pid, logPath }; the service keeps running and writes its output to the log file. Monitor it by reading logPath (filesystem-read), stop it with taskkill /PID <pid> (Windows) or kill <pid> (POSIX). Do NOT run a long-running service in the foreground: it blocks until the timeout and the whole process tree is force-killed.\n\nINTERACTIVE commands (password prompts, y/n confirmations): set isInteractive:true so the command is not killed by the timeout (24h upper bound) and the UI shows an input box.\n\ntimeout: default 30000ms. When a foreground command may legitimately run longer (builds, installs), pass an explicit larger timeout. Ignored when detach:true.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -178,13 +179,15 @@ impl McpService for BashService {
                     },
                     "timeout": {
                         "type": "number",
-                        "description": "Timeout in milliseconds (default: 30000)",
-                        "default": 30000
+                        "description": "Timeout in milliseconds (default: 30000). Ignored when detach is true."
                     },
                     "isInteractive": {
                         "type": "boolean",
-                        "description": "Set to true if the command requires user input (e.g., password prompts, y/n confirmations, interactive installers). Default: false.",
-                        "default": false
+                        "description": "Set to true if the command requires user input (e.g., password prompts, y/n confirmations, interactive installers). Interactive commands bypass the timeout (24h limit) and show an input box in the UI. Default: false. Cannot be combined with detach."
+                    },
+                    "detach": {
+                        "type": "boolean",
+                        "description": "Run the command in the background and return immediately. Output is written to <workingDirectory>/.snow/logs/<name>-<timestamp>.log; the result contains { detached: true, pid, logPath, hint }. Use for long-running services: monitor via filesystem-read on logPath, stop via taskkill /PID <pid> (Windows) / kill <pid> (POSIX). Default: false. Cannot be combined with isInteractive; not supported for remote (SSH) workspaces."
                     },
                     "sessionId": {
                         "type": "string",
@@ -281,6 +284,24 @@ impl BashService {
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
+        // When detach is true the command runs in the background: the call
+        // returns immediately with { pid, logPath } and the process keeps
+        // running, writing its output to a log file under
+        // <workingDirectory>/.snow/logs/. This is the supported way to start
+        // long-running services (dev servers, watchers, databases) without
+        // blocking the agent until the timeout.
+        let detach = args
+            .get("detach")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+        if detach && is_interactive {
+            return Err(Error::new(
+                Status::InvalidArg,
+                "detach cannot be combined with isInteractive: a detached command has no stdin".to_string(),
+            ));
+        }
+
         let self_destruct = is_self_destructive_command(&command);
         if self_destruct.is_self_destructive {
             return Err(Error::new(
@@ -332,6 +353,12 @@ impl BashService {
             resolve_remote_project_workspace(project_id).await?
         };
         if let Some(remote_working_directory) = remote_working_directory {
+            if detach {
+                return Err(Error::new(
+                    Status::InvalidArg,
+                    "detach is not supported for remote (SSH) workspaces yet".to_string(),
+                ));
+            }
             let mut remote_args = args.clone();
             remote_args["workingDirectory"] = Value::String(remote_working_directory);
             // Register a cancellation token for the remote execution so the
@@ -377,11 +404,39 @@ impl BashService {
             } else {
                 Stdio::null()
             })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(!detach)
             .env("LANG", "en_US.UTF-8")
             .env("LC_ALL", "en_US.UTF-8");
+
+        // detach 模式：stdout/stderr 直接重定向到 .snow/logs/ 下的日志文件，
+        // 进程孤儿化后由子进程持有的句柄继续写入；前台模式用管道供流式
+        // 输出。kill_on_drop(!detach) 保证任务返回后 detach 进程不会被连带
+        // 终止。
+        let detach_log_path = if detach {
+            let path = create_detach_log_path(&working_directory, &command)?;
+            let log_file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .map_err(|error| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!("Failed to open detach log file {}: {error}", path.display()),
+                    )
+                })?;
+            process
+                .stdout(Stdio::from(log_file.try_clone().map_err(|error| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!("Failed to clone detach log handle: {error}"),
+                    )
+                })?))
+                .stderr(Stdio::from(log_file));
+            Some(path)
+        } else {
+            process.stdout(Stdio::piped()).stderr(Stdio::piped());
+            None
+        };
 
         // Snow platform contract: expose the current session identity and
         // workspace to child processes so Trellis scripts can track the active
@@ -417,6 +472,34 @@ impl BashService {
                 format!("Failed to spawn process: {error}"),
             )
         })?;
+
+        // detach 模式：不等待、不注册取消 token、不读取输出。拿到 PID 后
+        // 立即返回；child 在此 drop（kill_on_drop=false，进程孤儿化后继续
+        // 运行，日志句柄由子进程持有继续写入）。返回值携带 pid / logPath /
+        // hint，agent 据此监控日志与终止进程。
+        if let Some(log_path) = detach_log_path {
+            let pid = child.id().unwrap_or(0);
+            // WSL 命令的 pid 是 wsl.exe 壳进程：taskkill /PID 只会杀掉壳，
+            // WSL 实例内的 Linux 进程可能残留，需要额外给出 Linux 侧的
+            // 停止方式（pkill / wsl --terminate）。
+            let wsl_hint = if is_wsl_command(&command) {
+                " Stop the Linux-side process with `wsl -d <distro> -- pkill -f <pattern>` or `wsl --terminate <distro>`, since taskkill only kills the wsl.exe wrapper."
+            } else {
+                ""
+            };
+            return Ok(json!({
+                "detached": true,
+                "pid": pid,
+                "logPath": log_path.to_string_lossy().replace('\\', "/"),
+                "command": command,
+                "workingDirectory": working_directory,
+                "startedAt": executed_at,
+                "exitCode": null,
+                "hint": format!(
+                    "Detached process started (PID {pid}). Monitor: read the log file with filesystem-read. Stop: taskkill /PID {pid} (Windows) or kill {pid} (POSIX).{wsl_hint}"
+                )
+            }));
+        }
 
         let callback = Arc::new(on_chunk);
 
@@ -492,17 +575,22 @@ impl BashService {
             }
         };
 
-        // No further cancellation can target this execution once the
-        // process has settled (completed, timed out or killed).
-        crate::api::cancel::unregister_tool_execution(&tool_execution_id);
-
         // Clean up the interactive session after the process exits.
         if let Some(ref session_id) = interactive_session_id {
             remove_interactive_session(session_id).await;
         }
 
-        // After a kill the pipes may linger briefly; bound the wait
-        // so we never block indefinitely.
+        // Drain the output pipes with a bounded wait in every outcome so a
+        // tool call can never hang forever.
+        //
+        // On Windows a grandchild launched by the shell (e.g.
+        // `Start-Process` starting a Django dev server) inherits the shell's
+        // stdout/stderr pipe write handles. The pipe therefore never reaches
+        // EOF while that grandchild is alive, even after the shell itself has
+        // exited — an unbounded read would leave the tool call stuck in
+        // "running" and wedge the agent loop. A short safety timeout turns
+        // the drain into a bounded wait and lets the call complete with
+        // whatever was captured.
         //
         // A user-initiated cancellation returns **immediately** instead of
         // draining the pipes: the frontend has already streamed the partial
@@ -510,6 +598,12 @@ impl BashService {
         // grandchild survives and holds a pipe open) would only delay the
         // confirmation the UI shows.  The reader tasks are aborted so they
         // cannot linger in the background either.
+        //
+        // The cancellation token stays registered until the drain finishes:
+        // once the shell exits while a grandchild still holds the pipes open,
+        // this drain phase is the only part of the execution still pending,
+        // so the stop button keeps targeting the execution (even though the
+        // wait itself is bounded) instead of silently no-oping.
         let (stdout, stderr) =
             if matches!(wait_result, ProcessWaitResult::Cancelled) {
                 if let Some(task) = stdout_task {
@@ -520,18 +614,21 @@ impl BashService {
                 }
                 (String::new(), String::new())
             } else {
-                let was_killed =
-                    !matches!(wait_result, ProcessWaitResult::Completed(_));
-                let stream_timeout = if was_killed {
-                    Some(Duration::from_secs(3))
-                } else {
-                    None
-                };
+                // 无论进程是正常退出（Completed）还是被终止，排空都走有限
+                // 超时。shell 退出后孙进程（如 Start-Process 启动的常驻
+                // 服务）仍持有 stdout/stderr 管道写端时 read_stream 收不到
+                // EOF；若此处无超时，工具调用会永远停留在 running，卡死
+                // agent 循环。
+                let stream_timeout = Some(Duration::from_secs(3));
                 (
                     await_stream_task(stdout_task, stream_timeout).await,
                     await_stream_task(stderr_task, stream_timeout).await,
                 )
             };
+
+        // No further cancellation can target this execution once the
+        // process has settled and the pipe drain has finished.
+        crate::api::cancel::unregister_tool_execution(&tool_execution_id);
 
         match wait_result {
             ProcessWaitResult::Completed(exit_code) => Ok(json!({
@@ -574,15 +671,90 @@ async fn await_stream_task(
     safety_timeout: Option<Duration>,
 ) -> String {
     match task {
-        Some(task) => match safety_timeout {
-            Some(dur) => match tokio::time::timeout(dur, task).await {
-                Ok(Ok(output)) => output,
-                _ => String::new(),
-            },
-            None => task.await.unwrap_or_default(),
+        Some(mut handle) => match safety_timeout {
+            Some(dur) => {
+                // Await by reference so the handle survives a timeout and can
+                // be aborted afterwards. JoinHandle is Unpin, and `&mut F`
+                // implements Future when F does, so `&mut handle` works here.
+                match tokio::time::timeout(dur, &mut handle).await {
+                    Ok(Ok(output)) => output,
+                    // The drain timed out (a grandchild keeps a pipe write
+                    // handle open and EOF never arrives). Abort the reader so
+                    // the background task cannot linger forever.
+                    _ => {
+                        handle.abort();
+                        String::new()
+                    }
+                }
+            }
+            None => handle.await.unwrap_or_default(),
         },
         None => String::new(),
     }
+}
+
+/// 判断命令是否是 WSL 命令（首 token 为 `wsl` / `wsl.exe`）。detach 场景下
+/// taskkill /PID 只能杀掉 wsl.exe 壳进程，WSL 实例内的 Linux 进程需要
+/// 通过 pkill / wsl --terminate 停止，hint 提示据此区分。
+fn is_wsl_command(command: &str) -> bool {
+    command
+        .split_whitespace()
+        .next()
+        .is_some_and(|token| {
+            token.eq_ignore_ascii_case("wsl") || token.eq_ignore_ascii_case("wsl.exe")
+        })
+}
+
+/// 生成 detach 模式日志文件的完整路径并创建父目录。
+///
+/// 日志统一放在 `<workingDirectory>/.snow/logs/`（`.snow` 已被 .gitignore
+/// 排除，不会污染项目 git 状态）。文件名形如
+/// `<name>-<yyyyMMdd-HHmmss-SSS>.log`，毫秒时间戳避免同名命令在同一秒内
+/// 启动时日志文件碰撞；`name` 取自命令首 token 的 basename（仅保留
+/// `[A-Za-z0-9_-]`，最长 24 字符），空则回退为 `detached`。返回值为绝对
+/// 路径，调用方负责以正斜杠形式呈现给 agent / 前端。
+fn create_detach_log_path(
+    working_directory: &str,
+    command: &str,
+) -> napi::Result<std::path::PathBuf> {
+    let logs_dir = std::path::Path::new(working_directory)
+        .join(".snow")
+        .join("logs");
+    fs::create_dir_all(&logs_dir).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!(
+                "Failed to create detach log directory {}: {error}",
+                logs_dir.display()
+            ),
+        )
+    })?;
+
+    let raw_name = command.split_whitespace().next().unwrap_or("detached");
+    let base_name = raw_name.rsplit(['/', '\\']).next().unwrap_or(raw_name);
+    let sanitized: String = base_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .take(24)
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    let name = if sanitized.is_empty() {
+        "detached".to_string()
+    } else {
+        sanitized
+    };
+
+    // 毫秒级时间戳：避免同一秒内连续启动同名 detach 命令时日志文件碰撞
+    // （秒级精度下两个进程会 append 到同一个文件，日志互相混合）。
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S-%3f");
+    Ok(logs_dir.join(format!("{name}-{timestamp}.log")))
 }
 
 /// Kill the entire process tree rooted at `child`, not just the

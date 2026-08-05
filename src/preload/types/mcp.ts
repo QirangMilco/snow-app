@@ -69,7 +69,12 @@ export type McpProjectServerStatus = {
   error?: string;
 };
 export type BashStreamChunk = {
-  stream: "stdout" | "stderr" | "interactive_session" | "tool_execution";
+  stream:
+    | "stdout"
+    | "stderr"
+    | "interactive_session"
+    | "tool_execution"
+    | "imagegen";
   data: string;
 };
 
@@ -80,6 +85,18 @@ export type BrowserCommandRequest = {
 };
 
 export type BrowserCommandResponse = {
+  commandId: string;
+  resultJson?: string;
+  error?: string;
+};
+
+export type TerminalCommandRequest = {
+  commandId: string;
+  operation: string;
+  argsJson: string;
+};
+
+export type TerminalCommandResponse = {
   commandId: string;
   resultJson?: string;
   error?: string;

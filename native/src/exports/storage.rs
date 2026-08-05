@@ -6,7 +6,9 @@ use crate::storage::{
     ChatConversationRecord, ChatMessagePage, ChatMessageRecord, CodebaseProjectScopeSettings,
     ConversationSearchResult,
     CustomHeaderSchemeInput, CustomHeaderSchemeRecord, HookConfigInput, HookConfigRecord,
+    ImportDatabaseTransactionInput, ImportResourceInput, ImportResourceRecord, ImportResourceRelease, ImportResourceReleaseInput,
     McpServerConfigInput, McpServerConfigRecord, ProjectMcpServerConfigRecord,
+    PluginInput, PluginMarketplaceInput, PluginMarketplaceRecord, PluginRecord,
     ProjectSensitiveCommandConfigInput, ProjectSensitiveCommandConfigRecord,
     SensitiveCommandConfigInput, SensitiveCommandConfigRecord, SensitiveCommandMatchResult,
     SubAgentConfigInput, SubAgentConfigRecord, SystemPromptItemInput, SystemPromptItemRecord,
@@ -237,6 +239,7 @@ pub struct ThemePaletteNapi {
     pub accent_blue: String,
     pub accent_blue_bg: String,
     pub accent_blue_text: String,
+    pub accent_color: String,
     pub on_solid: String,
     pub selection_bg: String,
     pub focus_ring: String,
@@ -268,6 +271,7 @@ impl From<ThemePalette> for ThemePaletteNapi {
             accent_blue: p.accent_blue,
             accent_blue_bg: p.accent_blue_bg,
             accent_blue_text: p.accent_blue_text,
+            accent_color: p.accent_color,
             on_solid: p.on_solid,
             selection_bg: p.selection_bg,
             focus_ring: p.focus_ring,
@@ -301,6 +305,7 @@ impl From<ThemePaletteNapi> for ThemePalette {
             accent_blue: p.accent_blue,
             accent_blue_bg: p.accent_blue_bg,
             accent_blue_text: p.accent_blue_text,
+            accent_color: p.accent_color,
             on_solid: p.on_solid,
             selection_bg: p.selection_bg,
             focus_ring: p.focus_ring,
@@ -514,6 +519,59 @@ pub async fn set_goal_mode_token_budget(budget: i64) -> napi::Result<()> {
         .map_err(map_spawn_error)?
 }
 
+#[napi(object)]
+pub struct ConversationModesResult {
+    /// Whether Plan Mode is enabled (true) or disabled (false) for this
+    /// conversation. Legacy rows with a NULL flag are read as disabled;
+    /// null is only returned when the conversation row does not exist
+    /// (follow the global default).
+    pub plan_mode: Option<bool>,
+    /// Whether Goal Mode is enabled (true) or disabled (false) for this
+    /// conversation. Legacy rows with a NULL flag are read as disabled;
+    /// null is only returned when the conversation row does not exist
+    /// (follow the global default).
+    pub goal_mode: Option<bool>,
+    /// Per-conversation Goal Mode token budget override (null → follow the
+    /// global default budget).
+    pub goal_mode_token_budget: Option<i64>,
+}
+
+#[napi]
+pub async fn get_conversation_modes(
+    conversation_id: String,
+) -> napi::Result<ConversationModesResult> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::get_conversation_modes(&conversation_id).map(|modes| {
+            ConversationModesResult {
+                plan_mode: modes.plan_mode,
+                goal_mode: modes.goal_mode,
+                goal_mode_token_budget: modes.goal_mode_token_budget,
+            }
+        })
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_conversation_modes(
+    conversation_id: String,
+    plan_mode: Option<bool>,
+    goal_mode: Option<bool>,
+    goal_mode_token_budget: Option<i64>,
+) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::set_conversation_modes(
+            &conversation_id,
+            plan_mode,
+            goal_mode,
+            goal_mode_token_budget,
+        )
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
 #[napi]
 pub async fn get_codebase_project_scope_settings(
     project_id: String,
@@ -568,6 +626,13 @@ pub async fn check_project_has_gitignore(project_id: String) -> napi::Result<boo
     })
     .await
     .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn check_project_is_remote(project_id: String) -> napi::Result<bool> {
+    tokio::task::spawn_blocking(move || crate::storage::check_project_is_remote(project_id))
+        .await
+        .map_err(map_spawn_error)?
 }
 
 #[napi]
@@ -814,6 +879,87 @@ pub async fn delete_project_mcp_server_config(
 }
 
 #[napi]
+pub async fn list_import_resources() -> napi::Result<Vec<ImportResourceRecord>> {
+    tokio::task::spawn_blocking(crate::storage::list_import_resources)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn upsert_import_resources(items: Vec<ImportResourceInput>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::upsert_import_resources(items))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn commit_import_transaction(
+    input: ImportDatabaseTransactionInput,
+) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::commit_import_transaction(input))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn release_import_resource(
+    input: ImportResourceReleaseInput,
+) -> napi::Result<ImportResourceRelease> {
+    tokio::task::spawn_blocking(move || crate::storage::release_import_resource(input))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn list_plugins() -> napi::Result<Vec<PluginRecord>> {
+    tokio::task::spawn_blocking(crate::storage::list_plugins)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn upsert_plugins(items: Vec<PluginInput>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::upsert_plugins(items))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_plugin_state(plugin_id: String, state: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::set_plugin_state(plugin_id, state))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn delete_plugin(plugin_id: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::delete_plugin(plugin_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn list_plugin_marketplaces() -> napi::Result<Vec<PluginMarketplaceRecord>> {
+    tokio::task::spawn_blocking(crate::storage::list_plugin_marketplaces)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn upsert_plugin_marketplace(item: PluginMarketplaceInput) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::upsert_plugin_marketplace(item))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn delete_plugin_marketplace(marketplace_id: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::delete_plugin_marketplace(marketplace_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
 pub async fn list_hook_configs(
     scope: String,
     project_id: Option<String>,
@@ -856,8 +1002,10 @@ pub async fn execute_hooks(input: HookExecuteInput) -> napi::Result<HookExecuteR
 }
 
 #[napi]
-pub async fn list_sub_agent_configs() -> napi::Result<Vec<SubAgentConfigRecord>> {
-    tokio::task::spawn_blocking(crate::storage::list_sub_agent_configs)
+pub async fn list_sub_agent_configs(
+    project_id: Option<String>,
+) -> napi::Result<Vec<SubAgentConfigRecord>> {
+    tokio::task::spawn_blocking(move || crate::storage::list_sub_agent_configs(project_id))
         .await
         .map_err(map_spawn_error)?
 }
@@ -865,10 +1013,13 @@ pub async fn list_sub_agent_configs() -> napi::Result<Vec<SubAgentConfigRecord>>
 #[napi]
 pub async fn get_sub_agent_config(
     agent_id: String,
+    project_id: Option<String>,
 ) -> napi::Result<Option<SubAgentConfigRecord>> {
-    tokio::task::spawn_blocking(move || crate::storage::get_sub_agent_config(agent_id))
-        .await
-        .map_err(map_spawn_error)?
+    tokio::task::spawn_blocking(move || {
+        crate::storage::get_sub_agent_config(agent_id, project_id)
+    })
+    .await
+    .map_err(map_spawn_error)?
 }
 
 #[napi]
@@ -879,8 +1030,11 @@ pub async fn upsert_sub_agent_config(item: SubAgentConfigInput) -> napi::Result<
 }
 
 #[napi]
-pub async fn delete_sub_agent_config(agent_id: String) -> napi::Result<()> {
-    tokio::task::spawn_blocking(move || crate::storage::delete_sub_agent_config(agent_id))
+pub async fn delete_sub_agent_config(
+    agent_id: String,
+    project_id: Option<String>,
+) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::delete_sub_agent_config(agent_id, project_id))
         .await
         .map_err(map_spawn_error)?
 }
@@ -1023,6 +1177,17 @@ pub async fn list_sub_agent_conversations(
 }
 
 #[napi]
+pub async fn list_sub_agent_conversations_by_parents(
+    parent_conversation_ids: Vec<String>,
+) -> napi::Result<std::collections::HashMap<String, Vec<ChatConversationRecord>>> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::list_sub_agent_conversations_by_parents(parent_conversation_ids)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
 pub async fn create_sub_agent_session(
     conversation_id: String,
     parent_conversation_id: String,
@@ -1120,6 +1285,13 @@ pub async fn update_conversation_api_profile(
 #[napi]
 pub async fn delete_conversation(conversation_id: String) -> napi::Result<()> {
     tokio::task::spawn_blocking(move || crate::storage::delete_conversation(conversation_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn delete_conversations(conversation_ids: Vec<String>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::delete_conversations(conversation_ids))
         .await
         .map_err(map_spawn_error)?
 }

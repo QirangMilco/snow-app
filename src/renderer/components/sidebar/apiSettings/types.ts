@@ -28,6 +28,7 @@ export type ApiConfigFormData = {
   retryBaseDelayMs: string;
   systemPromptIdsJson: string;
   customHeaderSchemeId: string;
+  thinkingValue: string;
 };
 
 export type ApiConfigItem = ApiConfigRecord;

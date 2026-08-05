@@ -1,7 +1,15 @@
-import { GitBranch, ChevronDown, GitBranchPlus, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  GitBranch,
+  ChevronDown,
+  GitBranchPlus,
+  RefreshCw,
+  Copy,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitBranch as GitBranchType } from "../../../../preload";
 import { useI18n } from "../../../i18n";
+import { ContextMenu, type ContextMenuItem } from "../../common/ContextMenu";
 
 type BranchSelectorProps = {
   repoPath: string;
@@ -38,14 +46,15 @@ export const BranchSelector = ({
   const [newBranchName, setNewBranchName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const createInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
+  /** 加载分支列表（打开下拉与右键刷新共用）。 */
+  const loadBranches = useCallback(() => {
     setLoading(true);
     window.snow
       .gitBranches(repoPath)
@@ -58,7 +67,14 @@ export const BranchSelector = ({
       .finally(() => {
         setLoading(false);
       });
-  }, [isOpen, repoPath]);
+  }, [repoPath]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    loadBranches();
+  }, [isOpen, loadBranches]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -163,6 +179,42 @@ export const BranchSelector = ({
     setCreateError(null);
   };
 
+  /** 右键菜单：复制分支名 / 新建分支 / 刷新分支列表。 */
+  const buildMenuItems = (): ContextMenuItem[] => [
+    {
+      id: "copy-branch",
+      label: t("git.copyBranchName", { defaultValue: "Copy Branch Name" }),
+      icon: <Copy size={13} strokeWidth={1.8} />,
+      onClick: () => {
+        setContextMenu(null);
+        void window.snow.writeClipboardText(currentBranch).catch(() => {
+          // 剪贴板写入失败时静默忽略。
+        });
+      },
+    },
+    {
+      id: "create-branch",
+      separator: true,
+      label: t("git.createBranch"),
+      icon: <GitBranchPlus size={13} strokeWidth={1.8} />,
+      onClick: () => {
+        setContextMenu(null);
+        // 打开下拉并进入创建分支表单。
+        setIsOpen(true);
+        setShowCreate(true);
+      },
+    },
+    {
+      id: "refresh-branches",
+      label: t("git.refreshBranches", { defaultValue: "Refresh Branches" }),
+      icon: <RefreshCw size={13} strokeWidth={1.8} />,
+      onClick: () => {
+        setContextMenu(null);
+        loadBranches();
+      },
+    },
+  ];
+
   const localBranches = branches.filter((b) => !b.isRemote);
   const remoteBranches = branches.filter((b) => b.isRemote);
 
@@ -172,6 +224,10 @@ export const BranchSelector = ({
         type="button"
         className="branch-selector-btn"
         onClick={() => setIsOpen(!isOpen)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setContextMenu({ x: e.clientX, y: e.clientY });
+        }}
         title={currentBranch}
       >
         <GitBranch size={14} strokeWidth={1.8} />
@@ -296,6 +352,14 @@ export const BranchSelector = ({
             </>
           )}
         </div>
+      )}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMenuItems()}
+          onClose={() => setContextMenu(null)}
+        />
       )}
     </div>
   );

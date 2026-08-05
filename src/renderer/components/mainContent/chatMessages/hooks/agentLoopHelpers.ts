@@ -124,6 +124,31 @@ export const createAwaitHookDecision = (ctx: ConversationContextValue) => {
 };
 
 // ---------------------------------------------------------------------------
+// Streaming run metrics
+// ---------------------------------------------------------------------------
+
+/** Reset all cumulative metrics when a new user-triggered run starts. */
+export const resetRunStreamMetrics = (
+  ctx: ConversationContextValue,
+  sessionKey: string
+): void => {
+  ctx.updateSessionField(sessionKey, "streamTokenCount", 0);
+  ctx.updateSessionField(sessionKey, "streamElapsedMs", 0);
+  ctx.updateSessionField(sessionKey, "streamTtftMs", 0);
+  ctx.updateSessionField(sessionKey, "runTtftMs", 0);
+};
+
+/** Finalize the previous iteration and prepare counters for the next request. */
+export const beginStreamMetricsIteration = (
+  ctx: ConversationContextValue,
+  sessionKey: string
+): void => {
+  ctx.updateSessionField(sessionKey, "streamTokenCount", 0);
+  ctx.updateSessionField(sessionKey, "streamElapsedMs", 0);
+  ctx.updateSessionField(sessionKey, "streamTtftMs", 0);
+};
+
+// ---------------------------------------------------------------------------
 // Factory: stream chunk handler
 // ---------------------------------------------------------------------------
 
@@ -143,9 +168,19 @@ export const createStreamChunkHandler = (
       return;
     }
 
-    ctx.updateSessionField(sessionKey, "streamTokenCount", chunk.streamTokenCount);
+    ctx.updateSessionField(
+      sessionKey,
+      "streamTokenCount",
+      chunk.streamTokenCount
+    );
     ctx.updateSessionField(sessionKey, "streamElapsedMs", chunk.elapsedMs);
     ctx.updateSessionField(sessionKey, "streamTtftMs", chunk.ttftMs);
+    if (
+      chunk.ttftMs > 0 &&
+      (ctx.sessionsRef.current[sessionKey]?.runTtftMs ?? 0) === 0
+    ) {
+      ctx.updateSessionField(sessionKey, "runTtftMs", chunk.ttftMs);
+    }
 
     ctx.updateSessionMessages(sessionKey, (currentMessages) =>
       currentMessages.map((currentMessage) => {

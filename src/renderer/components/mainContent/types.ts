@@ -1,6 +1,8 @@
 export type MainContentView =
   | "chat"
   | "api-settings"
+  | "imagegen-settings"
+  | "image-library"
   | "proxy-browser-settings"
   | "codebase-settings"
   | "system-prompt-settings"
@@ -8,6 +10,7 @@ export type MainContentView =
   | "personalization-settings"
   | "custom-headers-settings"
   | "mcp-settings"
+  | "import-settings"
   | "skills-settings"
   | "sub-agent-settings"
   | "sensitive-command-settings"

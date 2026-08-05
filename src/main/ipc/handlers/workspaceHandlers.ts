@@ -303,6 +303,33 @@ export const registerWorkspaceHandlers = (native: NativeBridge): void => {
     }
   );
 
+  // ===== Resolve dropped external file paths =====
+  // 从文件管理器拖入的外部文件，preload 已通过 webUtils.getPathForFile
+  // 解析为绝对路径；主进程在此异步批量查询每个路径是否为目录，
+  // 返回统一结构供渲染层生成文件/图片 chip。全部异步，不阻塞主进程。
+  ipcMain.handle(
+    "workspace-directories:resolve-dropped-paths",
+    async (_event, paths: unknown) => {
+      if (!Array.isArray(paths)) {
+        return [];
+      }
+      const safePaths = paths.filter(
+        (p): p is string => typeof p === "string" && p.length > 0
+      );
+      const entries = await Promise.all(
+        safePaths.map(async (path) => {
+          try {
+            const stat = await fs.stat(path);
+            return { path, isDirectory: stat.isDirectory() };
+          } catch {
+            return { path, isDirectory: false };
+          }
+        })
+      );
+      return entries;
+    }
+  );
+
   // ===== Dialog handlers (browser executable, terminal executable) =====
   ipcMain.handle(
     "proxy-browser-settings:select-browser-executable",

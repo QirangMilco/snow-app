@@ -1,6 +1,7 @@
 import { useMemo, useState, type ChangeEvent } from "react";
-import { Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { Copy, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { useI18n } from "../../../i18n";
+import { ConfirmDialog } from "../../common/ConfirmDialog";
 import {
   DISABLED_STATUS_LABEL,
   ENABLED_STATUS_LABEL,
@@ -11,6 +12,7 @@ import type { ApiConfigItem } from "./types";
 type ApiSettingsTableProps = {
   configs: ApiConfigItem[];
   isLoading: boolean;
+  onDuplicate: (config: ApiConfigItem) => void;
   onEdit: (config: ApiConfigItem) => void;
   onDelete: (profileName: string, displayName: string) => void;
   onToggleActive: (config: ApiConfigItem) => void;
@@ -19,12 +21,16 @@ type ApiSettingsTableProps = {
 export function ApiSettingsTable({
   configs,
   isLoading,
+  onDuplicate,
   onEdit,
   onDelete,
   onToggleActive,
 }: ApiSettingsTableProps): React.JSX.Element {
   const { t } = useI18n();
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingDeletion, setPendingDeletion] = useState<ApiConfigItem | null>(
+    null
+  );
   const filteredConfigs = useMemo(
     () => filterApiConfigs(configs, searchQuery),
     [configs, searchQuery]
@@ -148,6 +154,19 @@ export function ApiSettingsTable({
                       <div className="api-settings-table-actions">
                         <button
                           className="icon-btn ghost"
+                          onClick={() => onDuplicate(config)}
+                          type="button"
+                          title={t("settings.duplicate", {
+                            defaultValue: "Duplicate",
+                          })}
+                          aria-label={t("settings.duplicate", {
+                            defaultValue: "Duplicate",
+                          })}
+                        >
+                          <Copy size={13} strokeWidth={1.8} />
+                        </button>
+                        <button
+                          className="icon-btn ghost"
                           onClick={() => onEdit(config)}
                           type="button"
                           title={t("settings.edit", { defaultValue: "Edit" })}
@@ -159,9 +178,7 @@ export function ApiSettingsTable({
                         </button>
                         <button
                           className="icon-btn ghost danger"
-                          onClick={() =>
-                            onDelete(config.profileName, config.displayName)
-                          }
+                          onClick={() => setPendingDeletion(config)}
                           type="button"
                           title={t("settings.delete", {
                             defaultValue: "Delete",
@@ -189,6 +206,29 @@ export function ApiSettingsTable({
           }).replace("{count}", String(filteredConfigs.length))}
         </span>
       )}
+
+      <ConfirmDialog
+        open={pendingDeletion !== null}
+        title={t("settings.apiDeleteTitle", {
+          defaultValue: "Delete API profile",
+        })}
+        message={t("settings.apiDeleteConfirm", {
+          defaultValue: `Delete API profile "${
+            pendingDeletion?.displayName ?? ""
+          }"? This cannot be undone.`,
+          values: { name: pendingDeletion?.displayName ?? "" },
+        })}
+        confirmLabel={t("settings.delete", { defaultValue: "Delete" })}
+        cancelLabel={t("settings.cancel", { defaultValue: "Cancel" })}
+        onConfirm={() => {
+          if (pendingDeletion) {
+            onDelete(pendingDeletion.profileName, pendingDeletion.displayName);
+          }
+          setPendingDeletion(null);
+        }}
+        onCancel={() => setPendingDeletion(null)}
+        variant="danger"
+      />
     </div>
   );
 }

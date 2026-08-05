@@ -40,6 +40,9 @@ export type ScheduledTaskStatus =
 
 export type ScheduledTaskRecord = {
   id: string;
+  /** The workspace directory this task belongs to. Tasks are isolated per
+   *  project, mirroring the memo project-isolation model. */
+  directoryId: string;
   name: string;
   /** The user-configured prompt sent to the AI Loop on each execution. */
   prompt: string;
@@ -60,6 +63,8 @@ export type ScheduledTaskRecord = {
 
 /** Input shape for creating a scheduled task (mirrors the MCP tool schema). */
 export type CreateScheduledTaskInput = {
+  /** The workspace directory this task belongs to. */
+  directoryId: string;
   name: string;
   prompt: string;
   schedule: ScheduledTaskSchedule;

@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+﻿import { ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { useI18n } from "../../../i18n";
@@ -31,11 +31,20 @@ export function PinnedSection({
     abortConversation,
     streamingConversationIds,
     completedConversationIds,
+    clearInputDraft,
   } = useChatConversationContext();
   const [conversations, setConversations] = useState<ChatConversationRecord[]>(
     []
   );
   const [isLoading, setIsLoading] = useState(false);
+  // 置顶区域收起/展开（localStorage 持久化，与项目区域一致）
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("pinned-section-collapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
 
   const directoryId = activeDirectory?.directoryId ?? "";
 
@@ -194,6 +203,11 @@ export function PinnedSection({
 
       await window.snow.deleteConversation(conversation.conversationId);
 
+      // 删除的会话不再需要保留输入草稿
+      for (const targetId of deleteTargetIds) {
+        clearInputDraft(targetId);
+      }
+
       if (
         activeConversationId &&
         deleteTargetIds.includes(activeConversationId)
@@ -221,13 +235,43 @@ export function PinnedSection({
     );
   };
 
+  /** 收起/展开置顶区域（localStorage 持久化，与项目区域一致） */
+  const toggleCollapsed = (): void => {
+    setIsCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("pinned-section-collapsed", String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
+
   return (
-    <div className="sidebar-section">
+    <div
+      className={`sidebar-section${isCollapsed ? " collapsed" : ""}`}
+    >
       <div className="section-header">
-        <span className="section-title">
-          {t("sidebar.pinned", { defaultValue: "Pinned" })}
-        </span>
+        <button
+          type="button"
+          aria-expanded={!isCollapsed}
+          className="section-toggle-btn"
+          onClick={toggleCollapsed}
+          title={t("sidebar.chatToggleCollapse", {
+            defaultValue: "Collapse pinned",
+          })}
+        >
+          <ChevronRight
+            className={isCollapsed ? "" : "section-toggle-chevron--open"}
+            size={12}
+          />
+          <span className="section-title">
+            {t("sidebar.pinned", { defaultValue: "Pinned" })}
+          </span>
+        </button>
       </div>
+      {!isCollapsed && (
       <div className="section-list">
         {showLoading ? (
           <span className="empty-text loading">
@@ -281,6 +325,7 @@ export function PinnedSection({
           ))
         )}
       </div>
+      )}
     </div>
   );
 }

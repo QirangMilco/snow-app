@@ -41,6 +41,9 @@ type UseChatInputControllerParams = {
   draftToRestore?: string | null;
   autoSendToken?: number;
   onDraftRestored?: () => void;
+  saveInputDraft?: (conversationId: string | undefined, content: string) => void;
+  getInputDraft?: (conversationId: string | undefined) => string | undefined;
+  clearInputDraft?: (conversationId: string | undefined) => void;
 };
 
 type UseChatInputControllerResult = ChatInputState & ChatInputActions;
@@ -63,10 +66,17 @@ export const useChatInputController = ({
   draftToRestore = null,
   autoSendToken = 0,
   onDraftRestored,
+  saveInputDraft,
+  getInputDraft,
+  clearInputDraft,
 }: UseChatInputControllerParams): UseChatInputControllerResult => {
   const { t } = useI18n();
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLDivElement>(null);
+  // Mirrors `value` so unmount cleanup can save the latest draft without
+  // stale closure captures.
+  const latestValueRef = useRef(value);
+  latestValueRef.current = value;
 
   const [models, setModels] = useState<Model[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -380,6 +390,9 @@ export const useChatInputController = ({
             onSend?.(message, { model: selectedModel || undefined });
           }
           setValue("");
+          // The queued content was sent; do not keep it as a per-conversation
+          // draft (otherwise it would reappear after switching away/back).
+          clearInputDraft?.(conversationId);
           textarea.innerHTML = "";
           textarea.dataset.empty = "true";
           adjustHeight();
@@ -388,14 +401,17 @@ export const useChatInputController = ({
     }
 
     onDraftRestored?.();
-  }, [draftToRestore, onDraftRestored, adjustHeight, autoSendToken, onSend, selectedModel]);
+  }, [draftToRestore, onDraftRestored, adjustHeight, autoSendToken, onSend, selectedModel, conversationId, clearInputDraft]);
 
   const handleChange = useCallback(
     (nextValue: string) => {
       setValue(nextValue);
+      // Persist the draft so it survives ChatInput unmounts caused by
+      // conversation switches / new-chat (isLoadingInitialHistory).
+      saveInputDraft?.(conversationId, nextValue);
       adjustHeight();
     },
-    [adjustHeight]
+    [adjustHeight, conversationId, saveInputDraft]
   );
 
   const restoreContent = useCallback(
@@ -418,6 +434,29 @@ export const useChatInputController = ({
     [adjustHeight, textareaRef]
   );
 
+  // --- Per-conversation draft persistence ---
+  // ChatInput unmounts while initial history loads (conversation switch /
+  // new chat). On (re)mount — or when the conversation prop changes without
+  // unmounting — restore the target conversation's saved draft. Rollback
+  // drafts (draftToRestore) take precedence and are handled above.
+  useEffect(() => {
+    if (draftToRestore !== null) {
+      return;
+    }
+    const draft = getInputDraft?.(conversationId);
+    if (draft) {
+      restoreContent(draft);
+    }
+  }, [conversationId, draftToRestore, getInputDraft, restoreContent]);
+
+  // Save the current input when the component unmounts or the conversation
+  // changes, so nothing typed is lost (latestValueRef avoids stale closures).
+  useEffect(() => {
+    return () => {
+      saveInputDraft?.(conversationId, latestValueRef.current);
+    };
+  }, [conversationId, saveInputDraft]);
+
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed) {
@@ -433,6 +472,9 @@ export const useChatInputController = ({
       apiProfile: selectedApiProfile || undefined,
     });
     setValue("");
+    // The message was handed off to the agent loop; the draft must not be
+    // restored when switching back to this conversation.
+    clearInputDraft?.(conversationId);
 
     if (textareaRef.current) {
       textareaRef.current.innerHTML = "";
@@ -441,7 +483,7 @@ export const useChatInputController = ({
         adjustHeight();
       });
     }
-  }, [adjustHeight, onSend, selectedModel, selectedApiProfile, value]);
+  }, [adjustHeight, onSend, selectedModel, selectedApiProfile, value, conversationId, clearInputDraft]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {

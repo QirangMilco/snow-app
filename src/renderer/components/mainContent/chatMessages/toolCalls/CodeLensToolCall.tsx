@@ -726,12 +726,19 @@ export const CodeLensToolCall = ({
                         <div
                           className="tool-call-codelens-ref-file-header"
                           title={refFilePath}
+                          data-path={refFilePath}
                         >
                           <FileCode size={12} aria-hidden="true" />
-                          <span className="tool-call-codelens-ref-file-name">
+                          <span
+                            className="tool-call-codelens-ref-file-name"
+                            data-path={refFilePath}
+                          >
                             {getFileName(refFilePath)}
                           </span>
-                          <span className="tool-call-codelens-ref-file-path">
+                          <span
+                            className="tool-call-codelens-ref-file-path"
+                            data-path={refFilePath}
+                          >
                             {refFilePath}
                           </span>
                           <span className="tool-call-codelens-ref-file-count">
@@ -743,6 +750,8 @@ export const CodeLensToolCall = ({
                             <div
                               key={`${ref.location.line}-${refIdx}`}
                               className="tool-call-codelens-ref-match"
+                              data-path={refFilePath}
+                              data-line={ref.location.line}
                             >
                               <span className="tool-call-codelens-ref-loc">
                                 <Hash size={9} aria-hidden="true" />

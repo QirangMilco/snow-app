@@ -1,10 +1,255 @@
-//! Responses API stream-event helpers — token usage extraction, reasoning
-//! text collection, tool-call collection, and output text extraction.
+//! Responses API stream-event helpers — SSE block parsing, token usage
+//! extraction, reasoning text collection, tool-call collection, and output
+//! text extraction.
 
-use serde_json::Value;
+use std::collections::HashMap;
+
+use serde_json::{json, Value};
 
 use crate::api::common::read_first_i64;
 use crate::storage::services::chat_conversations::ChatTokenUsage;
+
+// ---------------------------------------------------------------------------
+// SSE block parsing
+// ---------------------------------------------------------------------------
+
+/// Process a raw SSE event block (text between two separators) for the
+/// Responses API streaming protocol.
+///
+/// Each `data:` line is parsed independently as a JSON object, then dispatched
+/// to the appropriate handler based on the `type` field. The caller passes
+/// mutable references to all accumulation buffers so this function can update
+/// them in place.
+///
+/// Returns a tuple of `(content_delta, thinking_delta)` — the text fragments
+/// added during this block — so the caller can emit a streaming chunk to the
+/// frontend without re-scanning the buffers.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn process_responses_sse_event_block(
+    event_block: &str,
+    raw_events: &mut Vec<Value>,
+    content_chunks: &mut Vec<String>,
+    thinking_chunks: &mut Vec<String>,
+    tool_calls: &mut Vec<Value>,
+    reasoning_items: &mut Vec<Value>,
+    streaming_tool_items: &mut HashMap<u64, (Value, String)>,
+    response_id: &mut String,
+    response_model: &mut String,
+    response_status: &mut String,
+    token_usage: &mut ChatTokenUsage,
+    completed_response: &mut Option<Value>,
+    stream_completed_normally: &mut bool,
+    reasoning_text_streamed: &mut bool,
+) -> (String, String) {
+    let mut content_delta_out = String::new();
+    let mut thinking_delta_out = String::new();
+
+    for line in event_block.lines() {
+        let trimmed = line.trim_start();
+        let Some(data) = trimmed.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim_start();
+
+        if data.is_empty() {
+            continue;
+        }
+
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            // Malformed JSON — skip this line and continue processing the
+            // rest of the stream.
+            continue;
+        };
+
+        let event_type = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        match event_type {
+            "response.output_text.delta" => {
+                let content_delta = read_stream_text_delta(event.get("delta"));
+                if !content_delta.is_empty() {
+                    content_chunks.push(content_delta.clone());
+                    content_delta_out.push_str(&content_delta);
+                }
+            }
+            // Full reasoning text delta. This is the primary thinking stream
+            // for reasoning models: it arrives BEFORE any
+            // `response.output_text.delta` (reasoning happens first), so it
+            // must be pushed to the frontend in real time — otherwise the
+            // thinking block only appears after the entire response has
+            // finished rendering.
+            "response.reasoning_text.delta" => {
+                *reasoning_text_streamed = true;
+                let thinking_delta = read_stream_text_delta(event.get("delta"));
+                if !thinking_delta.is_empty() {
+                    thinking_chunks.push(thinking_delta.clone());
+                    thinking_delta_out.push_str(&thinking_delta);
+                }
+            }
+            "response.reasoning_summary_text.delta" => {
+                // The summary is a condensed re-statement of the full
+                // reasoning text. If the full text was already streamed via
+                // `response.reasoning_text.delta`, appending the summary
+                // would duplicate the thinking block, so suppress it.
+                if !*reasoning_text_streamed {
+                    let thinking_delta = read_stream_text_delta(event.get("delta"));
+                    if !thinking_delta.is_empty() {
+                        thinking_chunks.push(thinking_delta.clone());
+                        thinking_delta_out.push_str(&thinking_delta);
+                    }
+                }
+            }
+            "response.reasoning_summary.delta" => {
+                // See reasoning_summary_text.delta above: skip the summary
+                // when the full reasoning text is streamed.
+                if !*reasoning_text_streamed {
+                    if let Some(delta) = event.get("delta") {
+                        let mut delta_chunks = Vec::new();
+                        collect_text_values(delta, &mut delta_chunks);
+                        let thinking_delta = delta_chunks.join("");
+                        if !thinking_delta.is_empty() {
+                            thinking_chunks.push(thinking_delta.clone());
+                            thinking_delta_out.push_str(&thinking_delta);
+                        }
+                    }
+                }
+            }
+            // Tool-call argument deltas. The Responses API streams function
+            // arguments as they are generated.
+            //
+            // We also accumulate the argument fragments per output item
+            // index so that, if the stream is interrupted before
+            // `output_item.done`, we can still reconstruct the tool call
+            // with its (possibly partial) arguments.
+            "response.function_call_arguments.delta" => {
+                let args_delta = read_stream_text_delta(event.get("delta"));
+                if !args_delta.is_empty() {
+                    if let Some(index) = event
+                        .get("output_index")
+                        .and_then(Value::as_u64)
+                        .or_else(|| event.get("index").and_then(Value::as_u64))
+                    {
+                        streaming_tool_items
+                            .entry(index)
+                            .and_modify(|(_, args)| args.push_str(&args_delta))
+                            .or_insert_with(|| (Value::Null, args_delta));
+                    }
+                }
+            }
+            // Track newly added function_call output items so we can
+            // reconstruct them (name + call_id) if the stream ends
+            "response.output_item.added" => {
+                if let Some(item) = event.get("item") {
+                    let item_type = item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+
+                    // Capture reasoning items (with encrypted_content) as
+                    // early as possible.
+                    if item_type == "reasoning" {
+                        reasoning_items.push(item.clone());
+                    }
+
+                    if matches!(
+                        item_type,
+                        "function_call" | "tool_call" | "custom_tool_call" | "mcp_call"
+                    ) {
+                        if let Some(index) = event
+                            .get("output_index")
+                            .and_then(Value::as_u64)
+                            .or_else(|| event.get("index").and_then(Value::as_u64))
+                        {
+                            streaming_tool_items
+                                .entry(index)
+                                .and_modify(|(stored, _)| *stored = item.clone())
+                                .or_insert_with(|| (item.clone(), String::new()));
+                        }
+                    }
+                }
+            }
+            "response.output_item.done" => {
+                // Capture reasoning items (with encrypted_content) for
+                // round-tripping when store:false.
+                if let Some(item) = event.get("item") {
+                    let item_type = item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if item_type == "reasoning" {
+                        // Replace any prior entry from `added` with the
+                        // finalised `done` version, or push if not already
+                        // tracked.
+                        if let Some(pos) = reasoning_items
+                            .iter()
+                            .position(|existing| {
+                                existing.get("id").and_then(Value::as_str)
+                                    == item.get("id").and_then(Value::as_str)
+                            })
+                        {
+                            reasoning_items[pos] = item.clone();
+                        } else {
+                            reasoning_items.push(item.clone());
+                        }
+                    }
+                }
+                collect_tool_calls(event.get("item"), tool_calls);
+                // Remove from the streaming map once finalized.
+                if let Some(index) = event
+                    .get("output_index")
+                    .and_then(Value::as_u64)
+                    .or_else(|| event.get("index").and_then(Value::as_u64))
+                {
+                    streaming_tool_items.remove(&index);
+                }
+            }
+            "response.completed" | "response.incomplete" | "response.failed" => {
+                *stream_completed_normally = true;
+                if let Some(response) = event.get("response") {
+                    *response_id =
+                        read_response_string(response, "id").unwrap_or_else(|| response_id.clone());
+                    *response_model = read_response_string(response, "model")
+                        .unwrap_or_else(|| response_model.clone());
+                    *response_status = read_response_string(response, "status").unwrap_or_else(|| {
+                        if event_type == "response.failed" {
+                            "failed".to_string()
+                        } else if event_type == "response.incomplete" {
+                            "incomplete".to_string()
+                        } else {
+                            response_status.clone()
+                        }
+                    });
+                    *token_usage = extract_token_usage(response);
+                    *completed_response = Some(response.clone());
+                }
+            }
+            "error" => {
+                // Surface the error as a completed response with failed
+                // status. The stream loop will see stream_completed_normally
+                // and stop.
+                *stream_completed_normally = true;
+                *response_status = String::from("failed");
+                let message = event
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Responses stream failed");
+                // Store the error message so the caller can surface it.
+                *completed_response = Some(json!({"error": message}));
+            }
+            _ => {}
+        }
+
+        raw_events.push(event);
+    }
+
+    (content_delta_out, thinking_delta_out)
+}
+
+// ---------------------------------------------------------------------------
+// Token usage extraction
+// ---------------------------------------------------------------------------
 
 /// Read a streaming text delta from a Responses API event.
 pub(super) fn read_stream_text_delta(value: Option<&Value>) -> String {
@@ -22,11 +267,19 @@ pub(super) fn extract_token_usage(response: &Value) -> ChatTokenUsage {
     ChatTokenUsage {
         input_tokens: read_first_i64(
             usage,
-            &[&["input_tokens"], &["prompt_tokens"], &["total_input_tokens"]],
+            &[
+                &["input_tokens"],
+                &["prompt_tokens"],
+                &["total_input_tokens"],
+            ],
         ),
         output_tokens: read_first_i64(
             usage,
-            &[&["output_tokens"], &["completion_tokens"], &["total_output_tokens"]],
+            &[
+                &["output_tokens"],
+                &["completion_tokens"],
+                &["total_output_tokens"],
+            ],
         ),
         cache_creation_input_tokens: read_first_i64(
             usage,
@@ -57,6 +310,10 @@ pub(super) fn extract_token_usage(response: &Value) -> ChatTokenUsage {
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Reasoning text / items
+// ---------------------------------------------------------------------------
 
 /// Extract thinking/reasoning text from a completed Responses API response.
 pub(super) fn extract_response_thinking(response: &Value) -> String {
@@ -131,6 +388,10 @@ pub(super) fn collect_text_values(value: &Value, chunks: &mut Vec<String>) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Tool calls
+// ---------------------------------------------------------------------------
+
 /// Collect tool calls from a Responses API JSON tree.
 ///
 /// Detects items whose `type` is one of the known tool-call variants, or
@@ -170,6 +431,10 @@ pub(super) fn collect_tool_calls(value: Option<&Value>, calls: &mut Vec<Value>) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Reasoning items
+// ---------------------------------------------------------------------------
+
 /// Collect reasoning output items from a Responses API output tree.
 ///
 /// Unlike `collect_reasoning_text` (which extracts text only), this function
@@ -205,6 +470,10 @@ pub(super) fn collect_reasoning_items(value: Option<&Value>, items: &mut Vec<Val
         _ => {}
     }
 }
+
+// ---------------------------------------------------------------------------
+// Output text
+// ---------------------------------------------------------------------------
 
 /// Read a string field from a Responses API response object.
 pub(super) fn read_response_string(response: &Value, key: &str) -> Option<String> {
@@ -261,5 +530,3 @@ pub(super) fn collect_output_text(value: Option<&Value>, chunks: &mut Vec<String
         _ => {}
     }
 }
-
-

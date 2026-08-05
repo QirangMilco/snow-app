@@ -47,6 +47,7 @@ export const PALETTE_ROLE_TO_CSS_VAR: Record<keyof ThemePalette, string> = {
   accentBlue: "--accent-blue",
   accentBlueBg: "--accent-blue-bg",
   accentBlueText: "--accent-blue-text",
+  accentColor: "--accent-color",
   onSolid: "--on-solid",
   selectionBg: "--selection-bg",
   focusRing: "--focus-ring",
@@ -195,6 +196,11 @@ export const COLOR_GROUPS: ColorGroup[] = [
         labelKey: "settings.themeColorAccentBlueText",
         defaultLabel: "Blue text",
       },
+      {
+        role: "accentColor",
+        labelKey: "settings.themeColorAccentColor",
+        defaultLabel: "Accent color",
+      },
     ],
   },
   {
@@ -262,6 +268,7 @@ export function emptyPalette(): ThemePalette {
     accentBlue: "",
     accentBlueBg: "",
     accentBlueText: "",
+    accentColor: "",
     onSolid: "",
     selectionBg: "",
     focusRing: "",

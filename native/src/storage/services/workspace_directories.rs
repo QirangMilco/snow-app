@@ -100,6 +100,32 @@ pub fn upsert_workspace_directory(
         })
 }
 
+/// Look up the kind of a workspace directory by its `directory_id`.
+/// Returns `Ok(None)` when the directory_id does not exist.
+pub fn get_workspace_directory_kind(
+    database_path: &Path,
+    directory_id: &str,
+) -> Result<Option<String>> {
+    let trimmed = directory_id.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    database::open_connection(database_path)
+        .and_then(|connection| {
+            connection
+                .query_row(
+                    "SELECT kind FROM workspace_directories WHERE directory_id = ?1 LIMIT 1",
+                    [trimmed],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+        })
+        .map_err(|error| {
+            database::database_error(database_path, "get workspace directory kind", error)
+        })
+}
+
 /// Look up the filesystem path of a workspace directory by its `directory_id`.
 /// Returns `Ok(None)` when the directory_id does not exist.
 pub fn get_workspace_directory_path(

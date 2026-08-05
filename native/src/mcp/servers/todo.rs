@@ -485,7 +485,7 @@ impl McpService for TodoService {
                     "action": {
                         "type": "string",
                         "enum": ["get", "add", "update", "delete"],
-                        "description": "Which operation to run on the session TODO list."
+                        "description": "Which operation to run on the session TODO list;Optional values (get, add, update, delete)."
                     },
                     "sessionId": {
                         "type": "string",

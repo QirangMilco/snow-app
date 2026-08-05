@@ -33,7 +33,8 @@ pub struct ConversationContextRequest<'a> {
     /// When true, replace the built-in system prompt with the Goal Mode prompt.
     pub goal_mode: bool,
     /// JSON-encoded list of user system prompt IDs configured for the active
-    /// API profile. Empty string means "follow the global active list";
+    /// API profile. Empty string means "follow the active prompts that apply
+    /// to the current workspace";
     /// `__DISABLED__` or an empty array opts out. Resolved into prompt
     /// contents and injected as leading `system` messages, mirroring
     /// Snow CLI's `getCustomSystemPromptForConfig`.

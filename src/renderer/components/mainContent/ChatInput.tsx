@@ -16,6 +16,9 @@ export const ChatInput = ({
   draftToRestore = null,
   autoSendToken = 0,
   onDraftRestored,
+  saveInputDraft,
+  getInputDraft,
+  clearInputDraft,
   pendingMessages = [],
   onWithdrawPendingMessage,
   onSendPendingMessageNow,
@@ -48,6 +51,9 @@ export const ChatInput = ({
     draftToRestore,
     autoSendToken,
     onDraftRestored,
+    saveInputDraft,
+    getInputDraft,
+    clearInputDraft,
   });
 
   return (

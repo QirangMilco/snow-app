@@ -18,6 +18,8 @@ type UseMenuPositionOptions = {
   placement: MenuPlacement;
   triggerRef: RefObject<HTMLElement | null>;
   panelRef: RefObject<HTMLElement | null>;
+  /** 固定锚点坐标（如右键菜单的光标位置）。非空时以该点代替触发元素矩形进行定位。 */
+  anchorPoint?: { x: number; y: number } | null;
   /** 额外需要随其尺寸变化而重新定位的容器（如联动面板）。 */
   observeRefs?: Array<RefObject<HTMLElement | null>>;
   /** 每次重新定位后回调（用于联动其它面板）。 */
@@ -28,7 +30,7 @@ const MENU_GAP = 4;
 const VIEWPORT_MARGIN = 8;
 
 /**
- * 悬浮菜单定位：基于触发元素与面板尺寸计算固定定位坐标，
+ * 悬浮菜单定位：基于触发元素（或固定锚点）与面板尺寸计算固定定位坐标，
  * 支持上下/左右自适应翻转，并跟随滚动、窗口缩放与容器尺寸变化重新定位。
  */
 export function useMenuPosition({
@@ -36,6 +38,7 @@ export function useMenuPosition({
   placement,
   triggerRef,
   panelRef,
+  anchorPoint,
   observeRefs,
   onReposition,
 }: UseMenuPositionOptions): {
@@ -47,16 +50,34 @@ export function useMenuPosition({
   observeRefsRef.current = observeRefs;
   const onRepositionRef = useRef(onReposition);
   onRepositionRef.current = onReposition;
+  const anchorPointRef = useRef(anchorPoint);
+  anchorPointRef.current = anchorPoint;
 
   const updatePosition = useCallback((): void => {
-    const trigger = triggerRef.current;
     const panel = panelRef.current;
 
-    if (!trigger || !panel) {
+    if (!panel) {
       return;
     }
 
-    const triggerRect = trigger.getBoundingClientRect();
+    // 固定锚点（如右键光标位置）视为零尺寸触发矩形；否则取触发元素矩形
+    let triggerRect: Pick<DOMRect, "top" | "bottom" | "left" | "right">;
+    const anchor = anchorPointRef.current;
+    const trigger = triggerRef.current;
+    if (anchor) {
+      triggerRect = {
+        top: anchor.y,
+        bottom: anchor.y,
+        left: anchor.x,
+        right: anchor.x,
+      };
+    } else {
+      if (!trigger) {
+        return;
+      }
+      triggerRect = trigger.getBoundingClientRect();
+    }
+
     const panelRect = panel.getBoundingClientRect();
 
     let side: "above" | "below" | "left" | "right";
@@ -140,7 +161,7 @@ export function useMenuPosition({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [isOpen, updatePosition, panelRef, triggerRef]);
+  }, [isOpen, updatePosition, panelRef, triggerRef, anchorPoint]);
 
   return { position, updatePosition };
 }

@@ -1,0 +1,89 @@
+# 7-Codebase Index & Code Diagnostics
+
+Snow App provides codebase semantic search (the `codebase` server) and code
+symbol diagnostics (the `codelens` server) to help the agent understand,
+locate and check code quickly.
+
+## 1. Codebase semantic search (codebase)
+
+### 1.1 Enable and index
+
+`codebase-search` is **only exposed when the project has codebase indexing
+enabled and an index has been built**. Enable indexing for the project in
+**Settings → Codebase Settings** (`app-control-openSettings
+page=codebase-settings`) and configure the embedding model (see the
+`codebase` field of `settings.json`; structure is documented in
+`3-config-file-field-reference`). The first index may take a few minutes.
+
+### 1.2 Tool
+
+| Tool | Purpose |
+| --- | --- |
+| `codebase-search` | Semantic search over the embedding index |
+
+Parameters: `pattern` (query text), `path` (limit directory), `fileGlob`
+(limit file types), `maxResults` (result cap).
+
+### 1.3 Example
+
+```text
+codebase-search pattern="how is config backslash escaping handled" path="src/main" maxResults=10
+→ returns semantically related code snippets
+
+codebase-search pattern="retry logic" fileGlob="*.rs" maxResults=5
+→ search Rust files only
+```
+
+### 1.4 Choosing between grep and codebase
+
+| Scenario | Use |
+| --- | --- |
+| Exact keywords, regex, path-limited search | `grep-search` (faster, precise) |
+| Semantic/intent queries ("find the login handling logic") | `codebase-search` (understands meaning) |
+
+## 2. Code diagnostics & symbol location (codelens)
+
+The `codelens` server performs lightweight static analysis (oxc /
+tree-sitter based) without running a full LSP.
+
+### 2.1 Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `codelens-diagnose` | Syntax/semantic diagnostics, returns an error list (TS/JS/Python/Rust/Go/C/C++/Java/C#/Ruby/PHP and more) |
+| `codelens-find_definition` | Find a symbol's definition location |
+| `codelens-find_references` | Find a symbol's references within the file |
+| `codelens-file_outline` | Get a file's symbol outline (functions/classes/variables) |
+
+### 2.2 Examples
+
+```text
+# Check syntax before editing
+codelens-diagnose filePath=src/renderer/app.tsx
+→ returns errors: [{message, line, column, severity}]
+
+# Understand file structure
+codelens-file_outline filePath=src/main/app/bootstrap.ts
+→ top-level symbol list
+
+# Jump to definition (pair with filesystem-read)
+codelens-find_definition filePath=src/main/native/types.ts line=414 column=20
+→ symbol name + definition location
+```
+
+### 2.3 Notes
+
+- `find_definition`/`find_references` locate symbols by **line + column**:
+  use `filesystem-read` to find the target position first;
+- Diagnostics are static semantic analysis (oxc/tree-sitter) and may differ
+  subtly from a real compiler; run `tsc --noEmit` / `cargo check` for
+  authoritative results.
+
+## 3. Typical workflow
+
+```text
+1. Understand    → codelens-file_outline + filesystem-read key files
+2. Locate        → grep-search (keywords) or codebase-search (semantic)
+3. Verify edits  → codelens-diagnose to catch syntax/unresolved issues fast
+4. Formal check  → project build commands (tsc / cargo check / npm run check)
+```

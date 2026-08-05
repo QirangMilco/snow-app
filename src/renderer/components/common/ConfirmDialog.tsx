@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 
@@ -15,6 +15,8 @@ type ConfirmDialogProps = {
   onConfirm: () => void;
   onCancel: () => void;
   variant?: "default" | "warning" | "danger";
+  className?: string;
+  children?: ReactNode;
 };
 
 export const ConfirmDialog = ({
@@ -28,6 +30,8 @@ export const ConfirmDialog = ({
   onConfirm,
   onCancel,
   variant = "default",
+  className,
+  children,
 }: ConfirmDialogProps): React.JSX.Element | null => {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -57,7 +61,7 @@ export const ConfirmDialog = ({
       }}
     >
       <div
-        className={`confirm-dialog confirm-dialog-${variant}`}
+        className={`confirm-dialog confirm-dialog-${variant}${className ? ` ${className}` : ""}`}
         ref={dialogRef}
         tabIndex={-1}
       >
@@ -68,7 +72,8 @@ export const ConfirmDialog = ({
           </div>
         </div>
         <div className="confirm-dialog-body">
-          <p>{message}</p>
+          {message ? <p>{message}</p> : null}
+          {children}
         </div>
         <div className="confirm-dialog-actions">
           {cancelLabel && (

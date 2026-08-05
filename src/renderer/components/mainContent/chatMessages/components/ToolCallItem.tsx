@@ -13,7 +13,9 @@ import {
   CodebaseToolCall,
   CodeLensToolCall,
   WebSearchToolCall,
+  ImageGenToolCall,
   BrowserToolCall,
+  TerminalToolCall,
 } from "../toolCalls";
 import { ToolCallNode } from "../toolCalls/shared/ToolCallNode";
 import { useI18n } from "../../../../i18n";
@@ -113,8 +115,16 @@ export const ToolCallItem = memo(
       return <WebSearchToolCall toolCall={toolCall} />;
     }
 
+    if (toolCall.name === "imagegen-generate") {
+      return <ImageGenToolCall toolCall={toolCall} />;
+    }
+
     if (toolCall.name.startsWith("browser-")) {
       return <BrowserToolCall toolCall={toolCall} />;
+    }
+
+    if (toolCall.name.startsWith("terminal-")) {
+      return <TerminalToolCall toolCall={toolCall} />;
     }
 
     const effectiveStatus = hasResultError(toolCall.result)

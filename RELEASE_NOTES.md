@@ -1,5 +1,261 @@
 # Release Notes
 
+## v0.1.19
+
+## Bug Fixes
+
+- Responses Request to resend the request repeatedly.
+
+## v0.1.18
+
+## New Features
+
+- Added image generation feature
+- Significantly reduced database usage
+- Optimized first launch speed
+- Scheduled tasks project isolation
+- Input box supports dragging and dropping images and files from external sources
+- Added copy function to configuration file
+- Optimized UI display of some components
+
+
+## v0.1.17
+
+## New Features
+
+- **Image-to-Image Editing with Reference Images**: Attached images are always
+  used as references for image-to-image editing (OpenAI `/images/edits`
+  multipart / Gemini `inlineData`). When the main model does not support
+  vision, the textification pass (`api/vision.rs`) injects a
+  `[Reference image #N for imagegen-generate: {"path": ..., "mimeType": ...}]`
+  block per image — a small relative path under the upload/ directory instead
+  of a huge base64 blob — plus an explicit guidance line telling the model to
+  edit the attached images rather than regenerate from the description alone.
+  `imagegen-generate` resolves `path` references itself (restricted to the
+  upload/ directory, traversal rejected; server limit 14 images / ≤20MB each,
+  tool description guides the model to ≤5). Reference thumbnails on the
+  generation card show real images for both inline base64 and `path`
+  references (read from disk via a new `images:resolve-upload-image` IPC
+  channel, cached per session).
+- **Imagegen Model Capability Validation & 400 Protection**: `imagegen-generate`
+  now validates model capabilities before sending the request, so the most
+  common provider 400 errors are prevented or self-healed: `dall-e-3` is
+  text-to-image only (reference images are rejected with a clear
+  switch-model hint) and always generates exactly 1 image (`n>1` is clamped);
+  `imagen-*` models are text-to-image only as well. Upstream 400 responses are
+  annotated with a concrete fix hint (image count / image input / size /
+  quality), letting the agent retry correctly in one step, and the tool's
+  `model` parameter description now documents the capability rules up front.
+- **Max Concurrent Generations**: A global `maxConcurrentImages` setting
+  (1–8, default 4, in Settings → Image generation and the `imagegen` config
+  scope) caps how many generation requests run in parallel when the agent
+  requests several images at once; the rest wait in a queue and a new one
+  starts as soon as one finishes.
+- **Per-Conversation Input Draft Persistence**: Draft text (including image
+  chips) is saved per conversation and restored when switching back or
+  creating a new chat, so input is never lost while the chat view reloads.
+- **Image Library (Generated Image Management)**: Every generated image is
+  now persisted to an `image/` folder next to the app installation directory
+  (falls back to the storage directory when the install dir is read-only) and
+  indexed in a new `image_library` table (model / provider / prompt / mime /
+  size / dimensions / timestamp). Chat messages store the small `image/...`
+  path reference instead of the huge base64 blob, so the database stops
+  bloating. A new **Image library** panel (Settings sidebar) offers a
+  filterable grid (ratio landscape/square/portrait, time range, provider,
+  model) with click-to-zoom lightbox, per-image download, and delete —
+  deleting an image physically removes the file, its index row, **and
+  rewrites the referencing chat messages** (both `content` and `raw_json`) so
+  conversations stay consistent. Historical base64 images keep rendering
+  unchanged; if persistence fails the inline base64 fallback still works.
+  When deleting a conversation, a dedicated **delete-confirmation modal**
+  (single and batch delete alike) shows an **"also delete generated images"**
+  checkbox when the selected conversations reference library images — ticking
+  it cascade-deletes every library image referenced by those conversations
+  (files + index rows) before the conversation goes away, while the note
+  "uncheck to keep generated images in the image library" makes the default
+  keep-behavior explicit.
+
+## Improvements
+
+- **Unified Delete-Confirmation Modal**: Conversation deletion now uses a
+  dedicated modal (`ChatDeleteConfirmModal`) shared by single and batch
+  delete — the inline confirmation view inside the item context menu and the
+  batch-confirm bar were removed. When opened, the modal queries how many
+  library images the selected conversations reference and, if any, shows an
+  **"also delete generated images"** checkbox (default unchecked, with an
+  explicit "uncheck to keep images in the library" note). Confirming runs a
+  single unified path: optional cascade image deletion first, then
+  conversation deletion (single delete keeps the sub-agent cascade abort /
+  draft cleanup; batch stays one native transaction). Deleting is guarded by
+  an in-flight state so the dialog cannot be dismissed or double-submitted.
+- **Unified Gallery Layout for Parallel Image Generations**: Images from a
+  single `imagegen-generate` call now share one row width — the gallery grid
+  sizes its columns to the batch so it reads as one cohesive block that fills
+  the message width instead of ragged auto-fill columns: 2–4 images share a
+  single row, 5–6 use three columns over two rows, 7–8 use four columns over
+  two rows (no lone tail image). Card aspect ratio follows the real
+  generated-image ratio (median of the batch): ultra-wide images span the
+  full row and ultra-tall ones are height-capped so extreme aspect ratios
+  stay pleasant. The per-card frame and download/label chrome was removed in
+  favor of a clean image with a subtle index badge and click-to-zoom; the
+  download action now lives in the lightbox only.
+- **Image Generation Settings Panel (aligned with the API settings panel)**:
+  channel rows no longer show redundant provider icons, the provider dropdown
+  uses the shared `CustomSelect` component, and the inline enable toggle
+  refuses to enable a channel that has no API key or model (with a
+  localized hint) — matching the backend rule that only fully configured
+  channels expose the generation tool to the agent.
+
+## Bug Fixes
+
+- **i18n Placeholder Syntax**: `settings.imagegenChannelCount` and
+  `settings.imageLibraryCount` used the single-brace `{count}` placeholder
+  format, so the channel count and image-library count rendered literally
+  instead of interpolated; both now use the `{{count}}` syntax.
+- Remove temperature parameter
+- Anthropic thinking.effort is discarded after being read
+
+## v0.1.16
+
+## New Features
+
+- **Native Image Generation MCP Server**: A new built-in `imagegen` MCP server
+  exposes the `imagegen-generate` tool with dual-channel support —
+  OpenAI-compatible Images API (`/v1/images/generations` and
+  `/v1/images/edits`, supporting `b64_json`/`url` response formats, quality,
+  output format/compression, up to 4 images per call, and streaming
+  partial-image previews) and Google Gemini (Nano Banana 2+ models via the
+  Interactions API with aspect ratios, image sizes up to 4K, thinking levels,
+  and Google Search grounding). The tool is only visible to the model when at
+  least one channel is configured and enabled. A DB-backed `imagegen` config
+  scope handles channel persistence with legacy format migration, and
+  streaming preview images survive conversation reloads.
+- **Image Generation Settings Panel**: A graphical multi-channel management
+  panel with table + modal editing, inline enable toggles (instant save),
+  model capability linked dropdowns (Gemini size × aspect ratio combos like
+  16:9@2K, GPT image recommended resolution tables), alias and
+  deprecated/preview badges, and automatic correction of unsupported
+  size/quality combinations when switching models.
+- **Image Generation Gallery**: Generated images in chat are rendered as a
+  Polaroid-style framed photo gallery with layered shadows and hover lift
+  effects. A portaled lightbox with frosted backdrop supports full-screen
+  viewing and download. Streaming previews display inside the same frame with
+  a frame counter.
+- **Terminal MCP Server**: A new built-in terminal MCP server exposes `open`,
+  `send`, `read`, `resize`, `wait`, `close`, `focus`, and `list` tools for
+  interactive terminal tabs. Commands are bridged from the native core through
+  Electron IPC to xterm.js PTY instances. The server is disabled by default
+  and only exposed when a project explicitly enables it, keeping optional
+  tools out of the model context to save tokens.
+- **Embedded Terminal UX Polish**: The default Windows shell now prefers pwsh
+  (PowerShell 7) over cmd.exe. Terminal keybindings include Ctrl+C
+  copy-selection, Ctrl+V / Shift+Insert / Ctrl+Shift+C paste-or-copy, and
+  Ctrl+Insert copy. A right-click context menu (copy/paste/select all/clear)
+  uses main-process clipboard IPC. Clickable links open in the embedded
+  browser, full ANSI 16-color palettes are applied for light/dark themes,
+  terminal tabs auto-close on clean exit (code 0), and orphaned PTY sessions
+  are killed on renderer navigation.
+- **Bash Detached Background Execution**: Bash tool calls now support detached
+  background execution with run-level stream metrics, enabling long-running
+  commands without blocking the agent loop.
+- **Third-Party Configuration Import**: Unified import discovery and import
+  workflows for Claude Code, OpenCode, and Codex configurations. A settings
+  page provides a graphical import interface with transactional semantics
+  (all-or-nothing on failure) and project-scoped system prompt import.
+- **Plugin Marketplaces & Google Theme**: Added plugin marketplace support
+  with a management UI, plus a new Google theme preset.
+- **Config Server Full Coverage**: The built-in `config` server now manages
+  every config file under `~/.snow/` — 11 file scopes (`settings`, `snowcfg`
+  with all 30 keys, `proxy`, `app`, `custom-headers`, `system-prompt`,
+  `theme`, `language`, `permissions`, `lsp-config`, `buddy`) plus the
+  existing DB-backed scopes (`subAgents`/`hooks`/`skills`) and a new
+  read-only `logs` scope for agent-driven diagnostics (`~/.snow/log`
+  listing, tail reads with `limit`, level shortcuts). A new `ValueType::Number`
+  supports float values (e.g. `theme.diffOpacity`).
+- **Project-Scoped mcpServers & sensitiveCommands**: Passing `projectId` to
+  `settings.mcpServers` / `settings.sensitiveCommands` now reads/writes
+  project-level config in the app database (full-replace semantics;
+  sensitive-command ids matching global rules become enabled overrides,
+  others become project custom rules).
+- **Deep Structural Validation**: `settings.codebase`, `custom-header
+schemes`, `system-prompt prompts` and `lsp-config servers` are deeply
+  validated on write (known fields type-checked, unknown fields allowed for
+  forward compatibility), so an agent cannot corrupt nested config.
+- **Per-Conversation Plan/Goal Mode Isolation**: Plan Mode, Goal Mode, and
+  Goal token budget are now persisted per conversation (NULL = unset, follows
+  the global default). The session ref is the single runtime authority —
+  agent loop, tool execution, compaction, and sub-agents all read the owning
+  session's mode snapshot, so a background conversation can no longer be
+  hijacked by another session's toggles. Conversation switches no longer
+  write global settings; Plan Mode approvals are invalidated per session only.
+- **Browser MCP Enhancements**: Added `browser-evaluate` for executing page
+  JavaScript with JSON-safe results, `browser-type` with fill, key-by-key
+  delay, empty-value clearing and optional submit, and extended
+  `browser-devtools` with console level filtering, per-webview network
+  records, and dialog (alert/confirm/prompt) handling via CDP with debugger
+  recovery after DevTools closes.
+- **Multi-Select Batch Delete Conversations**: The sidebar chat list now
+  supports multi-select mode for batch deleting conversations, with
+  collapsible pinned and chat sections to keep long lists manageable.
+- **User Interaction Tool — Manual Action Wait**: The `user_interaction` tool
+  now supports waiting for the user to complete a manual action the agent
+  cannot perform itself, broadening its purpose beyond clarification
+  questions.
+- **Git Panel Context Menus**: Right-clicking a commit row in the git graph
+  now opens a context menu to copy the full/short hash or commit message, and
+  to expand/collapse commit details. The top-bar project label card also
+  responds to right-click (previously swallowed by the window drag region).
+- **Content Tag Chips in Message Rail**: The user message rail popover now
+  renders file, image, commit, change, and text-snippet tags as inline chips
+  instead of stripping them to plain text, with capped chip widths and
+  pending-message preview theming for Cream and Google presets.
+- **Tab Cleanup & Ctrl-Click Navigation**: Added tab cleanup and Ctrl+click
+  file navigation in the right panel.
+
+## Improvements
+
+- **Database Migration Refactor**: Refactored the database migration logic
+  with pre- and post-migration hooks, updated API configuration default
+  values, enhanced thinking option support, and updated internationalization
+  texts.
+- **Design Token Extraction**: Extracted theme tokens, highlight.js styles,
+  theme settings panel styles, and Cream/Google preset styles out of
+  `styles.css` into dedicated files under `src/renderer/themes/`. Added the
+  `accentColor` field to `ThemePalette` across native, preload, and renderer
+  layers. The main `styles.css` was reduced by ~3,400 lines.
+- **Third-Party Settings Refinement**: Refined the third-party settings UI
+  and import configuration formatting; removed obsolete test files.
+- **Preset Themes Update**: Updated preset themes for memo, scheduled task,
+  and git commit buttons.
+- **Context Menu States & Responsive Layout**: Added context menu item
+  disabled/hover states and narrow-window responsive layout adjustments.
+- **Docs Coverage**: Added a config-file field reference (every file's fields
+  with types and sensitive markers), browser-automation and codebase/diagnostics
+  guides (zh/en), data storage locations and architecture overview guides,
+  image generation guides with resolution tables, and chat/terminal/Git panel
+  guides. Aligned the `snow-app-docs` skill with the full config coverage.
+
+## Bug Fixes
+
+- **Sub-Agent Plan/Goal Mode Isolation**: Plan/Goal/Goal-budget toggles are
+  disabled in sub-agent conversations so toggling can no longer pollute the
+  global mode defaults; the terminal sub-agent status event is broadcast
+  immediately after the read-only flag to shrink the input-visible-but-sends-
+  dropped window; `isSubAgentFinished` now uses a terminal-status whitelist
+  and `subAgentStatus` is null-guarded. Three additional session-mode
+  isolation race holes were closed.
+- **Browser Network Recorder Startup Block**: Fixed the browser network
+  recorder from blocking application startup.
+- **Third-Party Import Hardening**: Made third-party imports transactional
+  (all-or-nothing on failure), hardened the import workflows, corrected import
+  discovery type inference, and resolved TypeScript errors in plugin imports.
+- **Imported System Prompts Scope**: Imported system prompts are now
+  correctly scoped to projects instead of leaking globally.
+- **Reader Relative Links**: Relative markdown links in the reader now open in
+  a new reader tab instead of triggering a blank navigation.
+- **Chat Completions Tool Calls**: Normalized tool calls for Chat Completions
+  and fixed conversation mode handling.
+
 ## v0.1.15
 
 ## New Features
@@ -39,6 +295,8 @@
 
 ## New Features
 
+- **Agent-Managed Sub-Agents & Hooks**: The built-in `config` MCP server now exposes three new scopes — `subAgents` (create/update/delete sub-agents, global or project-scoped via `projectId`), `hooks` (configure all 9 lifecycle hooks, global or project-scoped) and `skills` (toggle/install/uninstall skills, delegating to the skill manager). Sub-agent and hook configs are written directly to the app database, identical to the UI settings panels, and take effect immediately. The former `skills-config-*` tools have been removed in favor of the `config` server's `skills` scope.
+- **Project-Scoped Sub-Agents**: The `sub_agent_configs` table gains a `project_id` column (composite unique key, automatic migration for existing databases). The sub-agent settings panel adds Global/Project scope tabs, and sub-agent activation resolves project-scoped agents first, falling back to the global one with the same id.
 - **App Error Boundary**: Added an application-level error boundary that automatically refreshes and self-heals when dynamic sub-package loading fails. Refresh attempts are limited via `sessionStorage` to prevent infinite refresh loops when build artifacts are missing.
 - **Direct Sub-Agent Interaction**: Sub-agent sessions are no longer read-only — they now use the regular `ChatInput` for direct interaction, and the separate monitor UI has been removed. The sub-agent model is fixed to its own `advancedModel` to prevent misleading model memorization by the parent session.
 - **Collapsible Projects Section**: The Projects section in the sidebar is now collapsible, with its expand/collapse state persisted to `localStorage`.

@@ -36,6 +36,19 @@ const hasOwnTools = (
   serverId: string
 ): boolean => Object.prototype.hasOwnProperty.call(toolsByServerId, serverId);
 
+const formatServerError = (
+  error: string,
+  t: (key: string, options?: { defaultValue?: string }) => string
+): string => {
+  if (error === "imagegen:not_configured") {
+    return t("projectMcp.serverErrorImagegenNotConfigured", {
+      defaultValue:
+        "No image generation channel configured. Configure at least one channel in Settings -> Image generation.",
+    });
+  }
+  return error;
+};
+
 export const ProjectMcpPanel = ({
   open,
   projectId,
@@ -345,20 +358,17 @@ export const ProjectMcpPanel = ({
                       : t("projectMcp.toolsOnDemand")}
                   </span>
                 </button>
-                <label
-                  className={`project-mcp-switch${
-                    serverDisabled ? " is-unavailable" : ""
-                  }`}
-                >
+                <label className="toggle-switch">
                   <input
                     checked={server.enabled}
                     disabled={serverDisabled}
+                    hidden
                     onChange={(event) =>
                       void updateServer(server, event.target.checked)
                     }
                     type="checkbox"
                   />
-                  <span aria-hidden="true" />
+                  <span className="toggle-slider" />
                 </label>
               </div>
               {serverDisabled ? (
@@ -369,7 +379,7 @@ export const ProjectMcpPanel = ({
               {server.error ? (
                 <div className="project-mcp-server-error">
                   <AlertCircle size={14} />
-                  <span>{server.error}</span>
+                  <span>{formatServerError(server.error, t)}</span>
                 </div>
               ) : null}
               {expanded ? (
@@ -411,16 +421,11 @@ export const ProjectMcpPanel = ({
                           <strong>{toolDisplayName(tool.name)}</strong>
                           <span>{tool.description}</span>
                         </div>
-                        <label
-                          className={`project-mcp-switch project-mcp-tool-switch${
-                            !server.globalEnabled || !server.enabled
-                              ? " is-unavailable"
-                              : ""
-                          }`}
-                        >
+                        <label className="toggle-switch">
                           <input
                             checked={tool.enabled}
                             disabled={!server.globalEnabled || !server.enabled}
+                            hidden
                             onChange={(event) =>
                               void updateTool(
                                 server,
@@ -430,7 +435,7 @@ export const ProjectMcpPanel = ({
                             }
                             type="checkbox"
                           />
-                          <span aria-hidden="true" />
+                          <span className="toggle-slider" />
                         </label>
                       </div>
                     ))

@@ -32,6 +32,21 @@ const McpSettingsPanel = lazy(() =>
     default: m.McpSettingsPanel,
   }))
 );
+const ImportSettingsPanel = lazy(() =>
+  import("./sidebar/ImportSettingsPanel").then((m) => ({
+    default: m.ImportSettingsPanel,
+  }))
+);
+const ImageGenSettingsPanel = lazy(() =>
+  import("./sidebar/ImageGenSettingsPanel").then((m) => ({
+    default: m.ImageGenSettingsPanel,
+  }))
+);
+const ImageLibraryPanel = lazy(() =>
+  import("./sidebar/ImageLibraryPanel").then((m) => ({
+    default: m.ImageLibraryPanel,
+  }))
+);
 const PrivacySettingsPanel = lazy(() =>
   import("./sidebar/PrivacySettingsPanel").then((m) => ({
     default: m.PrivacySettingsPanel,
@@ -139,6 +154,10 @@ export const MainContent = ({
         <Suspense fallback={<LazyPanelFallback />}>
           {activeView === "api-settings" ? (
             <ApiSettingsTreePanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "imagegen-settings" ? (
+            <ImageGenSettingsPanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "image-library" ? (
+            <ImageLibraryPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "proxy-browser-settings" ? (
             <ProxyBrowserSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "codebase-settings" ? (
@@ -161,6 +180,8 @@ export const MainContent = ({
               activeDirectory={activeDirectory}
               onClose={() => onSelectView("chat")}
             />
+          ) : activeView === "import-settings" ? (
+            <ImportSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "skills-settings" ? (
             <SkillsSettingsPanel
               activeDirectory={activeDirectory}

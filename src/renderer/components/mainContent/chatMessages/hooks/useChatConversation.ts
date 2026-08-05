@@ -4,6 +4,7 @@ import type { ApiConfigRecord } from "../../../../../preload";
 
 import type {
   ConversationContextValue,
+  GlobalModeDefaults,
   FileChangeRecord,
   PauseController,
   UseChatConversationResult,
@@ -84,8 +85,9 @@ export const useChatConversation = (
       setFileChangeStats((prev) => {
         const existing = prev[conversationId] ?? [];
         const existingKeys = new Set(
-          existing.map((record) =>
-            `${record.filePath}\u0000${record.kind}\u0000${record.timestamp}\u0000${record.agent}`
+          existing.map(
+            (record) =>
+              `${record.filePath}\u0000${record.kind}\u0000${record.timestamp}\u0000${record.agent}`
           )
         );
         const fresh = records.filter(
@@ -155,6 +157,33 @@ export const useChatConversation = (
   const pendingQueueRef = useRef<
     ConversationContextValue["pendingQueueRef"]["current"]
   >(new Map());
+  // Per-conversation input drafts. Stored in a ref (no re-render on every
+  // keystroke). ChatInput saves on change and unmount, restores on mount,
+  // and clears after a successful send. New-chat drafts (conversationId
+  // undefined) live under PENDING_SESSION_KEY and are cleared on send.
+  const inputDraftsRef = useRef<Record<string, string>>({});
+  const inputDraftKeyFor = useCallback(
+    (conversationId: string | undefined): string =>
+      conversationId ?? PENDING_SESSION_KEY,
+    []
+  );
+  const saveInputDraft = useCallback(
+    (conversationId: string | undefined, content: string): void => {
+      inputDraftsRef.current[inputDraftKeyFor(conversationId)] = content;
+    },
+    [inputDraftKeyFor]
+  );
+  const getInputDraft = useCallback(
+    (conversationId: string | undefined): string | undefined =>
+      inputDraftsRef.current[inputDraftKeyFor(conversationId)],
+    [inputDraftKeyFor]
+  );
+  const clearInputDraft = useCallback(
+    (conversationId: string | undefined): void => {
+      delete inputDraftsRef.current[inputDraftKeyFor(conversationId)];
+    },
+    [inputDraftKeyFor]
+  );
   const handleSendMessageRef = useRef<
     (message: string, options: ChatInputSendOptions) => void
   >(() => {});
@@ -170,6 +199,16 @@ export const useChatConversation = (
   const yoloModeRef = useRef(yoloMode);
   const planModeRef = useRef(planMode);
   const goalModeRef = useRef(goalMode);
+  // Global Plan/Goal Mode defaults from persisted settings. Mutated ONLY by
+  // explicit user toggles (setPlanMode/setGoalMode/setGoalModeTokenBudget)
+  // and the initial settings load — never by conversation switches. This is
+  // what makes per-conversation isolation real: switching chats restores the
+  // target session's own mode and never touches these defaults.
+  const globalModeDefaultsRef = useRef<GlobalModeDefaults>({
+    planMode: false,
+    goalMode: false,
+    goalModeTokenBudget: 2000000,
+  });
   const alwaysApprovedToolsRef = useRef(new Set<string>());
   const pendingToolAuthorizationRef = useRef(
     new Map<
@@ -297,11 +336,13 @@ export const useChatConversation = (
     sessionsRef,
     newChatRequestedRef,
     pendingQueueRef,
+    inputDraftsRef,
     handleSendMessageRef,
     performCompactionRef,
     yoloModeRef,
     planModeRef,
     goalModeRef,
+    globalModeDefaultsRef,
     alwaysApprovedToolsRef,
     planApprovedSessionKeysRef,
     pendingToolAuthorizationRef,
@@ -345,6 +386,9 @@ export const useChatConversation = (
     migrateSession: () => {},
     addStreamingId: () => {},
     removeStreamingId: () => {},
+    saveInputDraft: () => {},
+    getInputDraft: () => undefined,
+    clearInputDraft: () => {},
     notifyAiComplete: () => {},
     notifySensitiveCommandIntercepted: () => {},
     notifyUserInteractionRequired: () => {},
@@ -359,6 +403,9 @@ export const useChatConversation = (
   ctx.migrateSession = sessionApi.migrateSession;
   ctx.addStreamingId = sessionApi.addStreamingId;
   ctx.removeStreamingId = sessionApi.removeStreamingId;
+  ctx.saveInputDraft = saveInputDraft;
+  ctx.getInputDraft = getInputDraft;
+  ctx.clearInputDraft = clearInputDraft;
   ctx.notifyAiComplete = sessionApi.notifyAiComplete;
   ctx.notifySensitiveCommandIntercepted =
     sessionApi.notifySensitiveCommandIntercepted;
@@ -490,6 +537,8 @@ export const useChatConversation = (
     streamTokenCount: activeSession?.streamTokenCount ?? 0,
     streamElapsedMs: activeSession?.streamElapsedMs ?? 0,
     streamTtftMs: activeSession?.streamTtftMs ?? 0,
+    runTtftMs: activeSession?.runTtftMs ?? 0,
+    baselineCheckpointId: activeSession?.baselineCheckpointId,
     streamStartedAt: activeSession?.streamStartedAt ?? 0,
     forkedFromConversationId: activeSession?.forkedFromConversationId,
     forkMessageCount: activeSession?.forkMessageCount,
@@ -528,6 +577,9 @@ export const useChatConversation = (
       rollbackApi.clearDraftToRestore();
       setAutoSendToken(0);
     },
+    saveInputDraft,
+    getInputDraft,
+    clearInputDraft,
     buildFromContent: (content: string) => {
       conversationManagementApi.handleNewChat();
       setDraftToRestore(content);

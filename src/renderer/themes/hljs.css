@@ -1,0 +1,220 @@
+/* ===== highlight.js theme — Light (AI Message + File Viewer + Compaction) ===== */
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-comment,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-quote {
+  color: #6b7280;
+  font-style: italic;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-keyword,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-tag,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-literal,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-section,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-link {
+  color: #8250df;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-function
+  .hljs-keyword {
+  color: #8250df;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-subst {
+  color: var(--text-primary);
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-string,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-attr,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-meta-string {
+  color: #0a3069;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-number,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-symbol,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-bullet,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-addition {
+  color: #0550ae;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-title,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-title.function_,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-name {
+  color: #6639ba;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-attribute,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-variable,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-template-variable {
+  color: #953800;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-built_in,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-type,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-class
+  .hljs-title {
+  color: #953800;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-tag {
+  color: #116329;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-class,
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-id {
+  color: #953800;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-deletion {
+  color: #82071e;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-regexp {
+  color: #0a3069;
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-params {
+  color: var(--text-primary);
+}
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown) .hljs-meta {
+  color: #6b7280;
+}
+
+/* ===== highlight.js theme — Dark (AI Message + File Viewer + Compaction) ===== */
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs {
+  color: var(--text-primary);
+  background: transparent;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-comment,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-keyword,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-tag,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-literal,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-section,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-link {
+  color: #bc8cff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-function
+  .hljs-keyword {
+  color: #bc8cff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-subst {
+  color: var(--text-primary);
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-string,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-attr,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-meta-string {
+  color: #a5d6ff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-number,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-symbol,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-bullet,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-addition {
+  color: #79c0ff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-title,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-title.function_,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-name {
+  color: #d2a8ff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-attribute,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-variable,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-template-variable {
+  color: #ffa657;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-built_in,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-type,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-class
+  .hljs-title {
+  color: #ffa657;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-tag {
+  color: #7ee787;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-class,
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-selector-id {
+  color: #ffa657;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-deletion {
+  color: #ffa198;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-regexp {
+  color: #a5d6ff;
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-params {
+  color: var(--text-primary);
+}
+:root[data-theme="dark"]
+  :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .hljs-meta {
+  color: #8b949e;
+}

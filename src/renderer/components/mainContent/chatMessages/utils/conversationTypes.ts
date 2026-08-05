@@ -70,6 +70,12 @@ export type ToolCallInfo = {
   result?: string;
   streamingStdout?: string;
   streamingStderr?: string;
+  /** 生图工具（imagegen-generate）流式预览图，按 index 排序。 */
+  streamingImages?: Array<{
+    index: number;
+    mimeType: string;
+    data: string;
+  }>;
   userQuestion?: UserQuestionState;
   authorizationId?: string;
   authorizationConversationId?: string;
@@ -138,7 +144,7 @@ export type FileChangeRecord = {
   /** The filePath argument passed to the filesystem tool (as the model
    *  supplied it, e.g. relative to the workspace root). */
   filePath: string;
-  kind: "create" | "edit";
+  kind: "create" | "edit" | "delete";
   /** Whether the change was made by the main agent loop or by a sub-agent
    *  running inside this conversation. */
   agent: "main" | "sub";
@@ -192,6 +198,10 @@ export type ConversationSessionState = {
   /** Time to first token in milliseconds. 0 until the first content
    *  or thinking delta arrives, then frozen for the iteration. */
   streamTtftMs: number;
+  /** TTFT of the first model iteration in the active run. */
+  runTtftMs: number;
+  /** First checkpoint in the conversation, used as the cumulative diff baseline. */
+  baselineCheckpointId?: string;
   /** Wall-clock timestamp (Date.now()) captured once when an agent loop
    *  starts, used by StreamMetrics to drive an accumulating elapsed timer
    *  that survives conversation switches between parallel streaming
@@ -211,7 +221,7 @@ export type ConversationSessionRef = {
   streamPromise: Promise<unknown> | null;
   /**
    * The in-flight `generateConversationSummary` promise. Resolved after the
-   * Rust backend finishes `update_conversation_summary`. Rollback awaits this
+   * backend finishes `update_conversation_summary`. Rollback awaits this
    * before issuing delete/truncate to avoid concurrent write-transaction races.
    */
   summaryPromise: Promise<unknown> | null;
@@ -226,6 +236,9 @@ export type ConversationSessionRef = {
    * execution).
    */
   runId: number;
+  /** Latest values reported by the current model iteration. */
+  iterationTokenCount: number;
+  iterationElapsedMs: number;
   directoryId?: string;
   checkpointIds: string[];
   /** Conversation ids of sub-agent sessions spawned by this conversation.
@@ -236,11 +249,24 @@ export type ConversationSessionRef = {
   planMode: boolean;
   /** Whether Goal Mode was active when this session was last used. */
   goalMode: boolean;
+  /** Goal Mode token budget in effect for this session (per-conversation
+   *  override when set, otherwise the global default at session creation). */
+  goalModeTokenBudget: number;
   /** Set once a sub-agent conversation's run has ended (completed, failed or
    *  cancelled). A terminated sub-agent conversation is read-only: the input
    *  box is hidden and handleSendMessage refuses to start a new loop in it.
    *  Only meaningful for sub-agent sessions; absent for main conversations. */
   subAgentTerminated?: boolean;
+};
+
+/** Global Plan/Goal Mode defaults loaded from persisted settings. These are
+ *  the values new/never-configured conversations inherit. They are only
+ *  mutated by explicit user toggles — never by conversation switches — so
+ *  each conversation's mode stays fully isolated. */
+export type GlobalModeDefaults = {
+  planMode: boolean;
+  goalMode: boolean;
+  goalModeTokenBudget: number;
 };
 
 /** Per-session pause controller stored in pauseControllerRef. When `paused`
@@ -343,7 +369,10 @@ export type ConversationContextValue = {
   /** Merge pre-built records into a conversation's stats, de-duplicating by
    *  (filePath, kind, timestamp, agent). Used to re-hydrate stats from
    *  persisted history after a restart or when reopening a conversation. */
-  mergeFileChangeStats: (conversationId: string, records: FileChangeRecord[]) => void;
+  mergeFileChangeStats: (
+    conversationId: string,
+    records: FileChangeRecord[]
+  ) => void;
   /** Conversation ids whose file-change stats have already been re-hydrated
    *  from persisted history during this renderer session. Guards against
    *  repeated sub-agent scans when the same conversation is reopened. */
@@ -389,6 +418,12 @@ export type ConversationContextValue = {
    *  that cannot read the latest React state directly. */
   newChatRequestedRef: RefValue<boolean>;
   pendingQueueRef: RefValue<Map<string, PendingQueueItem[]>>;
+  /** 按会话保存的输入草稿（conversationId -> 序列化 segments 字符串，含
+   *  文本/图片 chip 等）。切换会话或新建会话时 ChatInput 会因
+   *  isLoadingInitialHistory 卸载，草稿存这里避免输入丢失；用 ref 存储
+   *  避免每次输入触发全局重渲染。key 归一化：conversationId 为空时使用
+   *  PENDING_SESSION_KEY（新会话草稿，发送成功后清除）。 */
+  inputDraftsRef: RefValue<Record<string, string>>;
   handleSendMessageRef: RefValue<
     (message: string, options: ChatInputSendOptions) => void
   >;
@@ -404,6 +439,9 @@ export type ConversationContextValue = {
   yoloModeRef: RefValue<boolean>;
   planModeRef: RefValue<boolean>;
   goalModeRef: RefValue<boolean>;
+  /** Global Plan/Goal Mode defaults (persisted settings). New and
+   *  never-configured conversations inherit these; switches never write them. */
+  globalModeDefaultsRef: RefValue<GlobalModeDefaults>;
   alwaysApprovedToolsRef: RefValue<Set<string>>;
   /** Per-conversation Plan Mode approval keys. Cleared only when Plan Mode is
    *  genuinely turned off (user toggle, Goal Mode mutual exclusion, new chat)
@@ -477,6 +515,11 @@ export type ConversationContextValue = {
   addStreamingId: (id: string) => void;
   removeStreamingId: (id: string) => void;
 
+  // Input draft persistence (per-conversation, survives ChatInput unmount)
+  saveInputDraft: (conversationId: string | undefined, content: string) => void;
+  getInputDraft: (conversationId: string | undefined) => string | undefined;
+  clearInputDraft: (conversationId: string | undefined) => void;
+
   // 通知系统：AI 流程结束 / 敏感命令拦截 / 用户交互确认时触发系统通知
   notifyAiComplete: (conversationTitle?: string) => void;
   notifySensitiveCommandIntercepted: (toolName: string) => void;
@@ -511,6 +554,10 @@ export type UseChatConversationResult = {
   streamElapsedMs: number;
   /** Time to first token in milliseconds. */
   streamTtftMs: number;
+  /** TTFT captured from the first model iteration in the active run. */
+  runTtftMs: number;
+  /** First checkpoint in the active conversation. */
+  baselineCheckpointId: string | undefined;
   /** Wall-clock timestamp (Date.now()) captured once when an agent loop
    *  starts. Drives the accumulating elapsed timer in StreamMetrics so it
    *  survives conversation switches between parallel streaming sessions. */
@@ -557,6 +604,11 @@ export type UseChatConversationResult = {
   draftToRestore: string | null;
   autoSendToken: number;
   clearDraftToRestore: () => void;
+  /** 保存/读取/清除某会话的输入草稿（含图片 chip）。详见
+   *  ConversationContextValue.inputDraftsRef 的注释。 */
+  saveInputDraft: (conversationId: string | undefined, content: string) => void;
+  getInputDraft: (conversationId: string | undefined) => string | undefined;
+  clearInputDraft: (conversationId: string | undefined) => void;
   buildFromContent: (content: string) => void;
   handleRollback: (messageId: string) => void;
   rollbackPreview: RollbackPreview | null;

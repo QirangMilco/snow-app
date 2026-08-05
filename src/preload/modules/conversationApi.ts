@@ -67,6 +67,15 @@ export const conversationApi = {
     ),
   deleteConversation: (conversationId: string): Promise<void> =>
     ipcRenderer.invoke("chat-conversations:delete", conversationId),
+  deleteConversations: (conversationIds: string[]): Promise<void> =>
+    ipcRenderer.invoke("chat-conversations:batch-delete", conversationIds),
+  listSubAgentConversationsByParents: (
+    parentConversationIds: string[]
+  ): Promise<Record<string, ChatConversationRecord[]>> =>
+    ipcRenderer.invoke(
+      "chat-conversations:list-sub-agents-by-parents",
+      parentConversationIds
+    ),
   appendToolMessage: (conversationId: string, content: string): Promise<void> =>
     ipcRenderer.invoke(
       "chat-conversations:append-tool-message",

@@ -7,6 +7,8 @@ import type {
   BrowserCommandResponse,
   CodebaseEmbedProgress,
   NativeBridge,
+  TerminalCommand,
+  TerminalCommandResponse,
   UserQuestionCommand,
   UserQuestionResponse,
   AppLogInput,
@@ -18,6 +20,13 @@ import {
   resolveBrowserCommand,
   unregisterBrowserRenderer,
 } from "../browserCommandBroker";
+import {
+  TERMINAL_COMMAND_RESPONSE_CHANNEL,
+  dispatchTerminalCommand,
+  registerTerminalRenderer,
+  resolveTerminalCommand,
+  unregisterTerminalRenderer,
+} from "../terminalCommandBroker";
 import {
   dispatchUserQuestion,
   resolveUserQuestion,
@@ -71,6 +80,25 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
   ipcMain.handle(
     "settings:set-goal-mode-token-budget",
     (_event, budget: number) => native.setGoalModeTokenBudget(budget)
+  );
+  ipcMain.handle("settings:get-conversation-modes", (_event, conversationId: string) =>
+    native.getConversationModes(conversationId)
+  );
+  ipcMain.handle(
+    "settings:set-conversation-modes",
+    (
+      _event,
+      conversationId: string,
+      planMode: boolean | null,
+      goalMode: boolean | null,
+      goalModeTokenBudget: number | null
+    ) =>
+      native.setConversationModes(
+        conversationId,
+        planMode,
+        goalMode,
+        goalModeTokenBudget
+      )
   );
   ipcMain.handle("settings:get-request-logging", () =>
     native.getRequestLogging()
@@ -221,6 +249,15 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
         throw new Error("Project id is required");
       }
       return native.checkProjectHasGitignore(projectId.trim());
+    }
+  );
+  ipcMain.handle(
+    "codebase:check-project-remote",
+    (_event, projectId: unknown) => {
+      if (typeof projectId !== "string" || !projectId.trim()) {
+        throw new Error("Project id is required");
+      }
+      return native.checkProjectIsRemote(projectId.trim());
     }
   );
   ipcMain.handle(
@@ -641,6 +678,21 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
       resolveBrowserCommand(event.sender, response);
     }
   );
+  ipcMain.handle("terminal:renderer-register", (event) => {
+    registerTerminalRenderer(event.sender);
+  });
+  ipcMain.handle("terminal:renderer-unregister", (event) => {
+    unregisterTerminalRenderer(event.sender);
+  });
+  ipcMain.on(
+    TERMINAL_COMMAND_RESPONSE_CHANNEL,
+    (event, response: TerminalCommandResponse) => {
+      if (!response || typeof response.commandId !== "string") {
+        return;
+      }
+      resolveTerminalCommand(event.sender, response);
+    }
+  );
   ipcMain.on(
     USER_QUESTION_RESPONSE_CHANNEL,
     (event, response: UserQuestionResponse) => {
@@ -816,6 +868,8 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
           dispatchRemoteWorkspaceCommand(command, {
             signal: sshAbortController.signal,
           }),
+        (command: TerminalCommand) =>
+          dispatchTerminalCommand(event.sender, command),
         normalizedSubAgentAllowedTools,
         planMode as boolean | undefined,
         planApproved as boolean | undefined
@@ -875,7 +929,7 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
   );
   ipcMain.handle(
     "checkpoint:list-diffs",
-    (_event, checkpointId: unknown, workDir: unknown) => {
+    (_event, checkpointId: unknown, workDir: unknown, includeAll: unknown) => {
       if (typeof checkpointId !== "string" || !checkpointId.trim()) {
         throw new Error("Checkpoint id is required to list diffs");
       }
@@ -884,7 +938,11 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
           "Working directory path is required to list checkpoint diffs"
         );
       }
-      return native.listCheckpointDiffs(checkpointId.trim(), workDir);
+      return native.listCheckpointDiffs(
+        checkpointId.trim(),
+        workDir,
+        includeAll === true
+      );
     }
   );
 

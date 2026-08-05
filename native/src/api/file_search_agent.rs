@@ -1,19 +1,27 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use futures::StreamExt;
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::api::anthropic::payload::{
+    apply_last_user_message_cache_control, build_anthropic_thinking, get_persistent_user_id,
+    DEFAULT_MAX_TOKENS,
+};
+use crate::api::chat::payload::build_chat_reasoning_effort;
 use crate::api::config::{
     get_active_api_request_context, normalize_base_url, resolve_sdk_api_base_url,
 };
-use crate::api::retry::RetryOptions;
+use crate::api::gemini::payload::{build_gemini_thinking_config, resolve_gemini_endpoint};
+use crate::api::responses::payload::build_responses_reasoning;
+use crate::api::retry::{non_sse_response_error, should_retry, RetryOptions};
+use crate::api::sse::find_sse_separator;
 use crate::api::summary::{
     build_anthropic_header_map, build_gemini_header_map, build_header_map,
-    resolve_anthropic_endpoint, resolve_chat_endpoint, resolve_gemini_endpoint,
-    send_api_request_with_retry,
+    resolve_anthropic_endpoint, resolve_chat_endpoint,
 };
 use crate::mcp::builtin::get_builtin_tools;
 use crate::mcp::service::McpService;
@@ -207,6 +215,144 @@ fn push_no_tool_follow_up(messages: &mut Vec<Value>, request_method: &str, text:
 }
 
 // ---------------------------------------------------------------------------
+// 流式 SSE 请求
+// ---------------------------------------------------------------------------
+
+/// 发送流式请求并按 SSE 事件逐条回调 `on_event`（每个 `data:` 行一个 JSON）。
+/// 连接失败或非 2xx 状态时按重试策略重试；一旦开始读取流即不再重试。
+/// 整个流结束仍未收到任何 `data:` 事件时返回 non-SSE 错误（部分网关会以
+/// 200 + JSON 错误体响应流式请求）。
+async fn send_streaming_sse_request(
+    client: &reqwest::Client,
+    endpoint: &str,
+    headers: reqwest::header::HeaderMap,
+    payload: &Value,
+    retry_options: &RetryOptions,
+    mut on_event: impl FnMut(Value) -> Result<()>,
+) -> Result<()> {
+    let mut attempt: u32 = 0;
+    loop {
+        let response = match client
+            .post(endpoint)
+            .headers(headers.clone())
+            .json(payload)
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                let error = Error::from_reason(format!("API request failed: {}", error));
+                if !should_retry(&error, attempt, retry_options) {
+                    return Err(error);
+                }
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    retry_options.base_delay_ms,
+                ))
+                .await;
+                continue;
+            }
+        };
+
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            let error = Error::from_reason(format!(
+                "API request failed: {} {}",
+                status, error_body
+            ));
+            if !should_retry(&error, attempt, retry_options) {
+                return Err(error);
+            }
+            attempt += 1;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                retry_options.base_delay_ms,
+            ))
+            .await;
+            continue;
+        }
+
+        // 已进入流式读取阶段，中途失败不再重试（事件可能已部分消费）。
+        let mut byte_buffer: Vec<u8> = Vec::new();
+        let mut received_any_event = false;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| {
+                Error::from_reason(format!("API stream read failed: {}", error))
+            })?;
+            byte_buffer.extend_from_slice(&chunk);
+            loop {
+                let Some((separator_pos, separator_len)) = find_sse_separator(&byte_buffer)
+                else {
+                    break;
+                };
+                let event_bytes: Vec<u8> = byte_buffer.drain(..separator_pos).collect();
+                byte_buffer.drain(..separator_len);
+                let event_block = String::from_utf8_lossy(&event_bytes);
+                if process_sse_event_block(&event_block, &mut on_event)? {
+                    received_any_event = true;
+                }
+            }
+        }
+        // 处理流末尾残余（可能是不带尾随空行的最后一个事件）。
+        if !byte_buffer.is_empty() {
+            let event_block = String::from_utf8_lossy(&byte_buffer);
+            if process_sse_event_block(&event_block, &mut on_event)? {
+                received_any_event = true;
+            }
+        }
+        if !received_any_event {
+            let body = String::from_utf8_lossy(&byte_buffer).to_string();
+            return Err(non_sse_response_error(&body));
+        }
+        return Ok(());
+    }
+}
+
+/// 解析一个 SSE 事件块（两个空行之间的文本），逐行提取 `data:` 前缀的
+/// JSON 并回调。返回是否至少处理了一个事件。
+/// 兼容部分网关对 `stream: true` 仍返回完整 JSON（无 `data:` 前缀）的
+/// 情况：整个块按 JSON 解析后作为单个事件回调。
+fn process_sse_event_block(
+    event_block: &str,
+    on_event: &mut impl FnMut(Value) -> Result<()>,
+) -> Result<bool> {
+    let mut processed = false;
+    for line in event_block.lines() {
+        let trimmed = line.trim_start();
+        let Some(data) = trimmed.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim_start();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(data) else {
+            continue;
+        };
+        processed = true;
+        on_event(event)?;
+    }
+
+    // Fallback: 无 `data:` 行时，把整个块当完整 JSON 响应解析（例如
+    // 网关忽略 stream 参数直接返回非流式响应，或 `: ping` 注释行）。
+    if !processed {
+        let trimmed_block = event_block.trim();
+        if !trimmed_block.is_empty()
+            && !trimmed_block.starts_with(':')
+            && trimmed_block != "[DONE]"
+        {
+            if let Ok(event) = serde_json::from_str::<Value>(trimmed_block) {
+                on_event(event)?;
+                processed = true;
+            }
+        }
+    }
+
+    Ok(processed)
+}
+
+// ---------------------------------------------------------------------------
 // chat / completions 协议
 // ---------------------------------------------------------------------------
 
@@ -233,32 +379,58 @@ async fn run_chat_round(
     let mut chat_messages = vec![json!({"role": "system", "content": system_prompt})];
     chat_messages.extend(messages.iter().cloned());
 
-    let payload = json!({
+    let mut payload = json!({
         "model": model,
         "messages": chat_messages,
-        "stream": false,
-        "max_tokens": 4096,
+        "stream": true,
         "tools": tools_as_openai_chat_json(tools),
         "tool_choice": "auto",
     });
 
+    // 与主流程（api/chat/payload.rs）保持一致：
+    // max_tokens 遵循用户配置、思考模型的 reasoning_effort 跟随
+    // chatThinking 配置，避免 agent 请求与正常聊天行为产生差异。
+    if let Some(max_tokens) = api_config.max_tokens {
+        if max_tokens > 0 {
+            payload["max_tokens"] = json!(max_tokens);
+        }
+    }
+    if let Some(reasoning_effort) = build_chat_reasoning_effort(&api_config.config_json) {
+        payload["reasoning_effort"] = json!(reasoning_effort);
+    }
+
     let client = crate::api::http_client::build_proxied_client().await?;
 
-    let body: Value = send_api_request_with_retry(
+    // 流式请求：把 SSE 增量合并成等价于非流式响应的 message 对象。
+    let mut content_chunks: Vec<String> = Vec::new();
+    let mut reasoning_chunks: Vec<String> = Vec::new();
+    let mut tool_calls_by_index: BTreeMap<usize, Value> = BTreeMap::new();
+    send_streaming_sse_request(
         &client,
         &endpoint,
         build_header_map(api_key, custom_headers)?,
         &payload,
         retry_options,
+        |event| {
+            merge_chat_stream_event(
+                &event,
+                &mut content_chunks,
+                &mut reasoning_chunks,
+                &mut tool_calls_by_index,
+            );
+            Ok(())
+        },
     )
     .await?;
 
-    let message = body
-        .get("choices")
-        .and_then(|choices| choices.get(0))
-        .and_then(|choice| choice.get("message"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    let mut message = json!({
+        "role": "assistant",
+        "content": content_chunks.concat(),
+        "tool_calls": tool_calls_by_index.into_values().collect::<Vec<_>>(),
+    });
+    if !reasoning_chunks.is_empty() {
+        message["reasoning_content"] = json!(reasoning_chunks.concat());
+    }
 
     let mut tool_calls: Vec<AgentToolCall> = Vec::new();
     if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
@@ -294,11 +466,21 @@ async fn run_chat_round(
         return Ok(AgentRound::Done(text));
     }
 
-    let mut append = vec![json!({
+    let mut assistant_message = json!({
         "role": "assistant",
         "content": null,
         "tool_calls": message.get("tool_calls").cloned().unwrap_or(Value::Null),
-    })];
+    });
+    // 与主流程一致：回传 reasoning_content，保持 DeepSeek 等思考模型的
+    // 推理连续性。
+    if let Some(reasoning) = message
+        .get("reasoning_content")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+    {
+        assistant_message["reasoning_content"] = json!(reasoning);
+    }
+    let mut append = vec![assistant_message];
     for call in &tool_calls {
         let output = execute_agent_tool(
             &call.name,
@@ -330,6 +512,94 @@ fn extract_chat_content_text(message: &Value) -> String {
     }
 }
 
+/// 合并 chat/completions 流式 delta：content 片段、reasoning_content 片段，
+/// 以及按 index 合并的 tool_calls（id / name / 分段的 arguments）。
+/// 兼容网关忽略 stream 参数时返回的完整响应形态（choices[].message）。
+fn merge_chat_stream_event(
+    event: &Value,
+    content_chunks: &mut Vec<String>,
+    reasoning_chunks: &mut Vec<String>,
+    tool_calls_by_index: &mut BTreeMap<usize, Value>,
+) {
+    let Some(choices) = event.get("choices").and_then(Value::as_array) else {
+        return;
+    };
+    for choice in choices {
+        // 完整响应形态：message 一次性提供全部内容。
+        if let Some(message) = choice.get("message") {
+            content_chunks.clear();
+            reasoning_chunks.clear();
+            tool_calls_by_index.clear();
+            if let Some(text) = message.get("content").and_then(Value::as_str) {
+                if !text.is_empty() {
+                    content_chunks.push(text.to_string());
+                }
+            } else if let Some(parts) = message.get("content").and_then(Value::as_array) {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(Value::as_str) {
+                        if !text.is_empty() {
+                            content_chunks.push(text.to_string());
+                        }
+                    }
+                }
+            }
+            if let Some(reasoning) = message.get("reasoning_content").and_then(Value::as_str) {
+                if !reasoning.is_empty() {
+                    reasoning_chunks.push(reasoning.to_string());
+                }
+            }
+            if let Some(calls) = message.get("tool_calls").and_then(Value::as_array) {
+                for (index, call) in calls.iter().enumerate() {
+                    tool_calls_by_index.insert(index, call.clone());
+                }
+            }
+            continue;
+        }
+        let Some(delta) = choice.get("delta") else {
+            continue;
+        };
+        if let Some(text) = delta.get("content").and_then(Value::as_str) {
+            if !text.is_empty() {
+                content_chunks.push(text.to_string());
+            }
+        }
+        if let Some(reasoning) = delta.get("reasoning_content").and_then(Value::as_str) {
+            if !reasoning.is_empty() {
+                reasoning_chunks.push(reasoning.to_string());
+            }
+        }
+        let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) else {
+            continue;
+        };
+        for call in calls {
+            let index = call.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let entry = tool_calls_by_index.entry(index).or_insert_with(|| {
+                json!({
+                    "id": "",
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                })
+            });
+            if let Some(id) = call.get("id").and_then(Value::as_str) {
+                if !id.is_empty() {
+                    entry["id"] = json!(id);
+                }
+            }
+            if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
+                if !name.is_empty() {
+                    entry["function"]["name"] = json!(name);
+                }
+            }
+            if let Some(arg) = call.pointer("/function/arguments").and_then(Value::as_str) {
+                if !arg.is_empty() {
+                    let current = entry["function"]["arguments"].as_str().unwrap_or("");
+                    entry["function"]["arguments"] = json!(format!("{}{}", current, arg));
+                }
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // responses 协议
 // ---------------------------------------------------------------------------
@@ -357,30 +627,63 @@ async fn run_responses_round(
     let resolved_base = resolve_sdk_api_base_url(&base_url, &api_config.base_url_mode);
     let endpoint = format!("{}/responses", resolved_base);
 
-    let mut input = vec![json!({
-        "type": "message",
-        "role": "system",
-        "content": system_prompt,
-    })];
+    let mut input = Vec::new();
     input.extend(messages.iter().cloned());
 
-    let payload = json!({
+    let mut payload = json!({
         "model": model,
         "input": input,
-        "stream": false,
+        "stream": true,
+        "store": false,
+        "include": ["reasoning.encrypted_content"],
         "tools": tools_as_openai_responses_json(tools),
     });
 
+    // 与主流程（api/responses/payload.rs）保持一致：系统提示词放
+    // instructions 字段、max_output_tokens 遵循用户配置、
+    // reasoning 跟随 responsesReasoning 配置，避免 agent 请求与正常聊天
+    // 行为产生差异。
+    payload["instructions"] = json!(system_prompt);
+    if let Some(max_tokens) = api_config.max_tokens {
+        if max_tokens > 0 {
+            payload["max_output_tokens"] = json!(max_tokens);
+        }
+    }
+    if let Some(reasoning) = build_responses_reasoning(&api_config.config_json) {
+        payload["reasoning"] = reasoning;
+    }
+
     let client = crate::api::http_client::build_proxied_client().await?;
 
-    let body: Value = send_api_request_with_retry(
+    // 流式请求：优先采用 response.completed 事件携带的完整响应对象；
+    // 网关不发送该事件时，用 output_item.done / output_text.delta 累积结果。
+    let mut output_items: Vec<Value> = Vec::new();
+    let mut output_text = String::new();
+    let mut completed_response: Option<Value> = None;
+    send_streaming_sse_request(
         &client,
         &endpoint,
         build_header_map(api_key, custom_headers)?,
         &payload,
         retry_options,
+        |event| {
+            merge_responses_stream_event(
+                &event,
+                &mut output_items,
+                &mut output_text,
+                &mut completed_response,
+            );
+            Ok(())
+        },
     )
     .await?;
+
+    let body = completed_response.unwrap_or_else(|| {
+        json!({
+            "output": output_items,
+            "output_text": output_text,
+        })
+    });
 
     let mut tool_calls: Vec<AgentToolCall> = Vec::new();
     let mut text = String::new();
@@ -465,6 +768,46 @@ async fn run_responses_round(
     Ok(AgentRound::Continue(append))
 }
 
+/// 合并 responses 协议流式事件：累积 output_item.done 条目与 output_text
+/// 增量，并捕获 response.completed 携带的完整响应对象（优先使用）。
+/// 兼容网关忽略 stream 参数时返回的完整响应形态（顶层 output/output_text）。
+fn merge_responses_stream_event(
+    event: &Value,
+    output_items: &mut Vec<Value>,
+    output_text: &mut String,
+    completed_response: &mut Option<Value>,
+) {
+    // 完整响应形态：顶层直接提供 output / output_text。
+    if let Some(output) = event.get("output").and_then(Value::as_array) {
+        *output_items = output.clone();
+    }
+    if let Some(text) = event.get("output_text").and_then(Value::as_str) {
+        *output_text = text.to_string();
+    }
+    let event_type = event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match event_type {
+        "response.output_item.done" => {
+            if let Some(item) = event.get("item") {
+                output_items.push(item.clone());
+            }
+        }
+        "response.output_text.delta" => {
+            if let Some(delta) = event.get("delta").and_then(Value::as_str) {
+                output_text.push_str(delta);
+            }
+        }
+        "response.completed" => {
+            if let Some(response) = event.get("response") {
+                *completed_response = Some(response.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------------------
 // anthropic 协议
 // ---------------------------------------------------------------------------
@@ -489,31 +832,70 @@ async fn run_anthropic_round(
         ));
     }
 
-    let payload = json!({
+    let max_tokens = api_config
+        .max_tokens
+        .filter(|&v| v > 0)
+        .unwrap_or(DEFAULT_MAX_TOKENS);
+
+    let mut payload = json!({
         "model": model,
-        "max_tokens": 4096,
-        "stream": false,
-        "system": system_prompt,
+        "max_tokens": max_tokens,
+        "stream": true,
         "messages": messages,
         "tools": tools_as_anthropic_json(tools),
     });
 
+    // 与主流程（api/anthropic/payload.rs）保持一致：
+    // system 以数组形式携带 cache_control 启用 prompt 缓存、携带
+    // metadata.user_id 用于跟踪与缓存路由、thinking 跟随 thinking 配置，
+    // 避免 agent 请求与正常聊天行为产生差异。
+    payload["system"] = json!([{
+        "type": "text",
+        "text": system_prompt,
+        "cache_control": { "type": "ephemeral", "ttl": "5m" },
+    }]);
+    payload["metadata"] = json!({ "user_id": get_persistent_user_id() });
+    if let Some((thinking, effort)) = build_anthropic_thinking(&api_config.config_json) {
+        payload["thinking"] = thinking;
+        if let Some(effort) = effort {
+            payload["output_config"] = json!({ "effort": effort });
+        }
+    }
+    // 与主流程一致：给最后一条 user 消息的最后一个内容块加 cache_control，
+    // 让多轮工具调用复用缓存前缀。
+    apply_last_user_message_cache_control(&mut payload, false);
+
     let client = crate::api::http_client::build_proxied_client().await?;
 
-    let body: Value = send_api_request_with_retry(
+    // 流式请求：按 index 合并 content blocks（text 拼接、tool_use 的 input
+    // 用 input_json_delta 累积），最后还原为等价于非流式响应的 body。
+    let mut blocks_by_index: BTreeMap<usize, Value> = BTreeMap::new();
+    send_streaming_sse_request(
         &client,
         &endpoint,
         build_anthropic_header_map(api_key, custom_headers)?,
         &payload,
         retry_options,
+        |event| {
+            merge_anthropic_stream_event(&event, &mut blocks_by_index);
+            Ok(())
+        },
     )
     .await?;
 
-    let content_blocks = body
-        .get("content")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let content_blocks: Vec<Value> = blocks_by_index
+        .into_values()
+        .map(|mut block| {
+            // tool_use 的 input 在流式中以 partial_json 片段累积，结束时
+            // 解析为 JSON 对象；解析失败（如片段被截断）则退回空对象。
+            if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                if let Some(partial) = block.get("input").and_then(Value::as_str) {
+                    block["input"] = serde_json::from_str(partial).unwrap_or_else(|_| json!({}));
+                }
+            }
+            block
+        })
+        .collect();
 
     let mut tool_calls: Vec<AgentToolCall> = Vec::new();
     let mut text = String::new();
@@ -581,6 +963,74 @@ async fn run_anthropic_round(
     Ok(AgentRound::Continue(append))
 }
 
+/// 合并 anthropic 协议流式事件：content_block_start 登记块（只保留 text /
+/// tool_use，thinking 块由上层解析逻辑忽略），content_block_delta 拼接
+/// text 与 partial_json。
+/// 兼容网关忽略 stream 参数时返回的完整响应形态（顶层 content 数组）。
+fn merge_anthropic_stream_event(event: &Value, blocks_by_index: &mut BTreeMap<usize, Value>) {
+    // 完整响应形态：顶层 content 数组一次性提供全部块。
+    if let Some(content) = event.get("content").and_then(Value::as_array) {
+        blocks_by_index.clear();
+        for (index, block) in content.iter().enumerate() {
+            blocks_by_index.insert(index, block.clone());
+        }
+        return;
+    }
+    let event_type = event
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match event_type {
+        "content_block_start" => {
+            let index = event.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let block_type = event
+                .pointer("/content_block/type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if block_type == "text" || block_type == "tool_use" {
+                let mut block = event
+                    .get("content_block")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                if block_type == "tool_use" {
+                    // 流式阶段 input 以字符串累积 partial_json 片段。
+                    block["input"] = json!("");
+                }
+                blocks_by_index.insert(index, block);
+            }
+        }
+        "content_block_delta" => {
+            let index = event.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let Some(block) = blocks_by_index.get_mut(&index) else {
+                return;
+            };
+            let delta_type = event
+                .pointer("/delta/type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match delta_type {
+                "text_delta" => {
+                    if let Some(text) = event.pointer("/delta/text").and_then(Value::as_str) {
+                        let current = block["text"].as_str().unwrap_or("");
+                        block["text"] = json!(format!("{}{}", current, text));
+                    }
+                }
+                "input_json_delta" => {
+                    if let Some(partial) = event
+                        .pointer("/delta/partial_json")
+                        .and_then(Value::as_str)
+                    {
+                        let current = block["input"].as_str().unwrap_or("");
+                        block["input"] = json!(format!("{}{}", current, partial));
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------------------
 // gemini 协议
 // ---------------------------------------------------------------------------
@@ -605,23 +1055,49 @@ async fn run_gemini_round(
         ));
     }
 
+    // 与主流程（api/gemini/payload.rs）保持一致：
+    // maxOutputTokens 遵循用户配置、thinkingConfig 跟随 geminiThinking
+    // 配置，避免 agent 请求与正常聊天行为产生差异。
+    let mut generation_config = json!({});
+    if let Some(max_tokens) = api_config.max_tokens {
+        if max_tokens > 0 {
+            generation_config["maxOutputTokens"] = json!(max_tokens);
+        }
+    }
+    if let Some(thinking_config) = build_gemini_thinking_config(&api_config.config_json) {
+        generation_config["thinkingConfig"] = thinking_config;
+    }
+
     let payload = json!({
         "systemInstruction": {"parts": [{"text": system_prompt}]},
         "contents": messages,
         "tools": tools_as_gemini_json(tools),
-        "generationConfig": {"maxOutputTokens": 4096},
+        "generationConfig": generation_config,
     });
 
     let client = crate::api::http_client::build_proxied_client().await?;
 
-    let body: Value = send_api_request_with_retry(
+    // 流式请求（:streamGenerateContent?alt=sse）：合并所有 chunk 的
+    // candidates[0].content.parts，还原为等价于非流式响应的 body。
+    let mut parts: Vec<Value> = Vec::new();
+    send_streaming_sse_request(
         &client,
         &endpoint,
         build_gemini_header_map(custom_headers)?,
         &payload,
         retry_options,
+        |event| {
+            merge_gemini_stream_event(&event, &mut parts);
+            Ok(())
+        },
     )
     .await?;
+
+    let body = json!({
+        "candidates": [{
+            "content": {"role": "model", "parts": parts},
+        }],
+    });
 
     let Some(candidates) = body.get("candidates").and_then(Value::as_array) else {
         return Ok(AgentRound::Done(String::new()));
@@ -699,6 +1175,25 @@ async fn run_gemini_round(
     }
 
     Ok(AgentRound::Continue(append))
+}
+
+/// 合并 gemini 协议流式事件：每个 chunk 的 candidates[0].content.parts
+/// 依次追加（text 分块与 functionCall 各自成段，usageMetadata 等无 parts
+/// 的 chunk 被忽略）。
+fn merge_gemini_stream_event(event: &Value, parts: &mut Vec<Value>) {
+    let Some(candidates) = event.get("candidates").and_then(Value::as_array) else {
+        return;
+    };
+    let Some(candidate) = candidates.first() else {
+        return;
+    };
+    let Some(chunk_parts) = candidate
+        .pointer("/content/parts")
+        .and_then(Value::as_array)
+    else {
+        return;
+    };
+    parts.extend(chunk_parts.iter().cloned());
 }
 
 // ---------------------------------------------------------------------------

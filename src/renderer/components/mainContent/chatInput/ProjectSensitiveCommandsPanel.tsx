@@ -357,7 +357,7 @@ export const ProjectSensitiveCommandsPanel = ({
                     </>
                   ) : null}
                   <label
-                    className="project-sensitive-command-switch"
+                    className="toggle-switch"
                     title={
                       command.enabled
                         ? t("projectSensitiveCommands.disableForProject")
@@ -374,12 +374,13 @@ export const ProjectSensitiveCommandsPanel = ({
                       disabled={
                         isSaving || pendingCommandIds.has(command.commandId)
                       }
+                      hidden
                       onChange={(event) =>
                         void toggleCommand(command, event.target.checked)
                       }
                       type="checkbox"
                     />
-                    <span aria-hidden="true" />
+                    <span className="toggle-slider" />
                   </label>
                 </div>
               </article>

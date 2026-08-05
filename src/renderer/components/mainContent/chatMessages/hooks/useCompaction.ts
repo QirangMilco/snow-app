@@ -77,7 +77,11 @@ export const useCompaction = (ctx: ConversationContextValue) => {
         directoryId: sessionRef?.directoryId ?? ctx.directoryId,
         contextCompaction: true,
         checkpointId,
-        goalMode: ctx.goalModeRef.current,
+        // Per-conversation Goal Mode snapshot: the handoff prompt depends on
+        // THIS conversation's mode, not the live global ref.
+        goalMode:
+          ctx.sessionsRefData.current.get(conversationId)?.goalMode ??
+          ctx.goalModeRef.current,
         // Conversation-scoped profile isolation: the handoff must resolve the
         // same API config the conversation's messages use. For sub-agent
         // conversations, carry the configured profile so Rust resolves the

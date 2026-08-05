@@ -47,12 +47,15 @@ impl BrowserService {
             })?,
         };
 
-        let promise = on_command.call_async_catch(command).await.map_err(|error| {
-            Error::new(
-                Status::GenericFailure,
-                format!("Failed to dispatch browser command to Electron: {error}"),
-            )
-        })?;
+        let promise = on_command
+            .call_async_catch(command)
+            .await
+            .map_err(|error| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Failed to dispatch browser command to Electron: {error}"),
+                )
+            })?;
         let result_json = promise.await.map_err(|error| {
             Error::new(
                 Status::GenericFailure,
@@ -169,7 +172,7 @@ impl McpService for BrowserService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "devtools".to_string(),
-                description: "Inspect developer-tools-related information for an embedded browser. Omit instanceId to inspect the most recently focused browser tab, including a browser opened by the user. Use action=snapshot for page metadata and text, action=console for captured console messages, or action=open to open Electron DevTools for the page.".to_string(),
+                description: "Inspect developer-tools-related information for an embedded browser. Omit instanceId to inspect the most recently focused browser tab, including a browser opened by the user. Use action=snapshot for page metadata and text, action=console for captured console messages (optionally filtered by level), action=network for recorded network requests, action=dialog to list and respond to pending JavaScript dialogs (alert/confirm/prompt), or action=open to open Electron DevTools for the page.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -179,7 +182,7 @@ impl McpService for BrowserService {
                         },
                         "action": {
                             "type": "string",
-                            "enum": ["snapshot", "console", "open"],
+                            "enum": ["snapshot", "console", "open", "network", "dialog"],
                             "description": "Developer tools action (default snapshot).",
                             "default": "snapshot"
                         },
@@ -187,6 +190,37 @@ impl McpService for BrowserService {
                             "type": "boolean",
                             "description": "Clear captured console messages after returning them (console action only).",
                             "default": false
+                        },
+                        "level": {
+                            "type": "string",
+                            "enum": ["verbose", "info", "warning", "error"],
+                            "description": "Minimum console level to return (console action only). Each level includes more severe levels. Defaults to info."
+                        },
+                        "filter": {
+                            "type": "string",
+                            "description": "Only return network requests whose URL matches this regexp (network action only)."
+                        },
+                        "limit": {
+                            "type": "number",
+                            "description": "Maximum number of network requests to return (network action only, default 50, range 1-200).",
+                            "default": 50,
+                            "minimum": 1,
+                            "maximum": 200
+                        },
+                        "dialogResponse": {
+                            "type": "object",
+                            "description": "Response for the dialog action: { accept: boolean, promptText?: string }. When provided, the most recent pending dialog is answered instead of listing dialogs.",
+                            "properties": {
+                                "accept": {
+                                    "type": "boolean",
+                                    "description": "true to accept (OK) the dialog, false to dismiss (Cancel)."
+                                },
+                                "promptText": {
+                                    "type": "string",
+                                    "description": "Text to enter for prompt dialogs."
+                                }
+                            },
+                            "required": ["accept"]
                         },
                         "maxContentLength": {
                             "type": "number",
@@ -236,13 +270,75 @@ impl McpService for BrowserService {
                     "properties": {}
                 }),
             },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "evaluate".to_string(),
+                description: "Evaluate a JavaScript expression in an embedded browser page and return the serialized result. Use for inspecting page state, reading variables, or exercising the page directly. Omit instanceId to use the most recently focused browser tab, including a browser opened by the user.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "expression": {
+                            "type": "string",
+                            "description": "JavaScript expression to evaluate in the page (e.g. \"document.title\" or \"(() => ({ url: location.href, ready: document.readyState }))()\")."
+                        }
+                    },
+                    "required": ["expression"]
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "type".to_string(),
+                description: "Type text into an editable element in an embedded browser. Target the element with a CSS selector or visible text (same locating rules as browser-click). By default the value is set at once and input/change events are fired; pass delayMs to type character by character for key handlers. Omit instanceId to use the most recently focused browser tab, including a browser opened by the user.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "selector": {
+                            "type": "string",
+                            "description": "Optional CSS selector for the target element."
+                        },
+                        "text": {
+                            "type": "string",
+                            "description": "Optional visible text to locate when selector is not provided."
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "Text to type into the element."
+                        },
+                        "submit": {
+                            "type": "boolean",
+                            "description": "Whether to submit the containing form after typing (default false).",
+                            "default": false
+                        },
+                        "delayMs": {
+                            "type": "number",
+                            "description": "When greater than 0, type one character at a time with this delay in milliseconds (default 0 = set value at once).",
+                            "default": 0,
+                            "minimum": 0,
+                            "maximum": 1000
+                        }
+                    },
+                    "anyOf": [
+                        { "required": ["selector"] },
+                        { "required": ["text"] }
+                    ],
+                    "required": ["value"]
+                }),
+            },
         ]
     }
 
     fn execute(&self, tool_name: &str, _args: &Value) -> napi::Result<Value> {
         match tool_name {
             "create" | "navigate" | "click" | "screenshot" | "devtools" | "close" | "focus"
-            | "list" => Err(Error::new(
+            | "list" | "evaluate" | "type" => Err(Error::new(
                 Status::GenericFailure,
                 "Browser tools must be executed through the asynchronous Electron command bridge"
                     .to_string(),
@@ -302,14 +398,52 @@ fn validate_and_normalize_args(tool_name: &str, args: &Value) -> napi::Result<Va
                 .get("action")
                 .and_then(Value::as_str)
                 .unwrap_or("snapshot");
-            if !matches!(action, "snapshot" | "console" | "open") {
+            if !matches!(
+                action,
+                "snapshot" | "console" | "open" | "network" | "dialog"
+            ) {
                 return Err(Error::new(
                     Status::InvalidArg,
-                    "action must be one of snapshot, console, or open for browser-devtools"
+                    "action must be one of snapshot, console, open, network, or dialog for browser-devtools"
                         .to_string(),
                 ));
             }
             optional_boolean(args, "clearConsole")?;
+            if let Some(level) = optional_non_empty_string(args, "level")? {
+                if !matches!(level, "verbose" | "info" | "warning" | "error") {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        "level must be one of verbose, info, warning, or error for browser-devtools"
+                            .to_string(),
+                    ));
+                }
+            }
+            if let Some(filter) = optional_non_empty_string(args, "filter")? {
+                if regex::Regex::new(filter).is_err() {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        "filter must be a valid regular expression for browser-devtools"
+                            .to_string(),
+                    ));
+                }
+            }
+            let limit = bounded_u64(args, "limit", 50, 1, 200)?;
+            if let Some(response) = args.get("dialogResponse") {
+                if !response.is_object() {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        "dialogResponse must be an object for browser-devtools".to_string(),
+                    ));
+                }
+                let accept = response.get("accept").and_then(Value::as_bool);
+                if accept.is_none() {
+                    return Err(Error::new(
+                        Status::InvalidArg,
+                        "dialogResponse.accept must be a boolean for browser-devtools".to_string(),
+                    ));
+                }
+                optional_non_empty_string(response, "promptText")?;
+            }
             let max_content_length = bounded_u64(
                 args,
                 "maxContentLength",
@@ -318,10 +452,27 @@ fn validate_and_normalize_args(tool_name: &str, args: &Value) -> napi::Result<Va
                 MAX_MAX_CONTENT_LENGTH,
             )?;
             normalized.insert("action".to_string(), json!(action));
-            normalized.insert(
-                "maxContentLength".to_string(),
-                json!(max_content_length),
-            );
+            normalized.insert("limit".to_string(), json!(limit));
+            normalized.insert("maxContentLength".to_string(), json!(max_content_length));
+        }
+        "evaluate" => {
+            optional_non_empty_string(args, "instanceId")?;
+            required_non_empty_string(args, "expression", tool_name)?;
+        }
+        "type" => {
+            optional_non_empty_string(args, "instanceId")?;
+            let selector = optional_non_empty_string(args, "selector")?;
+            let text = optional_non_empty_string(args, "text")?;
+            if selector.is_none() && text.is_none() {
+                return Err(Error::new(
+                    Status::InvalidArg,
+                    "Either selector or text is required for browser-type".to_string(),
+                ));
+            }
+            required_string(args, "value", tool_name)?;
+            optional_boolean(args, "submit")?;
+            let delay_ms = bounded_u64(args, "delayMs", 0, 0, 1000)?;
+            normalized.insert("delayMs".to_string(), json!(delay_ms));
         }
         "close" => {
             optional_non_empty_string(args, "instanceId")?;
@@ -334,6 +485,15 @@ fn validate_and_normalize_args(tool_name: &str, args: &Value) -> napi::Result<Va
     }
 
     Ok(Value::Object(normalized))
+}
+
+fn required_string<'a>(args: &'a Value, field: &str, tool_name: &str) -> napi::Result<&'a str> {
+    args.get(field).and_then(Value::as_str).ok_or_else(|| {
+        Error::new(
+            Status::InvalidArg,
+            format!("{field} must be a string for browser-{tool_name}"),
+        )
+    })
 }
 
 fn required_non_empty_string<'a>(
@@ -414,10 +574,7 @@ fn bounded_u64(
 }
 
 fn validate_web_url(url: &str) -> napi::Result<()> {
-    if url.starts_with("https://")
-        || url.starts_with("http://")
-        || url.starts_with("file://")
-    {
+    if url.starts_with("https://") || url.starts_with("http://") || url.starts_with("file://") {
         return Ok(());
     }
     Err(Error::new(
@@ -430,7 +587,7 @@ fn unknown_tool_error(tool_name: &str) -> Error {
     Error::new(
         Status::GenericFailure,
         format!(
-            "Unknown tool: \"{tool_name}\" for MCP server \"browser\". Available tools: [browser-create, browser-navigate, browser-click, browser-screenshot, browser-devtools, browser-close, browser-focus, browser-list]"
+            "Unknown tool: \"{tool_name}\" for MCP server \"browser\". Available tools: [browser-create, browser-navigate, browser-click, browser-screenshot, browser-devtools, browser-close, browser-focus, browser-list, browser-evaluate, browser-type]"
         ),
     )
 }

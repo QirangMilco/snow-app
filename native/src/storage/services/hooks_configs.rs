@@ -191,7 +191,9 @@ fn normalize_hook_type(value: &str) -> Result<String> {
     Ok(normalized.to_string())
 }
 
-fn validate_rules_json(rules_json: &str, hook_type: &str) -> Result<()> {
+/// 校验 rules JSON 的结构（规则数组、description、hooks 数组、action 类型）。
+/// 供 hooks_configs 的 upsert 与 config 内置工具的 hooks scope 复用。
+pub(crate) fn validate_rules_json(rules_json: &str, hook_type: &str) -> Result<()> {
     let parsed: Value = serde_json::from_str(rules_json).map_err(|error| {
         Error::new(
             Status::InvalidArg,

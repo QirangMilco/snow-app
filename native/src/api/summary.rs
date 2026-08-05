@@ -556,6 +556,16 @@ pub(crate) fn build_anthropic_header_map(
             Error::from_reason(format!("Invalid API key header value: {}", error))
         })?,
     );
+    // Anthropic requires both `x-api-key` and `Authorization: Bearer` headers
+    // (the latter for compatibility with relay proxies that expect
+    // OpenAI-style auth). Matches the main conversation flow in
+    // api/anthropic/stream.rs.
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).map_err(|error| {
+            Error::from_reason(format!("Invalid authorization header value: {}", error))
+        })?,
+    );
 
     for (key, value) in custom_headers {
         let trimmed_key = key.trim();
@@ -567,6 +577,7 @@ pub(crate) fn build_anthropic_header_map(
         if trimmed_key.eq_ignore_ascii_case("content-type")
             || trimmed_key.eq_ignore_ascii_case("accept-encoding")
             || trimmed_key.eq_ignore_ascii_case("x-api-key")
+            || trimmed_key.eq_ignore_ascii_case("authorization")
         {
             continue;
         }

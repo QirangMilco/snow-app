@@ -46,9 +46,15 @@ ROLE.md
 .issue-body-cn-v2.md
 scripts/investigate_abort.py
 
+# Local-only regression helper (never track in git)
+scripts/e2e-verify-config.cjs
+
 # Local AI workflow tooling (excluded per user request)
 .trellis/
 AGENTS.md
 .ace-tool/
 .codex-user-data/
 design-qa.md
+/codex/
+/claude-code-docs/
+/opencode/

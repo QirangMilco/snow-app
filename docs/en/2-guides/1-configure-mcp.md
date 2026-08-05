@@ -102,6 +102,23 @@ HTTP server example (server object inside `value`):
 > **Windows paths**: backslashes in JSON must be written as `\\`, otherwise `\f`, `\n`,
 > `\v` are treated as escape sequences and the server fails to start.
 
+### Project-scoped MCP servers
+
+Pass `projectId` to `config-set settings mcpServers` to **fully replace** the
+project-scoped MCP servers (`projectId` is the workspace directory's
+`directoryId` — look it up in `~/.snow/projects/index.json` by the project path
+`knownPaths`):
+
+```jsonc
+config-set scope=settings key=mcpServers projectId=<projectId> value={
+  "dbx": { "type": "stdio", "command": "npx", "args": ["-y", "@dbx-app/mcp-server"], "env": {}, "enabled": true }
+}
+```
+
+`config-get` / `config-delete` with `projectId` read/clear the project-scoped
+servers; project and global servers coexist independently and stack (written to
+the app database, **effective immediately**).
+
 ## 4. Method 3: Edit settings.json (bulk / offline)
 
 Global MCP configuration is also stored in the `mcpServers` field of `~/.snow/settings.json`:

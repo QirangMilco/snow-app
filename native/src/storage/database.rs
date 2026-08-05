@@ -8,7 +8,7 @@ use std::{
 use napi::bindgen_prelude::*;
 use rusqlite::Connection;
 
-use super::services;
+use super::{migrations, services};
 
 const SNOWFLAKE_EPOCH_MS: u64 = 1_704_067_200_000;
 const SNOWFLAKE_WORKER_ID_BITS: u64 = 10;
@@ -16,22 +16,6 @@ const SNOWFLAKE_SEQUENCE_BITS: u64 = 12;
 const SNOWFLAKE_WORKER_ID_MASK: u64 = (1 << SNOWFLAKE_WORKER_ID_BITS) - 1;
 const SNOWFLAKE_SEQUENCE_MASK: u64 = (1 << SNOWFLAKE_SEQUENCE_BITS) - 1;
 const SNOWFLAKE_TIMESTAMP_SHIFT: u64 = SNOWFLAKE_WORKER_ID_BITS + SNOWFLAKE_SEQUENCE_BITS;
-
-const PRIMARY_KEY_TABLES: &[&str] = &[
-    "system_settings",
-    "api_configs",
-    "codebase_settings",
-    "system_prompts",
-    "custom_header_schemes",
-    "workspace_directories",
-    "mcp_server_configs",
-    "sub_agent_configs",
-    "sensitive_command_configs",
-    "chat_conversations",
-    "sub_agent_sessions",
-    "chat_messages",
-    "usage_records",
-];
 
 #[derive(Debug, Default)]
 struct SnowflakeState {
@@ -88,9 +72,9 @@ fn wait_next_millis(last_timestamp_ms: u64) -> u64 {
     }
 }
 
-/// Opens a SQLite connection with WAL mode and a busy timeout to prevent
-/// "database is locked" errors under concurrent access from multiple
-/// `spawn_blocking` tasks.
+/// Opens a SQLite connection with foreign-key enforcement, WAL mode, and a
+/// busy timeout to prevent integrity violations and "database is locked"
+/// errors under concurrent `spawn_blocking` tasks.
 ///
 /// WAL (Write-Ahead Logging) allows readers and a writer to operate
 /// simultaneously, eliminating most reader-writer contention. The busy
@@ -101,6 +85,9 @@ fn wait_next_millis(last_timestamp_ms: u64) -> u64 {
 /// to ensure consistent concurrency behaviour across the codebase.
 pub fn open_connection(database_path: impl AsRef<Path>) -> rusqlite::Result<Connection> {
     let connection = Connection::open(database_path)?;
+    // SQLite disables foreign keys for every new connection unless enabled
+    // explicitly. Schema-level ON DELETE CASCADE clauses rely on this.
+    connection.pragma_update(None, "foreign_keys", "ON")?;
     // busy_timeout MUST be set before any pragma that acquires a write lock
     // (e.g. journal_mode=WAL). Otherwise concurrent connections will get
     // "database is locked" immediately instead of waiting.
@@ -117,7 +104,10 @@ pub fn ensure_database(database_path: &Path) -> Result<()> {
 }
 
 fn create_schema(connection: &Connection) -> rusqlite::Result<()> {
-    reset_legacy_integer_primary_key_tables(connection)?;
+    // Pre-schema migrations run BEFORE CREATE TABLE so that tables with
+    // incompatible legacy structures (e.g. INTEGER primary keys) can be
+    // dropped and recreated with the current schema.
+    migrations::run_pre_schema_migrations(connection)?;
 
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS system_settings (
@@ -173,6 +163,8 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
            content TEXT NOT NULL DEFAULT '',
            is_active INTEGER NOT NULL DEFAULT 0,
            sort_order INTEGER NOT NULL DEFAULT 0,
+           scope TEXT NOT NULL DEFAULT 'global',
+           project_id TEXT,
            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
          );
@@ -231,9 +223,90 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
          CREATE INDEX IF NOT EXISTS idx_mcp_server_configs_source
            ON mcp_server_configs(source);
 
+         CREATE TABLE IF NOT EXISTS import_resources (
+           resource_id TEXT PRIMARY KEY NOT NULL,
+           resource_type TEXT NOT NULL,
+           scope TEXT NOT NULL,
+           project_id TEXT,
+           target_id TEXT NOT NULL,
+           target_path TEXT NOT NULL DEFAULT '',
+           management TEXT NOT NULL DEFAULT 'snapshot',
+           created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_import_resources_target
+           ON import_resources(resource_type, scope, target_id);
+
+         CREATE TABLE IF NOT EXISTS import_resource_sources (
+           source_id TEXT PRIMARY KEY NOT NULL,
+           resource_id TEXT NOT NULL,
+           provider TEXT NOT NULL,
+           scope TEXT NOT NULL,
+           origin_path TEXT NOT NULL,
+           project_id TEXT,
+           imported_hash TEXT NOT NULL,
+           current_hash TEXT NOT NULL,
+           last_scanned_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+           FOREIGN KEY(resource_id) REFERENCES import_resources(resource_id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_import_resource_sources_resource
+           ON import_resource_sources(resource_id);
+
+         CREATE TABLE IF NOT EXISTS plugins (
+           plugin_id TEXT PRIMARY KEY NOT NULL,
+           name TEXT NOT NULL,
+           version TEXT NOT NULL DEFAULT '',
+           provider TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           manifest_path TEXT NOT NULL,
+           scope TEXT NOT NULL,
+           project_id TEXT,
+           state TEXT NOT NULL DEFAULT 'enabled',
+           desired_state TEXT NOT NULL DEFAULT 'enabled',
+           capabilities_json TEXT NOT NULL DEFAULT '[]',
+           runtime_json TEXT NOT NULL DEFAULT 'null',
+           content_hash TEXT NOT NULL,
+           imported_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+         );
+         CREATE INDEX IF NOT EXISTS idx_plugins_provider_source
+           ON plugins(provider, source_path);
+
+         CREATE TABLE IF NOT EXISTS plugin_marketplaces (
+           marketplace_id TEXT PRIMARY KEY NOT NULL,
+           name TEXT NOT NULL UNIQUE,
+           display_name TEXT NOT NULL,
+           description TEXT NOT NULL DEFAULT '',
+           source_type TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           ref_name TEXT,
+           cache_path TEXT,
+           manifest_path TEXT NOT NULL,
+           content_hash TEXT NOT NULL,
+           added_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+         );
+
+         CREATE TABLE IF NOT EXISTS plugin_components (
+           component_id TEXT PRIMARY KEY NOT NULL,
+           plugin_id TEXT NOT NULL,
+           component_type TEXT NOT NULL,
+           logical_id TEXT NOT NULL,
+           target_id TEXT NOT NULL DEFAULT '',
+           target_path TEXT NOT NULL DEFAULT '',
+           origin_path TEXT NOT NULL,
+           content_hash TEXT NOT NULL,
+           status TEXT NOT NULL,
+           unsupported_reason TEXT,
+           sort_order INTEGER NOT NULL DEFAULT 0,
+           FOREIGN KEY(plugin_id) REFERENCES plugins(plugin_id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_plugin_components_plugin
+           ON plugin_components(plugin_id, sort_order);
+
          CREATE TABLE IF NOT EXISTS sub_agent_configs (
            id TEXT PRIMARY KEY NOT NULL,
-           agent_id TEXT NOT NULL UNIQUE,
+           agent_id TEXT NOT NULL,
            name TEXT NOT NULL,
            description TEXT NOT NULL DEFAULT '',
            system_prompt TEXT NOT NULL DEFAULT '',
@@ -242,8 +315,10 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
            builtin INTEGER NOT NULL DEFAULT 0,
            sort_order INTEGER NOT NULL DEFAULT 0,
            source TEXT NOT NULL DEFAULT 'manual',
+           project_id TEXT NOT NULL DEFAULT '',
            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+           UNIQUE(agent_id, project_id)
          );
          CREATE INDEX IF NOT EXISTS idx_sub_agent_configs_builtin
            ON sub_agent_configs(builtin);
@@ -284,13 +359,20 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
             cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
             total_duration_ms INTEGER NOT NULL DEFAULT 0,
             directory_id TEXT NOT NULL DEFAULT '',
-            forked_from_conversation_id TEXT NOT NULL DEFAULT '',
-            fork_message_count INTEGER NOT NULL DEFAULT 0,
-            emoji TEXT NOT NULL DEFAULT '',
-           created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-           updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-         );
-         CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated_at
+             forked_from_conversation_id TEXT NOT NULL DEFAULT '',
+             fork_message_count INTEGER NOT NULL DEFAULT 0,
+              emoji TEXT NOT NULL DEFAULT '',
+              -- Per-conversation Plan/Goal Mode overrides. NULL flags are
+              -- legacy/unset rows and are read as disabled (synonymous
+              -- with 0); a NULL goal_mode_token_budget falls back to the
+              -- global default budget.
+              plan_mode INTEGER,
+             goal_mode INTEGER,
+             goal_mode_token_budget INTEGER,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_chat_conversations_updated_at
            ON chat_conversations(updated_at DESC, id DESC);
          CREATE INDEX IF NOT EXISTS idx_chat_conversations_status
            ON chat_conversations(status);
@@ -416,70 +498,18 @@ CREATE INDEX IF NOT EXISTS idx_api_configs_active
     // module so the schema lives next to its CRUD functions.
     services::codebase_embed_sessions::ensure_sessions_table(connection)?;
 
-    // Migrate existing databases that were created before per-conversation
-    // API profile binding existed. Idempotent: no-op when the column is
-    // already present (fresh databases get it from CREATE TABLE above).
-    migrate_chat_conversations_api_profile(connection)?;
+    // Ensure the image library table exists (generated images index).
+    services::image_library::ensure_image_library_table(connection)?;
 
-    connection.pragma_update(None, "user_version", 22)?;
+    // Post-schema migrations run AFTER CREATE TABLE to add columns that
+    // older databases lack but fresh databases already have. Each migration
+    // is idempotent. Includes the local per-conversation Plan/Goal Mode
+    // columns and the sub-agent project_id rebuild (see migrations.rs).
+    migrations::run_post_schema_migrations(connection)?;
 
-    Ok(())
-}
-
-/// Adds the `api_profile_name` column to `chat_conversations` for databases
-/// created by older app versions. The column binds a conversation to a
-/// specific API config profile so different conversations can route to
-/// different providers/models. Empty string means "follow the global active
-/// profile" (the legacy behaviour).
-fn migrate_chat_conversations_api_profile(connection: &Connection) -> rusqlite::Result<()> {
-    let mut statement = connection.prepare("PRAGMA table_info(chat_conversations)")?;
-    let mut columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    let has_api_profile_column = columns.try_fold(false, |found, column| {
-        Ok::<bool, rusqlite::Error>(found || column? == "api_profile_name")
-    })?;
-
-    if !has_api_profile_column {
-        connection.execute(
-            "ALTER TABLE chat_conversations
-                ADD COLUMN api_profile_name TEXT NOT NULL DEFAULT ''",
-            [],
-        )?;
-    }
+    connection.pragma_update(None, "user_version", 26)?;
 
     Ok(())
-}
-
-fn reset_legacy_integer_primary_key_tables(connection: &Connection) -> rusqlite::Result<()> {
-    let has_legacy_primary_key = PRIMARY_KEY_TABLES.iter().try_fold(false, |found, table_name| {
-        Ok::<bool, rusqlite::Error>(found || has_integer_primary_key(connection, table_name)?)
-    })?;
-
-    if !has_legacy_primary_key {
-        return Ok(());
-    }
-
-    connection.execute_batch("PRAGMA foreign_keys = OFF;")?;
-    for table_name in PRIMARY_KEY_TABLES {
-        connection.execute(&format!("DROP TABLE IF EXISTS {table_name}"), [])?;
-    }
-    connection.execute_batch("PRAGMA foreign_keys = ON;")?;
-
-    Ok(())
-}
-
-fn has_integer_primary_key(connection: &Connection, table_name: &str) -> rusqlite::Result<bool> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
-    let mut columns = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i32>(5)?))
-    })?;
-
-    columns.try_fold(false, |found, column| {
-        let (column_name, column_type, primary_key_index) = column?;
-        Ok(found
-            || (column_name == "id"
-                && primary_key_index > 0
-                && column_type.eq_ignore_ascii_case("INTEGER")))
-    })
 }
 
 pub fn database_error(database_path: &Path, action: &str, error: rusqlite::Error) -> Error {

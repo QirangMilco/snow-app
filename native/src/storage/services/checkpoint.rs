@@ -21,6 +21,13 @@ const OBJECT_DIR_NAME: &str = "objects";
 const PENDING_DIR_NAME: &str = "pending";
 const MANIFEST_VERSION: u32 = 2;
 
+/// Prefix marking a manifest entry path as an absolute path outside the
+/// checkpoint's working directory. Entries whose path starts with this marker
+/// store the full absolute filesystem path (after the marker) instead of a
+/// path relative to `work_dir`. This lets the checkpoint system record and
+/// restore files edited outside the project workspace (e.g. `~/.snow/settings.json`).
+const ABSOLUTE_PATH_MARKER: &str = "\x00abs:";
+
 const SKIP_DIRS: &[&str] = &[
     "node_modules",
     ".git",
@@ -241,7 +248,7 @@ fn resolve_path_for_checkpoint(path: &Path) -> Result<PathBuf> {
     Ok(strip_windows_extended_prefix(&normalized))
 }
 
-fn resolve_checkpoint_path(root: &Path, file_path: &str) -> Result<(PathBuf, PathBuf)> {
+fn resolve_checkpoint_path(root: &Path, file_path: &str) -> Result<(PathBuf, String)> {
     let supplied = Path::new(file_path);
     let candidate = if supplied.is_absolute() {
         supplied.to_path_buf()
@@ -253,26 +260,51 @@ fn resolve_checkpoint_path(root: &Path, file_path: &str) -> Result<(PathBuf, Pat
     let normalized = resolve_path_for_checkpoint(&candidate)?;
 
     if !is_path_within_root(&normalized, root) {
-        return Err(Error::from_reason(format!(
-            "Path '{}' is outside checkpoint working directory '{}'",
-            strip_windows_extended_prefix(&normalized).display(),
-            strip_windows_extended_prefix(root).display()
-        )));
+        // File is outside the checkpoint's working directory (e.g. editing
+        // `~/.snow/settings.json`). Store it as an absolute-path-marked entry
+        // so the checkpoint can still record and restore it on rollback.
+        let abs_key = to_forward_slashes(&strip_windows_extended_prefix(&normalized));
+        let marked = format!("{ABSOLUTE_PATH_MARKER}{abs_key}");
+        return Ok((normalized, marked));
     }
 
     let relative = {
         let path_key_value = path_key(&normalized);
         let root_key_value = path_key(root);
         if path_key_value == root_key_value {
-            PathBuf::new()
+            String::new()
         } else {
             let relative_key = path_key_value
                 .strip_prefix(&format!("{root_key_value}/"))
                 .ok_or_else(|| Error::from_reason("Failed to create checkpoint-relative path"))?;
-            from_forward_slashes(relative_key)
+            relative_key.to_string()
         }
     };
     Ok((normalized, relative))
+}
+
+/// Resolve a manifest entry path back to an absolute filesystem path.
+///
+/// Paths stored with the `ABSOLUTE_PATH_MARKER` prefix are outside-workspace
+/// absolute paths and are returned as-is (after stripping the marker).
+/// All other paths are treated as relative to `root` and joined accordingly.
+fn resolve_manifest_path(root: &Path, manifest_path: &str) -> PathBuf {
+    if let Some(abs_path) = manifest_path.strip_prefix(ABSOLUTE_PATH_MARKER) {
+        from_forward_slashes(abs_path)
+    } else {
+        root.join(from_forward_slashes(manifest_path))
+    }
+}
+
+/// Check whether a manifest entry path should be skipped (e.g. it falls inside
+/// a `node_modules` or `.git` directory). Absolute-path-marked entries are
+/// never skipped by this check — they represent files outside the workspace
+/// that the user explicitly chose to edit.
+fn should_skip_manifest_path(manifest_path: &str) -> bool {
+    if manifest_path.starts_with(ABSOLUTE_PATH_MARKER) {
+        return false;
+    }
+    should_skip_relative(Path::new(manifest_path))
 }
 
 fn checkpoint_dir(checkpoint_id: &str) -> Result<PathBuf> {
@@ -670,11 +702,10 @@ pub fn record_checkpoint_file(
     }
     let _guard = checkpoint_guard()?;
     let root = canonical_work_dir(&work_dir)?;
-    let (absolute, relative) = resolve_checkpoint_path(&root, &file_path)?;
-    if relative.as_os_str().is_empty() || should_skip_relative(&relative) {
+    let (absolute, path) = resolve_checkpoint_path(&root, &file_path)?;
+    if path.is_empty() || should_skip_manifest_path(&path) {
         return Ok(());
     }
-    let path = to_forward_slashes(&relative);
 
     for checkpoint_id in checkpoint_ids {
         let mut manifest = read_manifest(&checkpoint_id)?;
@@ -706,11 +737,10 @@ pub fn record_checkpoint_file_after(
     }
     let _guard = checkpoint_guard()?;
     let root = canonical_work_dir(&work_dir)?;
-    let (absolute, relative) = resolve_checkpoint_path(&root, &file_path)?;
-    if relative.as_os_str().is_empty() || should_skip_relative(&relative) {
+    let (absolute, path) = resolve_checkpoint_path(&root, &file_path)?;
+    if path.is_empty() || should_skip_manifest_path(&path) {
         return Ok(());
     }
-    let path = to_forward_slashes(&relative);
 
     for checkpoint_id in checkpoint_ids {
         let mut manifest = read_manifest(&checkpoint_id)?;
@@ -866,11 +896,10 @@ pub fn restore_checkpoint(checkpoint_id: String, work_dir: String) -> Result<()>
 
     let mut restored_entries = Vec::new();
     for entry in &manifest.entries {
-        let relative = from_forward_slashes(&entry.path);
-        if should_skip_relative(&relative) {
+        if should_skip_manifest_path(&entry.path) {
             continue;
         }
-        let destination = root.join(&relative);
+        let destination = resolve_manifest_path(&root, &entry.path);
         let Some(expected) = entry.expected.as_ref() else {
             continue;
         };
@@ -898,7 +927,7 @@ fn restore_entry(
     manifest: &CheckpointManifest,
     entry: &CheckpointEntry,
 ) -> Result<()> {
-    let destination = root.join(from_forward_slashes(&entry.path));
+    let destination = resolve_manifest_path(root, &entry.path);
     match &entry.original {
         OriginalState::Missing => {
             if destination.is_file() || destination.is_symlink() {
@@ -974,7 +1003,7 @@ fn write_file(destination: &Path, content: &[u8]) -> Result<()> {
 fn prune_empty_parent_directories(root: &Path, entries: &[CheckpointEntry]) {
     let mut directories: Vec<PathBuf> = entries
         .iter()
-        .filter_map(|entry| root.join(from_forward_slashes(&entry.path)).parent().map(Path::to_path_buf))
+        .filter_map(|entry| resolve_manifest_path(root, &entry.path).parent().map(Path::to_path_buf))
         .collect();
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     directories.dedup();
@@ -1101,13 +1130,13 @@ pub fn list_checkpoint_changes(
 
     let mut changes = Vec::new();
     for entry in tracked {
-        if should_skip_relative(Path::new(&entry.path)) {
+        if should_skip_manifest_path(&entry.path) {
             continue;
         }
         let Some(expected) = entry.expected.as_ref() else {
             continue;
         };
-        let current = root.join(from_forward_slashes(&entry.path));
+        let current = resolve_manifest_path(&root, &entry.path);
         if !states_match(&current, expected, manifest.git.as_ref(), &entry.path)? {
             continue;
         }
@@ -1128,10 +1157,21 @@ pub fn list_checkpoint_changes(
 }
 
 /// Build unified diffs from checkpoint content to the current working state.
-/// This is read-only and is used by the renderer's rollback preview.
+/// This is read-only and is used by the renderer's rollback preview and the
+/// file-changes panel.
+///
+/// `include_all` controls which captured entries are reported:
+/// - `false` (rollback preview): only files whose current state still matches
+///   the checkpoint's post-change state. These are exactly the files rollback
+///   would restore, so the preview matches the restore behaviour.
+/// - `true` (file-changes panel): every captured entry is reported as long as
+///   its current state differs from the pre-change state. Files that were
+///   re-modified by later runs in a shared working tree stay visible, so an
+///   earlier conversation's modifications are never erased from the panel.
 pub fn list_checkpoint_diffs(
     checkpoint_id: String,
     work_dir: String,
+    include_all: bool,
 ) -> Result<Vec<CheckpointFileDiff>> {
     let _guard = checkpoint_guard()?;
     if !checkpoint_manifest_exists(&checkpoint_id) {
@@ -1143,14 +1183,16 @@ pub fn list_checkpoint_diffs(
 
     let mut diffs = Vec::new();
     for entry in tracked {
-        if should_skip_relative(Path::new(&entry.path)) {
+        if should_skip_manifest_path(&entry.path) {
             continue;
         }
         let Some(expected) = entry.expected.as_ref() else {
             continue;
         };
-        let current = root.join(from_forward_slashes(&entry.path));
-        if !states_match(&current, expected, manifest.git.as_ref(), &entry.path)? {
+        let current = resolve_manifest_path(&root, &entry.path);
+        if !include_all
+            && !states_match(&current, expected, manifest.git.as_ref(), &entry.path)?
+        {
             continue;
         }
         let Some(change_type) = classify_change(

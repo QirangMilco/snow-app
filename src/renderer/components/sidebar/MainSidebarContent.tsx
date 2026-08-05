@@ -55,18 +55,20 @@ export function MainSidebarContent({
     INITIAL_UPDATE_STATUS
   );
 
+  const activeDirectoryId = activeDirectory?.directoryId ?? "";
+
   // Scheduled tasks: the hook registers buildFromContent as the AI Loop
   // executor and subscribes to the in-memory store. Mounted here (always
   // rendered inside ChatConversationProvider) so the executor is available
   // for the whole app lifetime. Tasks only live while the process is alive.
-  const { tasks: scheduledTasks } = useScheduledTasks();
+  // Project isolation: tasks are scoped to the active directory, mirroring
+  // the memo project-isolation model.
+  const { tasks: scheduledTasks } = useScheduledTasks(activeDirectoryId);
 
   // Load the pending memo count for the sidebar badge. It is refreshed
   // whenever the memo modal closes (the modal calls onPendingCountChange
   // while open) and once on mount, and whenever the active project changes
   // since memos are scoped per directory.
-  const activeDirectoryId = activeDirectory?.directoryId ?? "";
-
   const refreshPendingMemoCount = useCallback(() => {
     if (!activeDirectoryId) {
       setPendingMemoCount(0);
@@ -306,6 +308,7 @@ export function MainSidebarContent({
         onPendingCountChange={setPendingMemoCount}
       />
       <ScheduledTasksModal
+        directoryId={activeDirectoryId}
         open={isScheduledTasksOpen}
         onClose={() => setIsScheduledTasksOpen(false)}
       />

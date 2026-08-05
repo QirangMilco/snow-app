@@ -3,6 +3,7 @@ import {
   BrainCircuit,
   Database,
   FileWarning,
+  Globe,
   Loader2,
   Pause,
   Play,
@@ -70,6 +71,7 @@ export const ProjectCodebasePanel = ({
   const [error, setError] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<ToggleKey | null>(null);
   const [hasGitignore, setHasGitignore] = useState<boolean | null>(null);
+  const [isRemoteProject, setIsRemoteProject] = useState(false);
 
   // ── Index stats & scan preview (project-scoped data) ─────────────────
   const [indexStats, setIndexStats] = useState<CodebaseIndexStats | null>(null);
@@ -137,6 +139,7 @@ export const ProjectCodebasePanel = ({
     setScope(null);
     setError(null);
     setHasGitignore(null);
+    setIsRemoteProject(false);
 
     if (!projectId) {
       setIsLoading(false);
@@ -149,9 +152,17 @@ export const ProjectCodebasePanel = ({
         window.snow.getCodebaseProjectScopeSettings(projectId),
         window.snow.checkProjectHasGitignore(projectId),
       ]);
+      let nextIsRemote = false;
+      try {
+        nextIsRemote = await window.snow.checkProjectIsRemote(projectId);
+      } catch {
+        // Remote detection is best-effort: treat it as a local project
+        // when the check fails so scope loading is not blocked.
+      }
       if (loadGenerationRef.current === generation) {
         setScope(nextScope);
         setHasGitignore(nextHasGitignore);
+        setIsRemoteProject(nextIsRemote);
       }
     } catch (loadError) {
       if (loadGenerationRef.current === generation) {
@@ -378,7 +389,7 @@ export const ProjectCodebasePanel = ({
           <span>{description}</span>
         </div>
         <label
-          className="project-sensitive-command-switch"
+          className="toggle-switch"
           title={
             checked
               ? t("projectCodebase.disableForProject")
@@ -393,10 +404,11 @@ export const ProjectCodebasePanel = ({
             }
             checked={checked}
             disabled={isPending}
+            hidden
             onChange={(event) => void toggle(key, event.target.checked)}
             type="checkbox"
           />
-          <span aria-hidden="true" />
+          <span className="toggle-slider" />
         </label>
       </article>
     );
@@ -455,6 +467,11 @@ export const ProjectCodebasePanel = ({
           <div className="project-sensitive-command-state">
             <Loader2 className="spin" size={18} />
             <span>{t("projectCodebase.loading")}</span>
+          </div>
+        ) : isRemoteProject ? (
+          <div className="project-sensitive-command-state project-codebase-gitignore-warning">
+            <Globe size={18} />
+            <span>{t("projectCodebase.remoteUnsupported")}</span>
           </div>
         ) : hasGitignore === false ? (
           <div className="project-sensitive-command-state project-codebase-gitignore-warning">

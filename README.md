@@ -52,6 +52,8 @@ snow-app/
 ├── src/
 │   ├── main/            # Electron main process
 │   │   ├── app/         # Application bootstrap & window management
+│   │   ├── codex/       # Codex compatibility import layer
+│   │   │   └── importer.ts # Manual settings import for MCP, Skills, Plugins, and prompts
 │   │   ├── ipc/         # IPC handler registration
 │   │   ├── native/      # Rust native bridge
 │   │   ├── pty/         # PTY & terminal management
@@ -76,6 +78,9 @@ snow-app/
 ├── resources/           # App icons & static assets
 └── electron.vite.config.ts
 ```
+
+Codex compatibility imports are started manually from the Codex compatibility
+entry in Settings; the app does not synchronize Codex files during startup.
 
 ## Prerequisites
 

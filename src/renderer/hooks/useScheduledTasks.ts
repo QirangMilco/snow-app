@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useChatConversationContext } from "../components/mainContent/chatMessages";
 import {
@@ -29,9 +29,9 @@ import type {
  * only while this renderer process is alive. Closing/ quitting the app
  * destroys everything; nothing is persisted.
  */
-export const useScheduledTasks = (): {
+export const useScheduledTasks = (directoryId: string): {
   tasks: ScheduledTaskRecord[];
-  createTask: (input: CreateScheduledTaskInput) => ScheduledTaskRecord;
+  createTask: (input: Omit<CreateScheduledTaskInput, "directoryId">) => ScheduledTaskRecord;
   removeTask: (id: string) => void;
   clearTasks: () => void;
   togglePauseTask: (id: string) => void;
@@ -40,17 +40,27 @@ export const useScheduledTasks = (): {
 } => {
   const { buildFromContent } = useChatConversationContext();
   const [tasks, setTasks] = useState<ScheduledTaskRecord[]>(() =>
-    scheduledTasksStore.list()
+    scheduledTasksStore.list(directoryId)
   );
   const [isExecutorReady, setIsExecutorReady] = useState(false);
 
-  // Subscribe to store changes (pub/sub singleton).
+  // Keep the latest directoryId in a ref so the store subscription callback
+  // always reads the current value without re-subscribing on every switch.
+  const directoryIdRef = useRef(directoryId);
+  useEffect(() => {
+    directoryIdRef.current = directoryId;
+  }, [directoryId]);
+
+  // Subscribe to store changes (pub/sub singleton). Re-list whenever the
+  // store notifies OR the active directory changes.
   useEffect(() => {
     const unsubscribe = scheduledTasksStore.subscribe(() => {
-      setTasks(scheduledTasksStore.list());
+      setTasks(scheduledTasksStore.list(directoryIdRef.current));
     });
+    // Ensure the list reflects the current directory immediately on mount/switch.
+    setTasks(scheduledTasksStore.list(directoryId));
     return unsubscribe;
-  }, []);
+  }, [directoryId]);
 
   // Register buildFromContent as the AI Loop executor.
   useEffect(() => {
@@ -67,10 +77,13 @@ export const useScheduledTasks = (): {
   }, [buildFromContent]);
 
   const createTask = useCallback(
-    (input: CreateScheduledTaskInput): ScheduledTaskRecord => {
-      return scheduledTasksStore.create(input);
+    (input: Omit<CreateScheduledTaskInput, "directoryId">): ScheduledTaskRecord => {
+      return scheduledTasksStore.create({
+        ...input,
+        directoryId,
+      });
     },
-    []
+    [directoryId]
   );
 
   const removeTask = useCallback((id: string): void => {
@@ -78,8 +91,8 @@ export const useScheduledTasks = (): {
   }, []);
 
   const clearTasks = useCallback((): void => {
-    scheduledTasksStore.clear();
-  }, []);
+    scheduledTasksStore.clear(directoryId);
+  }, [directoryId]);
 
   const togglePauseTask = useCallback((id: string): void => {
     scheduledTasksStore.togglePause(id);

@@ -154,11 +154,44 @@ export function countUniqueFiles(changes: FileChangeRecord[]): number {
   return new Set(changes.map((change) => change.filePath)).size;
 }
 
+export type FileChangeLineStats = {
+  additions: number;
+  deletions: number;
+};
+
+/**
+ * Sum added and deleted lines from the unified diffs captured for file tools.
+ * The first two lines are diff headers and are intentionally excluded.
+ */
+export function countFileChangeLines(
+  changes: FileChangeRecord[]
+): FileChangeLineStats {
+  let additions = 0;
+  let deletions = 0;
+
+  for (const change of changes) {
+    if (!change.diff?.patch || change.diff.isBinary) {
+      continue;
+    }
+
+    const lines = change.diff.patch.split("\n").slice(2);
+    for (const line of lines) {
+      if (line.startsWith("+")) {
+        additions += 1;
+      } else if (line.startsWith("-")) {
+        deletions += 1;
+      }
+    }
+  }
+
+  return { additions, deletions };
+}
+
 /** A file change extracted from persisted history, without agent attribution
  *  (the caller decides whether it belongs to the main agent or a sub-agent). */
 export type ExtractedFileChange = Pick<
   FileChangeRecord,
-  "filePath" | "kind" | "timestamp"
+  "filePath" | "kind" | "timestamp" | "diff"
 >;
 
 /**

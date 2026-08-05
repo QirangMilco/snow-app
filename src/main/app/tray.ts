@@ -4,7 +4,6 @@ import {
   ipcMain,
   Menu,
   nativeImage,
-  nativeTheme,
   Tray,
   type NativeImage,
 } from "electron";
@@ -20,14 +19,13 @@ import { snowLog } from "../../utils/snowLogger";
  * 系统托盘模块。
  *
  * 图标：
- * - macOS：从应用 LOGO 抠出的雪花去色模板版（纯黑 + 透明，系统自动反色
- *   适配明暗菜单栏）。LOGO 是"白色圆角方形底 + 蓝色雪花"，直接提取 alpha
- *   会把白底一起带上、缩到 16px 糊成实心方块，故反解蓝色雪花覆盖度抠出
- *   雪花造型并去色，与 LOGO 完全统一，16px @1x + 32px @2x 双表示。
- * - Windows/Linux：LOGO 彩色 favicon 小图（16px + 32px @2x 双表示，DPI 精确匹配）。
- * - 活动态（有会话进行中）：右下角叠加绿色圆点。绿点使活动图不能设为模板
- *   （模板图忽略颜色、整体反色），雪花反色由 nativeTheme 监听人工模拟：
- *   浅色外观黑雪花 + 绿点、深色外观白雪花 + 绿点，与普通态模板反色一致。
+ * - macOS：从应用 LOGO 抠出的雪花模板图（纯黑 + alpha，系统按菜单栏背景
+ *   即壁纸明暗自动反色，不受系统深浅色模式影响）。LOGO 是"白色圆角方形底
+ *   + 蓝色雪花"，直接提取 alpha 会把白底带上、缩到 16px 糊成实心方块，故
+ *   反解蓝色雪花覆盖度抠出雪花造型并去色，与 LOGO 完全统一。
+ *   活动态（有会话进行中）：雪花右侧绘制活跃会话数（5x7 点阵数字），同为
+ *   模板图，跟随壁纸整体反色，彻底避免待机/活动切换时的黑白跳变。
+ * - Windows/Linux：LOGO 彩色 favicon 小图，活动态右下角叠加绿色圆点。
  *
  * 悬停 tooltip 展示快速信息（原生纯文本，无图标）：
  * 进行中会话 / 活跃终端 / 项目 / 待办备忘录 / 今日 Token 用量。
@@ -227,8 +225,8 @@ const overlayActivityDot = (
 
 // ─── 图标生成 ─────────────────────────────────────────────────────────────
 
-// 活动态圆点颜色：三平台统一用绿色（与主题 accentGreen #22c55e 一致）。
-// macOS 活动图不再设为模板图（模板图会忽略 RGB 颜色），绿色圆点直接显示。
+// 活动态圆点颜色（仅 Windows/Linux）：绿色（与主题 accentGreen #22c55e 一致）。
+// macOS 活动态改用模板图点阵数字，跟随菜单栏背景反色，不使用彩色圆点。
 const GREEN_DOT: [number, number, number, number] = [34, 197, 94, 255];
 
 /**
@@ -403,45 +401,171 @@ const maskToTemplateRgba = (
 };
 
 /**
- * 将 RGBA 像素中所有不透明（alpha > 0）像素的 RGB 染成指定颜色。
- * 用于生成与模板反色效果一致的黑/白雪花线条。
+ * 5x7 点阵数字字模（行优先，每行 5 位，bit4..bit0 对应左→右 5 列）。
+ * 用于 macOS 活动态在雪花右侧绘制活跃会话数，同为模板图，跟随菜单栏
+ * 背景自动反色。
  */
-const tintRgba = (rgba: Uint8Array, color: [number, number, number]): void => {
-  for (let i = 0; i < rgba.length; i += 4) {
-    if (rgba[i + 3] > 0) {
-      rgba[i] = color[0];
-      rgba[i + 1] = color[1];
-      rgba[i + 2] = color[2];
+const DIGIT_GLYPHS: Record<string, number[]> = {
+  "0": [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+  "1": [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+  "2": [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+  "3": [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110],
+  "4": [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+  "5": [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+  "6": [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+  "7": [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+  "8": [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+  "9": [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+};
+
+/**
+ * 点阵数字的单格边长（@1x 16px→1，@2x 32px→2）。
+ * 必须保证 @2x 恰为 @1x 的 2 倍，否则活动图 @1x/@2x 宽高比不一致，
+ * 系统渲染时会把雪花横向拉伸变形。系数取 snowSize/16，数字高 7*cell
+ * 约占画布 44%，比雪花略小不会喧宾夺主；最小取 1 保证 @1x 可见。
+ */
+const digitCell = (snowSize: number): number => Math.max(1, Math.round(snowSize / 16));
+
+/**
+ * 在 RGBA 模板画布（纯黑 + alpha）上绘制活跃会话数点阵数字。
+ * 数字置于雪花右侧（originX = snowSize + 间距），不与雪花重叠；垂直居中。
+ * 每个点为 cell×cell 的实心方块，alpha=255，与雪花模板同为纯黑遮罩。
+ */
+const drawCountDigits = (
+  rgba: Uint8Array,
+  canvasWidth: number,
+  canvasHeight: number,
+  snowSize: number,
+  count: number
+): void => {
+  const text = count > 99 ? "99" : String(count);
+  const cell = digitCell(snowSize);
+  const glyphW = 5;
+  const glyphH = 7;
+  const charGap = cell;
+  const originX = snowSize + cell;
+  const originY = Math.floor((canvasHeight - glyphH * cell) / 2);
+  for (let i = 0; i < text.length; i++) {
+    const glyph = DIGIT_GLYPHS[text[i]];
+    if (!glyph) {
+      continue;
+    }
+    const charX = originX + i * (glyphW * cell + charGap);
+    for (let row = 0; row < glyphH; row++) {
+      const bits = glyph[row];
+      for (let col = 0; col < glyphW; col++) {
+        if (((bits >> (glyphW - 1 - col)) & 1) === 0) {
+          continue;
+        }
+        const px = charX + col * cell;
+        const py = originY + row * cell;
+        for (let dy = 0; dy < cell; dy++) {
+          for (let dx = 0; dx < cell; dx++) {
+            const x = px + dx;
+            const y = py + dy;
+            if (x < 0 || x >= canvasWidth || y < 0 || y >= canvasHeight) {
+              continue;
+            }
+            const idx = (y * canvasWidth + x) * 4;
+            rgba[idx] = 0;
+            rgba[idx + 1] = 0;
+            rgba[idx + 2] = 0;
+            rgba[idx + 3] = 255;
+          }
+        }
+      }
     }
   }
 };
 
 /**
- * macOS 图标：
- * - 普通态：雪花模板（纯黑 + alpha，系统自动反色适配明暗菜单栏）；
- * - 活动态：模板图会忽略 RGB 颜色，绿色圆点无法与之共存，故改为彩色图并
- *   按系统外观预渲染两版雪花线条（浅色黑、深色白），模拟模板反色效果，
- *   圆点始终绿色，跟随 nativeTheme 切换。16px @1x + 32px @2x 双表示。
+ * macOS 图标：普通态与活动态均使用模板图（纯黑 + alpha），由系统按菜单栏
+ * 背景（壁纸明暗）自动反色，不受系统深浅色模式影响，彻底避免待机/活动
+ * 切换时的黑白跳变。
+ * - 普通态：雪花模板，占满图标画布；
+ * - 活动态：雪花右侧绘制活跃会话数（5x7 点阵数字），与雪花同为纯黑遮罩，
+ *   整张图设为模板图，数字与雪花一起跟随壁纸反色。
+ *
+ * 活动态数字会随会话数变化，故活动图标按会话数缓存（命中即复用，未命中才
+ * 重新合成）。画布宽度按数字位数扩展（两位数需更宽画布），含 @1x/@2x 双表示。
  */
 const createMacTemplateIcons = (): TrayIcons => {
-  const build = (
+  // 活动态画布宽度：雪花占左侧 snowSize，右侧数字区 = 起始间距 cell
+  // + 每字符 5*cell 宽 + 字符间距 cell。即 snowSize + 6*cell*位数。
+  const activeCanvasWidth = (snowSize: number, count: number): number => {
+    const cell = digitCell(snowSize);
+    const digits = count > 99 ? 2 : String(count).length;
+    return snowSize + 6 * cell * digits;
+  };
+
+  // 将雪花 mask 按 crop 区域缩放绘制到画布左侧 snowSize×snowSize 区域，
+  // 输出纯黑模板 RGBA（RGB 全 0，alpha 为覆盖度）。
+  const drawSnowflake = (
     mask: Float32Array,
     srcWidth: number,
     srcHeight: number,
     crop: { x: number; y: number; side: number },
-    size: number
-  ): { png: Buffer; activeLightPng: Buffer; activeDarkPng: Buffer } => {
-    const rgba = maskToTemplateRgba(mask, srcWidth, srcHeight, crop, size, size);
-    const activeLight = Uint8Array.from(rgba);
-    overlayActivityDot(activeLight, size, size, GREEN_DOT);
-    const activeDark = Uint8Array.from(rgba);
-    tintRgba(activeDark, [255, 255, 255]);
-    overlayActivityDot(activeDark, size, size, GREEN_DOT);
-    return {
-      png: encodePng(rgba, size, size),
-      activeLightPng: encodePng(activeLight, size, size),
-      activeDarkPng: encodePng(activeDark, size, size),
+    rgba: Uint8Array,
+    canvasW: number,
+    snowSize: number
+  ): void => {
+    const sample = (sx: number, sy: number): number => {
+      if (sx < 0 || sx >= srcWidth || sy < 0 || sy >= srcHeight) {
+        return 0;
+      }
+      return mask[sy * srcWidth + sx];
     };
+    for (let ty = 0; ty < snowSize; ty++) {
+      const sy0 = Math.floor(crop.y + (ty * crop.side) / snowSize);
+      const sy1 = Math.max(sy0 + 1, Math.floor(crop.y + ((ty + 1) * crop.side) / snowSize));
+      for (let tx = 0; tx < snowSize; tx++) {
+        const sx0 = Math.floor(crop.x + (tx * crop.side) / snowSize);
+        const sx1 = Math.max(sx0 + 1, Math.floor(crop.x + ((tx + 1) * crop.side) / snowSize));
+        let sum = 0;
+        let n = 0;
+        for (let sy = sy0; sy < sy1; sy++) {
+          for (let sx = sx0; sx < sx1; sx++) {
+            sum += sample(sx, sy);
+            n++;
+          }
+        }
+        const idx = (ty * canvasW + tx) * 4;
+        rgba[idx + 3] = Math.round((sum / n) * 255);
+      }
+    }
+  };
+
+  // 合成指定会话数的活动态 PNG（@1x + @2x）。
+  const buildActivePngs = (
+    mask: Float32Array,
+    srcWidth: number,
+    srcHeight: number,
+    crop: { x: number; y: number; side: number },
+    count: number
+  ): { png16: Buffer; png32: Buffer } => {
+    const build1x = buildActiveRgba(mask, srcWidth, srcHeight, crop, 16, count);
+    const build2x = buildActiveRgba(mask, srcWidth, srcHeight, crop, 32, count);
+    return {
+      png16: encodePng(build1x.rgba, build1x.width, build1x.height),
+      png32: encodePng(build2x.rgba, build2x.width, build2x.height),
+    };
+  };
+
+  // 合成单尺寸活动态 RGBA。画布宽度按数字位数扩展。
+  const buildActiveRgba = (
+    mask: Float32Array,
+    srcWidth: number,
+    srcHeight: number,
+    crop: { x: number; y: number; side: number },
+    snowSize: number,
+    count: number
+  ): { width: number; height: number; rgba: Uint8Array } => {
+    const canvasW = activeCanvasWidth(snowSize, count);
+    const canvasH = snowSize;
+    const rgba = new Uint8Array(canvasW * canvasH * 4);
+    drawSnowflake(mask, srcWidth, srcHeight, crop, rgba, canvasW, snowSize);
+    drawCountDigits(rgba, canvasW, canvasH, snowSize, count);
+    return { width: canvasW, height: canvasH, rgba };
   };
 
   try {
@@ -449,34 +573,49 @@ const createMacTemplateIcons = (): TrayIcons => {
     if (decoded) {
       const mask = extractSnowflakeMask(decoded.rgba, decoded.width, decoded.height);
       const crop = computeContentCrop(mask, decoded.width, decoded.height);
-      const s16 = build(mask, decoded.width, decoded.height, crop, 16);
-      const s32 = build(mask, decoded.width, decoded.height, crop, 32);
-      const normal = nativeImage.createFromBuffer(s16.png);
-      const activeLight = nativeImage.createFromBuffer(s16.activeLightPng);
-      const activeDark = nativeImage.createFromBuffer(s16.activeDarkPng);
-      normal.addRepresentation({ scaleFactor: 2, width: 32, height: 32, buffer: s32.png });
-      activeLight.addRepresentation({
+
+      // 普通态：雪花占满 16×16 画布（@1x + @2x）。
+      const normal16 = nativeImage.createFromBuffer(
+        encodePng(maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 16, 16), 16, 16)
+      );
+      normal16.addRepresentation({
         scaleFactor: 2,
         width: 32,
         height: 32,
-        buffer: s32.activeLightPng,
+        buffer: encodePng(maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 32, 32), 32, 32),
       });
-      activeDark.addRepresentation({
-        scaleFactor: 2,
-        width: 32,
-        height: 32,
-        buffer: s32.activeDarkPng,
-      });
-      normal.setTemplateImage(true);
-      // 活动态含绿色圆点，不能设为模板图（模板图会忽略 RGB 颜色、整体反色）。
-      return { normal, activeLight, activeDark };
+      normal16.setTemplateImage(true);
+
+      // 活动态：按会话数缓存 nativeImage，未命中才重新合成。
+      const cache = new Map<number, NativeImage>();
+      const getActive = (count: number): NativeImage => {
+        const key = count > 99 ? 99 : Math.max(1, Math.floor(count));
+        const cached = cache.get(key);
+        if (cached) {
+          return cached;
+        }
+        const { png16, png32 } = buildActivePngs(mask, decoded.width, decoded.height, crop, key);
+        const img = nativeImage.createFromBuffer(png16);
+        // @2x 表示需按实际画布尺寸（位数不同宽度不同）注册。
+        img.addRepresentation({
+          scaleFactor: 2,
+          width: activeCanvasWidth(32, key),
+          height: 32,
+          buffer: png32,
+        });
+        img.setTemplateImage(true);
+        cache.set(key, img);
+        return img;
+      };
+
+      return { normal: normal16, getActive };
     }
   } catch {
     // fallthrough to colored fallback below
   }
   // 解码失败保底：直接用彩色 LOGO（非模板，菜单栏显示原色）。
   const fallback = nativeImage.createFromPath(APP_ICON_PATH);
-  return { normal: fallback, activeLight: fallback, activeDark: fallback };
+  return { normal: fallback, getActive: () => fallback };
 };
 
 /** 构建 Windows 双表示图标：16px @1x + 32px @2x，DPI 精确匹配。 */
@@ -506,11 +645,16 @@ const withActivityDot = (pngPath: string): NativeImage => {
   }
 };
 
-/** 托盘图标集：普通态 + 活动态（macOS 按明暗外观分两套，其余平台两套相同）。 */
+/**
+ * 托盘图标集。
+ * - normal：普通态图标（无会话进行时）。
+ * - getActive(count)：活动态图标工厂（有会话进行时），按会话数返回对应图标。
+ *   macOS 会按数字位数/数值返回不同模板图；Windows/Linux 忽略 count 返回
+ *   固定的带绿色圆点彩色图。
+ */
 type TrayIcons = {
   normal: NativeImage;
-  activeLight: NativeImage;
-  activeDark: NativeImage;
+  getActive: (count: number) => NativeImage;
 };
 
 /** Windows/Linux 彩色图标（正常 + 活动两套），使用设计好的 favicon 小图。 */
@@ -525,8 +669,7 @@ const createColorIcons = (): TrayIcons => {
       );
       return {
         normal: buildDualRepIcon(icon16, icon32),
-        activeLight: active,
-        activeDark: active,
+        getActive: () => active,
       };
     }
   }
@@ -543,7 +686,7 @@ const createColorIcons = (): TrayIcons => {
     height: target,
   });
   const resolvedActive = active.isEmpty() ? normal : active;
-  return { normal, activeLight: resolvedActive, activeDark: resolvedActive };
+  return { normal, getActive: () => resolvedActive };
 };
 
 // ─── 托盘状态 ─────────────────────────────────────────────────────────────
@@ -561,7 +704,6 @@ type TrayStats = {
 let tray: Tray | null = null;
 let nativeBridge: NativeBridge | null = null;
 let icons: TrayIcons | null = null;
-let isDarkAppearance = false;
 let stats: TrayStats = {
   activeSessions: 0,
   activeTerminals: 0,
@@ -617,15 +759,17 @@ const applyTooltip = (): void => {
 };
 
 /**
- * 根据是否有进行中会话切换托盘图标（活动态角标）。
- * macOS 活动态按当前明暗外观选用对应雪花线条（模拟模板反色），圆点始终绿色。
+ * 根据是否有进行中会话切换托盘图标。
+ * - 有会话：活动态图标（macOS 为雪花+数字模板图，Windows/Linux 为彩色图+绿点）。
+ * - 无会话：普通态图标（macOS 为纯雪花模板图）。
+ * macOS 两者均为模板图，由系统按菜单栏背景自动反色，无需手动切换黑白。
  */
 const applyActiveVisual = (): void => {
   if (!tray || !icons) {
     return;
   }
   if (stats.activeSessions > 0) {
-    tray.setImage(isDarkAppearance ? icons.activeDark : icons.activeLight);
+    tray.setImage(icons.getActive(stats.activeSessions));
   } else {
     tray.setImage(icons.normal);
   }
@@ -698,21 +842,10 @@ export const initTray = (native: NativeBridge): void => {
     nativeBridge = native;
     const isMacOS = process.platform === "darwin";
     icons = isMacOS ? createMacTemplateIcons() : createColorIcons();
-    isDarkAppearance = nativeTheme.shouldUseDarkColors;
 
     tray = new Tray(icons.normal);
     tray.setToolTip("Snow App");
     tray.on("click", showMainWindow);
-
-    // macOS 菜单栏外观随墙纸/系统设置变化，活动态图标需同步切换
-    // 雪花线条颜色（黑/白），绿点本身不变。
-    nativeTheme.on("updated", () => {
-      const dark = nativeTheme.shouldUseDarkColors;
-      if (dark !== isDarkAppearance) {
-        isDarkAppearance = dark;
-        applyActiveVisual();
-      }
-    });
 
     if (isMacOS) {
       // macOS 左键点击恢复窗口，右键弹出菜单（避免左键被菜单吞掉）。

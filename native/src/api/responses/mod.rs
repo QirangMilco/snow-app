@@ -7,7 +7,7 @@
 //! stays focused on type definitions and orchestration.
 
 mod event;
-mod payload;
+pub(crate) mod payload;
 mod stream;
 
 use std::collections::HashMap;
@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::conversation::{
     prepare_context_request, resolve_sub_agent_tools, ConversationContextRequest,
 };
-use crate::api::retry::RetryOptions;
+use crate::api::retry::{resolve_stream_idle_timeout_sec, RetryOptions};
 use crate::storage::services::app_logs::{log_api_error, log_api_warning, maybe_log_api_request};
 use crate::storage::services::chat_conversations::{
     store_chat_exchange, ChatContextMessage, StoreChatExchangeInput,
@@ -194,8 +194,8 @@ async fn create_response_async(
         ));
     }
 
-    let base_url = payload::resolve_effective_base_url(&api_config);
-    if base_url.is_empty() {
+    let endpoint = payload::resolve_responses_endpoint(&api_config);
+    if endpoint.is_empty() {
         return Err(Error::from_reason(
             "Base URL not configured. Please configure API settings first.",
         ));
@@ -242,7 +242,9 @@ async fn create_response_async(
         }
     }
 
-    let client = payload::build_openai_client(&base_url, api_key, &effective_headers).await?;
+    let client = crate::api::http_client::build_proxied_client()
+        .await
+        .map_err(|error| Error::from_reason(format!("Failed to create HTTP client: {}", error)))?;
     let skip_context = request.skip_context.unwrap_or(false);
     let mut prepared_messages = prepared_request.messages;
     crate::api::vision::textify_images_in_messages(
@@ -274,16 +276,30 @@ async fn create_response_async(
         &prepared_request.user_system_prompts,
     )?;
     let retry_options = RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
+    let stream_idle_timeout_sec =
+        resolve_stream_idle_timeout_sec(api_config.stream_idle_timeout_sec);
     let request_payload_json = serde_json::to_string(&payload).unwrap_or_default();
     maybe_log_api_request(
         database_path.clone(),
         "responses".to_string(),
-        base_url.clone(),
+        endpoint.clone(),
         request_payload_json,
     )
     .await;
 
-    let streamed_response = match stream::collect_streaming_response(&client, payload, on_chunk, &cancel_token, &retry_options).await {
+    let streamed_response = match stream::collect_streaming_response(
+        &client,
+        &endpoint,
+        api_key,
+        &effective_headers,
+        payload,
+        on_chunk,
+        &cancel_token,
+        &retry_options,
+        stream_idle_timeout_sec,
+    )
+    .await
+    {
         Ok(result) => result,
         Err(error) => {
             log_api_error(
@@ -295,8 +311,9 @@ async fn create_response_async(
             return Err(error);
         }
     };
-    let raw_response_json = serde_json::to_string(&streamed_response.raw_events)
-        .unwrap_or_else(|_| "[]".to_string());
+    // See chat/mod.rs: assistant raw_events are not needed for replay, so we
+    // skip serializing the full SSE chunk array to avoid DB bloat.
+    let raw_response_json = "{}";
 
     for parse_error in &streamed_response.tool_parse_errors {
         log_api_warning(
@@ -364,5 +381,3 @@ async fn create_response_async(
         persisted_user_message_ids,
     })
 }
-
-

@@ -14,6 +14,8 @@ type ToolCallNodeProps = {
   displayName?: ReactNode;
   /** Tooltip text for the displayName area. Only used when displayName is set. */
   displayNameTitle?: string;
+  /** 显式文件路径；提供后 displayName 支持 Ctrl+点击打开。 */
+  displayNameDataPath?: string;
   /** Current status of the tool call. */
   status: "pending" | "running" | "completed" | "error";
   /** Whether the node is expanded by default. */
@@ -38,6 +40,7 @@ export const ToolCallNode = ({
   category,
   displayName,
   displayNameTitle,
+  displayNameDataPath,
   status,
   defaultOpen = false,
   meta,
@@ -82,7 +85,11 @@ export const ToolCallNode = ({
             <span className="tcn-sep" aria-hidden="true">
               /
             </span>
-            <span className="tcn-name" title={displayNameTitle}>
+            <span
+              className="tcn-name"
+              title={displayNameTitle}
+              data-path={displayNameDataPath}
+            >
               {displayName}
             </span>
           </>

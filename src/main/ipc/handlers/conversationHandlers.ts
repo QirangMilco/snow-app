@@ -313,6 +313,29 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
     }
   );
   ipcMain.handle(
+    "chat-conversations:batch-delete",
+    async (_event, conversationIds: unknown) => {
+      if (!Array.isArray(conversationIds)) {
+        throw new Error("Conversation IDs are required to batch delete");
+      }
+
+      const safeIds = conversationIds.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (safeIds.length === 0) {
+        return;
+      }
+
+      snowLog.warn({
+        module: "ipc/conversation",
+        func: "batch-delete",
+        message: "Conversations deleted",
+        context: `count=${safeIds.length}`,
+      });
+      await native.deleteConversations(safeIds);
+    }
+  );
+  ipcMain.handle(
     "chat-conversations:list-sub-agent",
     (_event, parentConversationId: unknown) => {
       if (
@@ -325,6 +348,24 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
       }
 
       return native.listSubAgentConversations(parentConversationId.trim());
+    }
+  );
+  ipcMain.handle(
+    "chat-conversations:list-sub-agents-by-parents",
+    (_event, parentConversationIds: unknown) => {
+      if (!Array.isArray(parentConversationIds)) {
+        throw new Error(
+          "Parent conversation IDs are required to list sub-agent conversations"
+        );
+      }
+
+      const safeIds = parentConversationIds.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (safeIds.length === 0) {
+        return Promise.resolve({});
+      }
+      return native.listSubAgentConversationsByParents(safeIds);
     }
   );
   ipcMain.handle(
@@ -430,14 +471,6 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
       );
     }
   );
-  ipcMain.handle("sub-agent-configs:get", async (_event, agentId: unknown) => {
-    if (typeof agentId !== "string" || !agentId.trim()) {
-      throw new Error("Agent ID is required to get sub-agent config");
-    }
-
-    return native.getSubAgentConfig(agentId.trim());
-  });
-
   // ===== Conversation export =====
   // Rust 端负责从 SQLite 读取会话与消息并格式化为目标格式文本，
   // 主进程负责弹出保存对话框并将文本写入用户选择的文件路径。

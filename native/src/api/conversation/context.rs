@@ -4,7 +4,7 @@ use crate::prompt::goal_mode_system_prompt::build_goal_mode_system_prompt;
 use crate::prompt::plan_mode_system_prompt::build_plan_mode_system_prompt;
 use crate::prompt::system_prompt::build_system_prompt;
 use crate::storage::services::chat_conversations::{
-    load_context_messages, resolve_conversation_id, ChatContextMessage,
+    get_conversation_modes, load_context_messages, resolve_conversation_id, ChatContextMessage,
 };
 use crate::storage::services::system_prompts::resolve_active_system_prompt_contents;
 use crate::storage::services::system_settings::get_system_setting_value;
@@ -110,7 +110,11 @@ pub fn prepare_context_request(
     // (e.g. Anthropic demotes the built-in prompt to a user message when
     // user prompts are present, matching Snow CLI PR #127).
     let user_system_prompts =
-        resolve_active_system_prompt_contents(request.database_path, request.system_prompt_ids_json);
+        resolve_active_system_prompt_contents(
+            request.database_path,
+            request.system_prompt_ids_json,
+            request.directory_id,
+        );
 
     // Inject the built-in system prompt as the first message.
     let working_directory = request
@@ -133,7 +137,25 @@ pub fn prepare_context_request(
             request.remote_include_global_rules,
         )
     } else if request.goal_mode {
-        let goal_token_budget = crate::storage::services::system_settings::get_goal_mode_token_budget(request.database_path).unwrap_or(2000000);
+        // Per-conversation budget isolation: the conversation's own override
+        // wins, then the global default budget, then the built-in default.
+        let goal_token_budget = if !conversation_id.is_empty() {
+            get_conversation_modes(request.database_path, &conversation_id)
+                .ok()
+                .and_then(|modes| modes.goal_mode_token_budget)
+                .or_else(|| {
+                    crate::storage::services::system_settings::get_goal_mode_token_budget(
+                        request.database_path,
+                    )
+                    .ok()
+                })
+                .unwrap_or(2000000)
+        } else {
+            crate::storage::services::system_settings::get_goal_mode_token_budget(
+                request.database_path,
+            )
+            .unwrap_or(2000000)
+        };
         build_goal_mode_system_prompt(
             request.database_path,
             &working_directory,

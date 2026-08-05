@@ -24,6 +24,8 @@ import { UserMessageRail } from "./chatMessages/components/UserMessageRail";
 import type { ChatInputSendOptions } from "./chatInput/types";
 import type { MainContentView } from "./types";
 import type { RollbackMode } from "./chatMessages/utils/conversationTypes";
+import { usePathClickOpen } from "./chatMessages/hooks/usePathClickOpen";
+import { directoryIdToPath } from "./chatMessages/utils/conversationHelpers";
 
 type ChatContentProps = {
   activeDirectory?: WorkspaceDirectoryRecord | null;
@@ -47,6 +49,7 @@ const ChatContentBody = ({
   const {
     messages,
     activeConversationId,
+    conversationDirectoryId,
     isLoadingOlderMessages,
     hasMoreMessages,
     isInitialHistoryLoaded,
@@ -60,6 +63,9 @@ const ChatContentBody = ({
     draftToRestore,
     autoSendToken,
     clearDraftToRestore,
+    saveInputDraft,
+    getInputDraft,
+    clearInputDraft,
     rollbackPreview,
     confirmRollback,
     cancelRollback,
@@ -157,16 +163,22 @@ const ChatContentBody = ({
   // Once its run ends the sub-agent conversation becomes read-only: the
   // input box disappears and only a status notice remains. While the run is
   // live the input stays visible so the user can insert pending messages.
+  // Only the three terminal statuses count — any other value (including
+  // unknown statuses) keeps the input visible instead of locking the
+  // conversation aggressively.
   const isSubAgentFinished =
     isSubAgentConversation &&
-    subAgentRunStatus !== "" &&
-    subAgentRunStatus !== "running";
+    ["completed", "failed", "cancelled"].includes(subAgentRunStatus);
   const subAgentParentConversationId =
     activeConversationMeta?.parentConversationId ||
     liveSubAgentEvent?.parentConversationId ||
     "";
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 覆盖整个中间输出区：文件变更统计、消息正文、Thinking、工具调用和压缩输出。
+  const pathClickOpenProps = usePathClickOpen(
+    directoryIdToPath(conversationDirectoryId) ?? activeDirectory?.path
+  );
   const activeConversationIdRef = useRef(activeConversationId);
   const previousActiveConversationIdRef = useRef(activeConversationId);
   const positionedConversationIdsRef = useRef(new Set<string>());
@@ -748,6 +760,7 @@ const ChatContentBody = ({
           isLoadingInitialHistory ? "is-loading-history" : ""
         }`}
         ref={scrollRef}
+        onClick={pathClickOpenProps.onClick}
         onWheel={markUserScrollIntent}
         onTouchStart={markUserScrollIntent}
         onPointerDown={handleChatPointerDown}
@@ -849,6 +862,9 @@ const ChatContentBody = ({
             draftToRestore={draftToRestore}
             autoSendToken={autoSendToken}
             onDraftRestored={clearDraftToRestore}
+            saveInputDraft={saveInputDraft}
+            getInputDraft={getInputDraft}
+            clearInputDraft={clearInputDraft}
             pendingMessages={pendingMessages}
             onWithdrawPendingMessage={withdrawPendingMessage}
             onSendPendingMessageNow={sendPendingMessageNow}

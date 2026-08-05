@@ -6,11 +6,17 @@ import {
   nativeImage,
   screen,
   session,
+  shell,
 } from "electron";
 import type { NativeBridge } from "../../native/types";
 import { markCloseConfirmed } from "../../app/mainWindow";
 import { refreshTrayStats } from "../../app/tray";
 import { clearWindowState } from "../../app/windowState";
+import {
+  listPendingDialogs,
+  queryNetworkRecords,
+  respondPendingDialog,
+} from "./browserNetworkRecorder";
 
 export const registerWindowHandlers = (_native: NativeBridge): void => {
   // ===== Window Controls (Windows custom titlebar) =====
@@ -130,6 +136,28 @@ export const registerWindowHandlers = (_native: NativeBridge): void => {
     clipboard.writeImage(image);
   });
 
+  // ===== Clipboard (text) =====
+  // 走主进程 clipboard 模块：渲染进程的 navigator.clipboard.readText()
+  // 需要 clipboard-read 权限（默认未授予），通过 IPC 则始终可用。
+  ipcMain.handle("clipboard:read-text", () => clipboard.readText());
+
+  ipcMain.handle("clipboard:write-text", (_event, text: unknown) => {
+    if (typeof text !== "string") {
+      throw new Error("Clipboard text must be a string");
+    }
+    clipboard.writeText(text);
+  });
+
+  // ===== Shell (file manager reveal) =====
+  // 在系统文件管理器中显示文件（Windows 资源管理器 / macOS Finder / Linux
+  // 文件管理器），文件会高亮选中；传入目录时直接打开该目录。
+  ipcMain.handle("shell:show-item-in-folder", (_event, path: unknown) => {
+    if (typeof path !== "string" || !path.trim()) {
+      throw new Error("A valid path is required");
+    }
+    shell.showItemInFolder(path);
+  });
+
   // ===== Browser (embedded webview) =====
   ipcMain.handle("browser:clear-cache", async () => {
     await session.defaultSession.clearCache();
@@ -138,4 +166,39 @@ export const registerWindowHandlers = (_native: NativeBridge): void => {
   ipcMain.handle("browser:clear-cookies", async () => {
     await session.defaultSession.clearStorageData({ storages: ["cookies"] });
   });
+
+  // 浏览器调试数据：网络请求记录与 JavaScript 弹窗（供 browser-devtools 查询/响应）
+  ipcMain.handle(
+    "browser:network-requests",
+    (
+      _event,
+      webContentsId: number,
+      filter?: string,
+      limit?: number
+    ) =>
+      queryNetworkRecords(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof filter === "string" ? filter : undefined,
+        typeof limit === "number" ? limit : 50
+      )
+  );
+  ipcMain.handle("browser:dialogs-list", (_event, webContentsId: number) =>
+    listPendingDialogs(
+      typeof webContentsId === "number" ? webContentsId : -1
+    )
+  );
+  ipcMain.handle(
+    "browser:dialog-respond",
+    (
+      _event,
+      webContentsId: number,
+      accept: boolean,
+      promptText?: string
+    ) =>
+      respondPendingDialog(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        accept === true,
+        promptText
+      )
+  );
 };

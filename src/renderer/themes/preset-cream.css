@@ -1,0 +1,461 @@
+/* ===== Cream system-wide refinement =====
+   Keep the preset recognizable across the whole workspace instead of only
+   changing the empty-chat greeting. The app remains dense and operational,
+   while surfaces, type roles, controls, and state colors share one visual
+   language. */
+:root[data-theme-preset="cream"] {
+  --font-sans: "Poppins", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  --font-brand-body: var(--font-sans);
+  --font-brand-display: "Lora", Georgia, serif;
+  --accent: #d97757;
+  --accent-primary: #d97757;
+  --accent-secondary: #788c5d;
+  --accent-color: #d97757;
+  --accent-orange: #d97757;
+  --accent-orange-bg: rgba(217, 119, 87, 0.14);
+  --accent-orange-text: #8c4533;
+  --accent-primary-bg: rgba(217, 119, 87, 0.14);
+  --accent-primary-text: #8c4533;
+  --color-primary: #d97757;
+  --color-success: #788c5d;
+  --color-error: #c35d45;
+  --success: #788c5d;
+  --warning: #b96b4f;
+  --danger: #c35d45;
+  --text-link: #4f7da8;
+  --border-focus: #d97757;
+  --surface-hover: rgba(217, 119, 87, 0.1);
+  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.06);
+  --shadow-md: 0 8px 24px rgba(20, 20, 19, 0.12);
+  --backdrop-blur-lg: none;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+}
+
+:root[data-theme-preset="cream"][data-theme="light"] {
+  --surface-island: #faf9f5;
+  --surface-island-strong: #faf9f5;
+  --surface-island-muted: #f2f0e8;
+  --island-shadow: 0 1px 3px rgba(20, 20, 19, 0.08);
+}
+
+:root[data-theme-preset="cream"][data-theme="dark"] {
+  --surface-island: #1f1f1c;
+  --surface-island-strong: #1f1f1c;
+  --surface-island-muted: #191917;
+  --island-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --accent-primary-bg: rgba(217, 119, 87, 0.2);
+  --accent-primary-text: #e8a98f;
+}
+
+/* The outer frame is the subtle light-gray brand field, not a blue-gray app
+   shell. `!important` is needed because palette values are applied inline. */
+:root[data-theme-preset="cream"][data-theme="light"] {
+  --app-bg: #e8e6dc !important;
+}
+
+:root[data-theme-preset="cream"][data-theme="dark"] {
+  --app-bg: #141413 !important;
+}
+
+:root[data-theme-preset="cream"] body,
+:root[data-theme-preset="cream"] button,
+:root[data-theme-preset="cream"] input,
+:root[data-theme-preset="cream"] select,
+:root[data-theme-preset="cream"] textarea {
+  font-family: var(--app-font-family, var(--font-sans));
+}
+
+:root[data-theme-preset="cream"] h1,
+:root[data-theme-preset="cream"] h2,
+:root[data-theme-preset="cream"] h3,
+:root[data-theme-preset="cream"] h4,
+:root[data-theme-preset="cream"] h5,
+:root[data-theme-preset="cream"] h6,
+:root[data-theme-preset="cream"] .api-settings-title-group strong {
+  font-family: var(--font-brand-display);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.sidebar-content-title, .header-title, .section-title,
+    .settings-item-title, .chat-empty-quick-card-title, strong) {
+  font-family: var(--font-sans);
+}
+
+:root[data-theme-preset="cream"] .ai-message,
+:root[data-theme-preset="cream"] .ai-message p,
+:root[data-theme-preset="cream"] .ai-message li,
+:root[data-theme-preset="cream"] .user-message-bubble,
+:root[data-theme-preset="cream"] .context-compaction-markdown,
+:root[data-theme-preset="cream"] .chat-empty-quick-card-desc {
+  font-family: var(--font-brand-body);
+}
+
+:root[data-theme-preset="cream"] .ai-message h1,
+:root[data-theme-preset="cream"] .ai-message h2,
+:root[data-theme-preset="cream"] .ai-message h3,
+:root[data-theme-preset="cream"] .ai-message h4,
+:root[data-theme-preset="cream"] .context-compaction-markdown h1,
+:root[data-theme-preset="cream"] .context-compaction-markdown h2,
+:root[data-theme-preset="cream"] .context-compaction-markdown h3,
+:root[data-theme-preset="cream"] .context-compaction-markdown h4 {
+  font-family: var(--font-brand-display);
+}
+
+/* Flat, warm chrome replaces the default translucent blue workspace shell. */
+:root[data-theme-preset="cream"] .app-shell,
+:root[data-theme-preset="cream"] .app-layout,
+:root[data-theme-preset="cream"] .top-bar {
+  background: var(--app-bg);
+}
+
+:root[data-theme-preset="cream"] .app-layout {
+  padding: 0 12px 12px;
+}
+
+:root[data-theme-preset="cream"] .top-bar {
+  gap: 8px;
+  height: calc(var(--header-height) + 16px);
+  min-height: calc(var(--header-height) + 16px);
+  padding: 8px 12px;
+}
+
+:root[data-theme-preset="cream"] .top-bar-left,
+:root[data-theme-preset="cream"] .top-bar-main,
+:root[data-theme-preset="cream"] .top-bar-right,
+:root[data-theme-preset="cream"] .sidebar,
+:root[data-theme-preset="cream"] .main-content,
+:root[data-theme-preset="cream"] .right-panel {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--island-shadow);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="cream"] .top-bar-left,
+:root[data-theme-preset="cream"] .top-bar-right,
+:root[data-theme-preset="cream"] .sidebar,
+:root[data-theme-preset="cream"] .right-panel {
+  background: var(--surface-island-muted);
+}
+
+:root[data-theme-preset="cream"] .top-bar-main,
+:root[data-theme-preset="cream"] .main-content {
+  background: var(--surface-island-strong);
+}
+
+:root[data-theme-preset="cream"] .main-content {
+  padding: 20px 14px;
+}
+
+/* 全屏时与其他主题保持一致：清空 main-content 的内边距 */
+:root[data-theme-preset="cream"] .app-shell.right-panel-fullscreen .main-content {
+  padding: 0;
+}
+
+:root[data-theme-preset="cream"] .main-header,
+:root[data-theme-preset="cream"] .panel-tabs {
+  background: var(--surface-island-muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Shared interactive states make menus, navigation, tables, and icon buttons
+   feel like the same product rather than independent component kits. */
+:root[data-theme-preset="cream"]
+  :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-orange);
+  outline-offset: 2px;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.icon-btn, .nav-item, .list-item, .settings-item, .panel-tab,
+    .panel-tab-btn, .toolbar-btn, .chat-item, .codebase-panel-view-btn,
+    .file-viewer-action-btn, .git-action-btn, .browser-nav-btn):hover {
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.nav-item, .list-item, .settings-item, .chat-item, .panel-tab).active {
+  border-color: color-mix(in srgb, var(--accent-orange) 38%, var(--border-color));
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"] .settings-item.active,
+:root[data-theme-preset="cream"] .chat-item.active {
+  box-shadow: inset 2px 0 var(--accent-orange);
+}
+
+:root[data-theme-preset="cream"] .sidebar-content-header,
+:root[data-theme-preset="cream"] .section-header,
+:root[data-theme-preset="cream"] .api-settings-page-header,
+:root[data-theme-preset="cream"] .codebase-panel-header,
+:root[data-theme-preset="cream"] .file-viewer-header,
+:root[data-theme-preset="cream"] .git-control-header {
+  border-bottom-color: var(--border-light);
+}
+
+/* Inputs, selects, toggles and the primary action all use the orange brand
+   accent, while status colors retain the official green/blue/red roles. */
+:root[data-theme-preset="cream"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea,
+    .custom-select-trigger,
+    .model-manual-field,
+    .search-modal-input,
+    .browser-address-input,
+    .browser-find-input,
+    .git-commit-input,
+    .file-viewer-search-input,
+    .branch-create-input) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select,
+    textarea,
+    .custom-select-trigger,
+    .model-manual-field,
+    .search-modal-input,
+    .browser-address-input,
+    .browser-find-input,
+    .git-commit-input,
+    .file-viewer-search-input,
+    .branch-create-input):focus {
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+:root[data-theme-preset="cream"] .toggle-switch input:checked + .toggle-slider,
+:root[data-theme-preset="cream"] .toggle-slider {
+  border-color: var(--border-subtle);
+}
+
+:root[data-theme-preset="cream"] .toggle-switch input:checked + .toggle-slider {
+  background: var(--accent-orange);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn, .git-commit-btn.primary,
+    .memo-new-btn, .scheduled-tasks-create-btn, .mcp-editor-mode-btn.active) {
+  border-color: var(--accent-orange);
+  background: var(--accent-orange);
+  color: #fffaf5;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn, .git-commit-btn.primary,
+    .memo-new-btn, .scheduled-tasks-create-btn,
+    .mcp-editor-mode-btn.active):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-orange) 88%, var(--text-primary));
+}
+
+/* Dropdowns and dialogs are warm, opaque surfaces so text remains legible on
+   top of optional user background images. */
+:root[data-theme-preset="cream"]
+  :is(.top-bar-plus-dropdown, .top-bar-todo-dropdown, .plus-menu-dropdown,
+    .model-dropdown, .file-mention-popup, .chat-command-panel,
+    .custom-select-dropdown, .custom-select-dropdown-portal,
+    .browser-menu-dropdown, .branch-dropdown, .app-modal-dialog,
+    .confirm-dialog, .search-modal, .explorer-entry-context-menu,
+    .context-menu) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="cream"]
+  :is(.top-bar-plus-dropdown-item, .top-bar-todo-item, .plus-menu-item,
+    .model-dropdown-item, .custom-select-item, .browser-menu-item,
+    .branch-dropdown-item, .chat-command-item, .mention-entry,
+    .explorer-entry-context-menu-item, .context-menu-item):hover {
+  background: var(--accent-orange-bg);
+  color: var(--text-primary);
+}
+
+/* Chat is the primary surface: prose is serif, controls are sans, and the
+   input is a quiet orange-edged editor instead of a rainbow effect. */
+:root[data-theme-preset="cream"] .chat-empty-greeting-logo {
+  color: var(--accent-orange);
+  filter: none;
+}
+
+:root[data-theme-preset="cream"] .app-shell::after {
+  z-index: 0;
+}
+
+:root[data-theme-preset="cream"] .app-shell > .top-bar,
+:root[data-theme-preset="cream"] .app-shell > .app-layout {
+  position: relative;
+  z-index: 1;
+}
+
+/* The app layout follows the top bar in the DOM. Keep the top-bar stacking
+   context above it so its New Tab dropdown can extend into the layout. */
+:root[data-theme-preset="cream"] .app-shell > .top-bar {
+  z-index: 2;
+}
+
+:root[data-theme-preset="cream"] .pixel-logo.is-frozen {
+  filter: none;
+}
+
+:root[data-theme-preset="cream"] .pixel-logo-pixel-frost {
+  opacity: 0 !important;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-greeting-title {
+  color: var(--text-primary);
+  font-family: var(--font-brand-display);
+  font-size: 30px;
+  line-height: 1.2;
+  max-width: 620px;
+  overflow-wrap: anywhere;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-quick-card {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .chat-empty-quick-card:hover:not(:disabled),
+:root[data-theme-preset="cream"] .chat-empty-quick-card:focus-visible {
+  border-color: var(--accent-orange);
+  background: var(--accent-orange-bg);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .user-message-bubble {
+  border: 1px solid color-mix(in srgb, var(--accent-orange) 26%, var(--border-color));
+  border-radius: var(--radius-lg);
+  background: var(--accent-orange-bg);
+}
+
+:root[data-theme-preset="cream"] .input-box {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme-preset="cream"] .input-box::before {
+  display: none;
+}
+
+:root[data-theme-preset="cream"] .input-box:focus-within {
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 3px var(--accent-orange-bg), var(--shadow-sm);
+}
+
+:root[data-theme-preset="cream"] .input-field {
+  font-family: var(--font-brand-body);
+}
+
+/* Pending message preview sits inside the input area, so it inherits the
+   warm muted island surface and orange-accented controls. */
+:root[data-theme-preset="cream"] .pending-messages-area {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+}
+
+:root[data-theme-preset="cream"] .pending-messages-header {
+  color: var(--accent-orange-text);
+}
+
+:root[data-theme-preset="cream"] .pending-message-item {
+  border-radius: var(--radius-md);
+}
+
+:root[data-theme-preset="cream"] .pending-message-item:hover {
+  background: var(--accent-orange-bg);
+}
+
+:root[data-theme-preset="cream"] .pending-message-send-now {
+  background: var(--accent-orange);
+  color: #fffaf5;
+}
+
+:root[data-theme-preset="cream"] .pending-message-send-now:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent-orange) 88%, var(--text-primary));
+}
+
+:root[data-theme-preset="cream"] .pending-message-withdraw:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+:root[data-theme-preset="cream"] .chat-message-tool,
+:root[data-theme-preset="cream"] .context-compaction-message,
+:root[data-theme-preset="cream"] .context-compaction-stream,
+:root[data-theme-preset="cream"] .file-changes-card,
+:root[data-theme-preset="cream"] .tool-call-bash-terminal {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="cream"] .tool-call-status-running,
+:root[data-theme-preset="cream"] .tool-call-browser-pending-running,
+:root[data-theme-preset="cream"] .tool-call-grep-pending-running {
+  color: var(--accent-orange-text);
+  background: var(--accent-orange-bg);
+}
+
+/* Tables and code surfaces stay utilitarian, but inherit the warm panel
+   hierarchy and orange focus/selection details. */
+:root[data-theme-preset="cream"]
+  :is(.ai-message .code-block-wrapper, .context-compaction-markdown .code-block-wrapper,
+    .file-viewer, .diff-viewer, .git-diff-view, .terminal-container,
+    .browser-panel, .codebase-panel-table-wrap) {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.ai-message .code-block-header, .context-compaction-markdown .code-block-header,
+    .codebase-panel-table th, .api-settings-table th, .file-changes-header) {
+  background: var(--bg-secondary);
+  border-color: var(--border-light);
+}
+
+:root[data-theme-preset="cream"]
+  :is(.ai-message a, .context-compaction-markdown a, .chat-fork-divider-link,
+    .codebase-sphere-tooltip-neighbor span:last-child) {
+  color: var(--accent-blue-text);
+}
+
+:root[data-theme-preset="cream"] ::selection {
+  background: var(--selection-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="cream"] * {
+    transition-duration: 0.01ms !important;
+  }
+}

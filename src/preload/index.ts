@@ -8,6 +8,10 @@ import { gitApi } from "./modules/gitApi";
 import { systemApi, ptyApi, windowApi } from "./modules/systemApi";
 import { memoApi } from "./modules/memoApi";
 import { personalizationApi } from "./modules/personalizationApi";
+import { codexApi } from "./modules/codexApi";
+import { importConfigApi } from "./modules/importConfigApi";
+import { pluginsApi } from "./modules/pluginsApi";
+import { imageLibraryApi } from "./modules/imageLibraryApi";
 
 export type * from "./types";
 
@@ -23,6 +27,10 @@ const api = {
   ...windowApi,
   ...memoApi,
   ...personalizationApi,
+  ...codexApi,
+  ...importConfigApi,
+  ...pluginsApi,
+  ...imageLibraryApi,
 };
 
 contextBridge.exposeInMainWorld("snow", api);

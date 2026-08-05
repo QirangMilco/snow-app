@@ -57,13 +57,26 @@ pub async fn list_checkpoint_changes(
 }
 
 /// Return unified diffs for all files that would be affected by rollback.
+///
+/// `includeAll` (optional, default false):
+/// - `false`: only files still in the checkpoint's post-change state (rollback
+///   preview semantics — matches what `restore_checkpoint` would restore).
+/// - `true`: every captured entry whose current state differs from its
+///   pre-change state (file-changes panel semantics — later runs drifting the
+///   shared working tree never erase an earlier conversation's modifications).
 #[napi]
 pub async fn list_checkpoint_diffs(
     checkpoint_id: String,
     work_dir: String,
+    include_all: Option<bool>,
 ) -> napi::Result<Vec<CheckpointFileDiff>> {
+    let include_all = include_all.unwrap_or(false);
     tokio::task::spawn_blocking(move || {
-        crate::storage::services::checkpoint::list_checkpoint_diffs(checkpoint_id, work_dir)
+        crate::storage::services::checkpoint::list_checkpoint_diffs(
+            checkpoint_id,
+            work_dir,
+            include_all,
+        )
     })
     .await
     .map_err(map_spawn_error)?

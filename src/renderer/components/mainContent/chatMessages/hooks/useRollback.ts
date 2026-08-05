@@ -247,6 +247,7 @@ export const useRollback = (ctx: ConversationContextValue) => {
               // Best effort — file restore failure must not block rollback cleanup.
             })
             .finally(() => {
+              ctx.setConversationVersion((version) => version + 1);
               deleteCheckpoints(discardedCheckpointIds);
             });
         } else {

@@ -184,22 +184,31 @@ class ScheduledTasksStore {
     }
   };
 
-  list = (): ScheduledTaskRecord[] => {
-    return Array.from(this.tasks.values()).sort((a, b) => {
-      // Sort: running/pending first, then by nextRunAt, then createdAt
-      const aRank =
-        a.status === "running" ? 0 : a.status === "pending" ? 1 : 2;
-      const bRank =
-        b.status === "running" ? 0 : b.status === "pending" ? 1 : 2;
-      if (aRank !== bRank) return aRank - bRank;
-      const aNext = a.nextRunAt ? Date.parse(a.nextRunAt) : Number.MAX_SAFE_INTEGER;
-      const bNext = b.nextRunAt ? Date.parse(b.nextRunAt) : Number.MAX_SAFE_INTEGER;
-      if (aNext !== bNext) return aNext - bNext;
-      return Date.parse(a.createdAt) - Date.parse(b.createdAt);
-    });
+  list = (directoryId?: string): ScheduledTaskRecord[] => {
+    return Array.from(this.tasks.values())
+      .filter(
+        (task) =>
+          directoryId === undefined || task.directoryId === directoryId
+      )
+      .sort((a, b) => {
+        // Sort: running/pending first, then by nextRunAt, then createdAt
+        const aRank =
+          a.status === "running" ? 0 : a.status === "pending" ? 1 : 2;
+        const bRank =
+          b.status === "running" ? 0 : b.status === "pending" ? 1 : 2;
+        if (aRank !== bRank) return aRank - bRank;
+        const aNext = a.nextRunAt ? Date.parse(a.nextRunAt) : Number.MAX_SAFE_INTEGER;
+        const bNext = b.nextRunAt ? Date.parse(b.nextRunAt) : Number.MAX_SAFE_INTEGER;
+        if (aNext !== bNext) return aNext - bNext;
+        return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+      });
   };
 
   create = (input: CreateScheduledTaskInput): ScheduledTaskRecord => {
+    const directoryId = (input.directoryId ?? "").trim();
+    if (!directoryId) {
+      throw new Error("directoryId is required");
+    }
     const name = (input.name ?? "").trim();
     if (!name) {
       throw new Error("name is required");
@@ -214,6 +223,7 @@ class ScheduledTasksStore {
     const nextRunMs = computeNextRunMs(input.schedule, now);
     const record: ScheduledTaskRecord = {
       id: generateId(),
+      directoryId,
       name,
       prompt,
       schedule: input.schedule,
@@ -240,11 +250,30 @@ class ScheduledTasksStore {
     }
   };
 
-  clear = (): void => {
-    this.tasks.clear();
-    this.runningIds.clear();
-    this.stopTick();
-    this.notify();
+  clear = (directoryId?: string): void => {
+    if (directoryId === undefined) {
+      // Clear everything (e.g. process exit / global reset).
+      this.tasks.clear();
+      this.runningIds.clear();
+      this.stopTick();
+      this.notify();
+      return;
+    }
+    // Clear only tasks belonging to the given project directory.
+    let cleared = false;
+    for (const [id, task] of this.tasks) {
+      if (task.directoryId === directoryId) {
+        this.tasks.delete(id);
+        this.runningIds.delete(id);
+        cleared = true;
+      }
+    }
+    if (cleared) {
+      if (this.tasks.size === 0) {
+        this.stopTick();
+      }
+      this.notify();
+    }
   };
 
   togglePause = (id: string): ScheduledTaskRecord | null => {

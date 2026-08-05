@@ -386,6 +386,7 @@ export const FilesystemReadToolCall = ({
         )
       }
       displayNameTitle={isMulti ? undefined : filePath}
+      displayNameDataPath={isMulti ? undefined : filePath}
       status={effectiveStatus}
       meta={
         rangeLabel ? (
@@ -419,6 +420,7 @@ export const FilesystemReadToolCall = ({
                     <span
                       className="tool-call-multi-file-name"
                       title={file.filePath}
+                      data-path={file.filePath}
                     >
                       {subFileName}
                     </span>
@@ -429,7 +431,10 @@ export const FilesystemReadToolCall = ({
                       </span>
                     ) : null}
                   </div>
-                  <div className="tool-call-multi-file-path">
+                  <div
+                    className="tool-call-multi-file-path"
+                    data-path={file.filePath}
+                  >
                     {file.filePath}
                   </div>
                   {renderFileContent(file.result)}
@@ -448,7 +453,7 @@ export const FilesystemReadToolCall = ({
                         size: 12,
                         "aria-hidden": true,
                       })}
-                      <span>{p.path}</span>
+                      <span data-path={p.path}>{p.path}</span>
                     </div>
                   ))}
                 </div>
@@ -465,7 +470,9 @@ export const FilesystemReadToolCall = ({
           </div>
         ) : (
           <>
-            <div className="tool-call-file-path">{filePath}</div>
+            <div className="tool-call-file-path" data-path={filePath}>
+              {filePath}
+            </div>
             {renderFileContent(parsedResult)}
           </>
         )}

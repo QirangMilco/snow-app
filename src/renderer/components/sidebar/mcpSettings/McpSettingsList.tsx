@@ -1,5 +1,11 @@
 import { Loader2, Pencil, Trash2, Wrench } from "lucide-react";
 import { useI18n } from "../../../i18n";
+import type {
+  ImportResourceRecord,
+  ImportResourceReleaseDisposition,
+  ImportResourceSource,
+} from "../../../../preload";
+import { ManagedImportResourceActions } from "../importConfig/ManagedImportResourceActions";
 import type { McpServerTool } from "./types";
 
 export type McpSettingsListItem = {
@@ -9,6 +15,7 @@ export type McpSettingsListItem = {
   globalEnabled: boolean;
   detail: string;
   canManage: boolean;
+  importResource?: ImportResourceRecord;
 };
 
 type McpSettingsListProps = {
@@ -22,6 +29,11 @@ type McpSettingsListProps = {
   onFetchTools: (server: McpSettingsListItem) => void;
   onEdit: (server: McpSettingsListItem) => void;
   onDelete: (server: McpSettingsListItem) => void;
+  onReleaseImportResource: (
+    resource: ImportResourceRecord,
+    source: ImportResourceSource,
+    disposition: ImportResourceReleaseDisposition
+  ) => void;
 };
 
 export function McpSettingsList({
@@ -35,6 +47,7 @@ export function McpSettingsList({
   onFetchTools,
   onEdit,
   onDelete,
+  onReleaseImportResource,
 }: McpSettingsListProps): React.JSX.Element {
   const { t } = useI18n();
 
@@ -154,6 +167,11 @@ export function McpSettingsList({
                       </button>
                     </>
                   )}
+                  <ManagedImportResourceActions
+                    resource={server.importResource}
+                    isBusy={isBusy}
+                    onRelease={onReleaseImportResource}
+                  />
                 </div>
               </div>
             );

@@ -12,6 +12,11 @@ export const APP_CONTROL_MEMO_CREATED_EVENT = "app-control:memo-created";
 export const APP_CONTROL_SCHEDULED_TASK_CREATED_EVENT =
   "app-control:scheduled-task-created";
 export const APP_CONTROL_PROJECT_CREATED_EVENT = "app-control:project-created";
+/** Dispatched after app-control-setMode writes the global settings. The
+ *  conversation layer listens for it and replays the change through the
+ *  session-aware path (session ref + global defaults + per-conversation DB
+ *  record) so AI-driven mode switches behave exactly like user toggles. */
+export const APP_CONTROL_MODE_CHANGED_EVENT = "app-control:mode-changed";
 
 type AppControlHandlers = {
   activeDirectory: WorkspaceDirectoryRecord | null;
@@ -77,6 +82,14 @@ export const useAppControl = ({
                 await window.snow.setPlanMode(false);
               }
             }
+            // Replay through the session-aware path so the active session's
+            // ref, the global defaults and the per-conversation DB record
+            // all stay consistent with the persisted settings.
+            window.dispatchEvent(
+              new CustomEvent(APP_CONTROL_MODE_CHANGED_EVENT, {
+                detail: { mode, enabled },
+              })
+            );
             return JSON.stringify({ success: true, mode, enabled });
           }
 
@@ -90,6 +103,10 @@ export const useAppControl = ({
           }
 
           case "create_scheduled_task": {
+            const directory = activeDirectoryRef.current;
+            if (!directory) {
+              throw new Error("No active project directory");
+            }
             const name = (payload.name as string) ?? "";
             const prompt = (payload.prompt as string) ?? "";
             const schedule = payload.schedule as
@@ -106,7 +123,12 @@ export const useAppControl = ({
             }
             // The store validates the schedule strictly; an invalid schedule
             // throws here and the error propagates back to the MCP tool caller.
-            const input: CreateScheduledTaskInput = { name, prompt, schedule };
+            const input: CreateScheduledTaskInput = {
+              directoryId: directory.directoryId,
+              name,
+              prompt,
+              schedule,
+            };
             const created = scheduledTasksStore.create(input);
             window.dispatchEvent(
               new CustomEvent(APP_CONTROL_SCHEDULED_TASK_CREATED_EVENT, {

@@ -29,13 +29,14 @@ use super::servers::codebase::CodebaseService;
 use super::servers::codelens::CodeLensService;
 use super::servers::filesystem::FilesystemService;
 use super::servers::grep::GrepService;
+use super::servers::imagegen::ImageGenService;
 use super::servers::config::ConfigService;
-use super::servers::skills_config::SkillsConfigService;
 use super::servers::remote_workspace::{
     is_ssh_path, resolve_remote_project_workspace, resolve_remote_workspace_path,
     RemoteWorkspaceCallback,
 };
 use super::servers::skills::SkillsService;
+use super::servers::terminal::{TerminalCommandCallback, TerminalService};
 use super::servers::todo::TodoService;
 use super::servers::user_interaction::{UserInteractionService, UserQuestionCallback};
 use super::servers::websearch::WebSearchService;
@@ -92,11 +93,11 @@ const REQUEST_APPROVAL_FULL_NAME: &str = "app-control-requestApproval";
 /// server_name 经 `sanitize_name` 后不含 `-`，可安全用第一个 `-` 分割。
 pub const BUILTIN_SERVER_IDS: &[&str] = &[
     "user-interaction",
-    "skills-config",
     "app-control",
     "filesystem",
     "sub-agents",
     "websearch",
+    "imagegen",
     "codebase",
     "codelens",
     "browser",
@@ -105,6 +106,7 @@ pub const BUILTIN_SERVER_IDS: &[&str] = &[
     "bash",
     "todo",
     "grep",
+    "terminal",
 ];
 
 /// 将工具全名 `{server_id}-{tool_name}` 拆分为 `(server_id, tool_name)`。
@@ -149,19 +151,49 @@ pub async fn list_mcp_project_servers(
             "Project id is required to list project MCP servers".to_string(),
         )
     })?;
+
+    // Image generation tool is only globally available when at least one
+    // channel (OpenAI / Gemini) is configured and enabled in Settings ->
+    // Image generation. When both are unconfigured the server is globally
+    // disabled so the front-end toggle reflects the real state (instead of
+    // appearing enabled while the tool is silently excluded from context).
+    let imagegen_configured = tokio::task::spawn_blocking(|| {
+        crate::mcp::servers::imagegen::is_imagegen_configured()
+    })
+    .await
+    .map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to check image generation configuration: {error}"),
+        )
+    })??;
+
     let mut servers = get_builtin_servers_with_tools()
         .into_iter()
         .map(|(server_id, tools)| {
             let scope_server_id = builtin_scope_server_id(&server_id);
             let enabled = scope.is_server_enabled(&scope_server_id);
+            // Reflect imagegen configuration state in global_enabled / error
+            // so the front-end toggle stays in sync with collect_all_mcp_tools.
+            // The error field uses a stable code (not a localized string) that
+            // the front-end maps to the user's language.
+            let (global_enabled, error) =
+                if server_id == "imagegen" && !imagegen_configured {
+                    (
+                        false,
+                        Some("imagegen:not_configured".to_string()),
+                    )
+                } else {
+                    (true, None)
+                };
             McpProjectServerStatus {
                 id: scope_server_id,
                 name: builtin_server_name(&server_id).to_string(),
                 source: "system".to_string(),
-                global_enabled: true,
+                global_enabled,
                 enabled,
                 tools: to_project_tool_statuses(&tools, &scope),
-                error: None,
+                error,
             }
         })
         .collect::<Vec<_>>();
@@ -378,6 +410,20 @@ pub async fn collect_all_mcp_tools(
     // and (3) at least one embedded chunk in the vector table.
     let codebase_available = is_codebase_available(project_id).await?;
 
+    // Image generation tool is only exposed when at least one channel
+    // (OpenAI / Gemini) is configured and enabled in Settings -> Image
+    // generation; when both are unconfigured the tool disappears entirely.
+    let imagegen_configured = tokio::task::spawn_blocking(|| {
+        crate::mcp::servers::imagegen::is_imagegen_configured()
+    })
+    .await
+    .map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to check image generation configuration: {error}"),
+        )
+    })??;
+
     let mut tools = get_builtin_tools()
         .into_iter()
         .filter(|tool| {
@@ -396,6 +442,10 @@ pub async fn collect_all_mcp_tools(
             // Exclude codebase search tool unless the project has codebase
             // enabled and an existing index.
             if tool.server_id == "codebase" && !codebase_available {
+                return false;
+            }
+            // Exclude image generation when no channel is configured.
+            if tool.server_id == "imagegen" && !imagegen_configured {
                 return false;
             }
             tool_is_enabled(tool, scope.as_ref())
@@ -519,7 +569,22 @@ pub async fn collect_allowed_mcp_tools(
         .collect())
 }
 
+/// Built-in server ids that are disabled by default and must be explicitly
+/// enabled per project. This keeps their tools out of the model context
+/// (saving tokens) until the user opts in.
+const DEFAULT_DISABLED_SERVER_IDS: &[&str] = &["terminal"];
+
 fn tool_is_enabled(tool: &McpTool, scope: Option<&McpProjectScopeSettings>) -> bool {
+    // Default-disabled servers are excluded when there is no project
+    // scope (no project context = user hasn't opted in).
+    if DEFAULT_DISABLED_SERVER_IDS.contains(&tool.server_id.as_str()) {
+        let Some(scope) = scope else {
+            return false;
+        };
+        return scope.is_server_enabled(&builtin_scope_server_id(&tool.server_id))
+            && scope.is_tool_enabled(&tool.full_name());
+    }
+
     let Some(scope) = scope else {
         return true;
     };
@@ -549,6 +614,8 @@ fn builtin_server_name(server_id: &str) -> &str {
         "sub-agents" => "Sub-agents",
         "codebase" => "Codebase",
         "codelens" => "CodeLens",
+        "terminal" => "Terminal Control",
+        "config" => "Config",
         _ => server_id,
     }
 }
@@ -756,6 +823,7 @@ pub async fn call_mcp_tool(
     on_user_question: UserQuestionCallback,
     on_app_control: AppControlCallback,
     on_remote_workspace_command: RemoteWorkspaceCallback,
+    on_terminal_command: TerminalCommandCallback,
     sub_agent_allowed_tools: Option<Vec<String>>,
     plan_mode: bool,
     plan_approved: bool,
@@ -928,9 +996,17 @@ pub async fn call_mcp_tool(
         WebSearchService::new().execute_search(&args).await?
     } else if tool_full_name == "websearch-websearch-fetch" {
         WebSearchService::new().execute_fetch(&args).await?
+    } else if tool_full_name == "imagegen-generate" {
+        ImageGenService::new()
+            .execute_generate(&args, &on_chunk)
+            .await?
     } else if let Some(tool_name) = tool_full_name.strip_prefix("browser-") {
         BrowserService::new()
             .execute_async(tool_name, &args, &on_browser_command)
+            .await?
+    } else if let Some(tool_name) = tool_full_name.strip_prefix("terminal-") {
+        TerminalService::new()
+            .execute_async(tool_name, &args, &on_terminal_command)
             .await?
     } else if tool_full_name == "user-interaction-askUserQuestion" {
         UserInteractionService::new()
@@ -943,10 +1019,6 @@ pub async fn call_mcp_tool(
     } else if let Some(config_tool) = tool_full_name.strip_prefix("config-") {
         ConfigService::new()
             .execute_async(config_tool, &args)
-            .await?
-    } else if let Some(skills_config_tool) = tool_full_name.strip_prefix("skills-config-") {
-        SkillsConfigService::new()
-            .execute_async(skills_config_tool, &args)
             .await?
     } else if tool_full_name == "skills-skill-execute" {
         SkillsService::new()

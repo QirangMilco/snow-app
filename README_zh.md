@@ -52,6 +52,8 @@ snow-app/
 ├── src/
 │   ├── main/            # Electron 主进程
 │   │   ├── app/         # 应用引导与窗口管理
+│   │   ├── codex/       # Codex 兼容层
+│   │   │   └── importer.ts # 设置页手动导入 MCP、Skills、Plugins 与提示词
 │   │   ├── ipc/         # IPC 处理器注册
 │   │   ├── native/      # Rust 原生桥接
 │   │   ├── pty/         # PTY 与终端管理
@@ -76,6 +78,8 @@ snow-app/
 ├── resources/           # 应用图标与静态资源
 └── electron.vite.config.ts
 ```
+
+Codex 兼容层只能从设置页手动执行导入，应用启动时不会自动同步 Codex 文件。
 
 ## 环境要求
 

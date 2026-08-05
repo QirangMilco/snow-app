@@ -1,0 +1,1017 @@
+/* ===== Google system-wide refinement =====
+   Material-inspired surfaces keep the workspace practical, while Google's
+   blue, red, yellow, and green are reserved for actions and status. */
+:root[data-theme-preset="google"] {
+  --font-sans: "Roboto", "Google Sans", "Segoe UI", Arial, sans-serif;
+  --font-brand-body: var(--font-sans);
+  --font-brand-display: "Google Sans", "Roboto", "Segoe UI", Arial, sans-serif;
+  --google-blue: #1a73e8;
+  --google-red: #d93025;
+  --google-yellow: #f9ab00;
+  --google-green: #1e8e3e;
+  --accent: var(--google-blue);
+  --accent-primary: var(--google-blue);
+  --accent-secondary: var(--google-green);
+  --accent-color: var(--google-blue);
+  --accent-orange: var(--google-yellow);
+  --accent-orange-bg: #fef7e0;
+  --accent-orange-text: #8f5b00;
+  --color-primary: var(--google-blue);
+  --color-success: var(--google-green);
+  --color-error: var(--google-red);
+  --success: var(--google-green);
+  --warning: var(--google-yellow);
+  --danger: var(--google-red);
+  --text-link: var(--google-blue);
+  --border-focus: var(--google-blue);
+  --surface-hover: rgba(26, 115, 232, 0.08);
+  --shadow-sm: 0 1px 2px rgba(60, 64, 67, 0.12);
+  --shadow-md: 0 4px 12px rgba(60, 64, 67, 0.18);
+  --backdrop-blur-lg: none;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+}
+
+:root[data-theme-preset="google"][data-theme="dark"] {
+  --google-blue: #8ab4f8;
+  --google-red: #f28b82;
+  --google-yellow: #fdd663;
+  --google-green: #81c995;
+  --accent-orange-bg: rgba(253, 214, 99, 0.18);
+  --accent-orange-text: #fdd663;
+  --surface-hover: rgba(138, 180, 248, 0.14);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.38);
+}
+
+:root[data-theme-preset="google"][data-theme="light"] {
+  --surface-island: #ffffff;
+  --surface-island-strong: #ffffff;
+  --surface-island-muted: #f8fafd;
+  --island-shadow: 0 1px 3px rgba(60, 64, 67, 0.12),
+    0 1px 2px rgba(60, 64, 67, 0.08);
+}
+
+:root[data-theme-preset="google"][data-theme="dark"] {
+  --surface-island: #292a2d;
+  --surface-island-strong: #292a2d;
+  --surface-island-muted: #202124;
+  --island-shadow: 0 1px 3px rgba(0, 0, 0, 0.36);
+}
+
+:root[data-theme-preset="google"] body,
+:root[data-theme-preset="google"] button,
+:root[data-theme-preset="google"] input,
+:root[data-theme-preset="google"] select,
+:root[data-theme-preset="google"] textarea {
+  font-family: var(--app-font-family, var(--font-sans));
+}
+
+:root[data-theme-preset="google"]
+  :is(h1, h2, h3, h4, h5, h6, .api-settings-title-group strong) {
+  font-family: var(--font-brand-display);
+  letter-spacing: 0;
+}
+
+:root[data-theme-preset="google"]
+  :is(.sidebar-content-title, .header-title, .section-title,
+    .settings-item-title, .chat-empty-quick-card-title, strong) {
+  font-family: var(--font-sans);
+}
+
+:root[data-theme-preset="google"] .top-bar::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 3px;
+  border-radius: 0 0 999px 999px;
+  background: linear-gradient(
+    90deg,
+    var(--google-blue) 0 25%,
+    var(--google-red) 25% 50%,
+    var(--google-yellow) 50% 75%,
+    var(--google-green) 75% 100%
+  );
+  content: "";
+  pointer-events: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-left, .top-bar-main, .top-bar-right, .sidebar,
+    .main-content, .right-panel) {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--island-shadow);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-left, .top-bar-right, .sidebar, .right-panel) {
+  background: var(--surface-island-muted);
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-main, .main-content) {
+  background: var(--surface-island-strong);
+}
+
+:root[data-theme-preset="google"]
+  :is(button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--google-blue);
+  outline-offset: 2px;
+}
+
+:root[data-theme-preset="google"]
+  :is(.icon-btn, .nav-item, .list-item, .settings-item, .panel-tab,
+    .panel-tab-btn, .toolbar-btn, .chat-item, .codebase-panel-view-btn,
+    .file-viewer-action-btn, .git-action-btn, .browser-nav-btn):hover {
+  background: var(--accent-blue-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(.nav-item, .list-item, .settings-item, .chat-item, .panel-tab).active {
+  border-color: color-mix(in srgb, var(--google-blue) 38%, var(--border-color));
+  background: var(--accent-blue-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(.settings-item.active, .chat-item.active) {
+  box-shadow: inset 2px 0 var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select, textarea, .custom-select-trigger, .model-manual-field,
+    .search-modal-input, .browser-address-input, .browser-find-input,
+    .git-commit-input, .file-viewer-search-input, .branch-create-input) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select, textarea, .custom-select-trigger, .model-manual-field,
+    .search-modal-input, .browser-address-input, .browser-find-input,
+    .git-commit-input, .file-viewer-search-input, .branch-create-input):focus {
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+:root[data-theme-preset="google"] .toggle-switch input:checked + .toggle-slider {
+  background: var(--google-blue);
+  border-color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn, .branch-create-submit-btn, .git-commit-btn.primary,
+    .mcp-editor-mode-btn.active) {
+  border-color: var(--google-blue);
+  background: var(--google-blue);
+  color: #ffffff;
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .confirm-dialog-btn.confirm, .tool-call-user-question-submit,
+    .tool-call-plan-approval-approve, .project-sensitive-command-save,
+    .personalization-save-btn, .branch-create-submit-btn, .git-commit-btn.primary,
+    .mcp-editor-mode-btn.active):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--google-blue) 88%, var(--text-primary));
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-plus-dropdown, .top-bar-todo-dropdown, .plus-menu-dropdown,
+    .model-dropdown, .file-mention-popup, .chat-command-panel,
+    .custom-select-dropdown, .custom-select-dropdown-portal,
+    .browser-menu-dropdown, .branch-dropdown, .app-modal-dialog,
+    .confirm-dialog, .search-modal, .explorer-entry-context-menu) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-plus-dropdown-item, .top-bar-todo-item, .plus-menu-item,
+    .model-dropdown-item, .custom-select-item, .browser-menu-item,
+    .branch-dropdown-item, .chat-command-item, .mention-entry,
+    .explorer-entry-context-menu-item):hover {
+  background: var(--accent-blue-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-logo {
+  color: var(--google-blue);
+  filter: drop-shadow(0 2px 5px rgba(26, 115, 232, 0.2));
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-title {
+  color: var(--text-primary);
+  font-family: var(--font-brand-display);
+  font-size: 28px;
+  line-height: 1.25;
+  max-width: 620px;
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card:not(.is-api):not(.is-theme) {
+  border-top: 2px solid var(--google-blue);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card.is-api {
+  border-top: 2px solid var(--google-red);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card.is-theme {
+  border-top: 2px solid var(--google-green);
+}
+
+:root[data-theme-preset="google"]
+  .chat-empty-quick-card:hover:not(:disabled),
+:root[data-theme-preset="google"]
+  .chat-empty-quick-card:focus-visible {
+  border-color: var(--google-blue);
+  background: var(--accent-blue-bg);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card-icon {
+  color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card.is-api .chat-empty-quick-card-icon {
+  color: var(--google-red);
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card.is-theme .chat-empty-quick-card-icon {
+  color: var(--google-green);
+}
+
+:root[data-theme-preset="google"] .user-message-bubble {
+  border: 1px solid color-mix(in srgb, var(--google-blue) 26%, var(--border-color));
+  background: var(--accent-blue-bg);
+}
+
+:root[data-theme-preset="google"] .input-box {
+  border-color: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme-preset="google"] .input-box::before {
+  display: none;
+}
+
+:root[data-theme-preset="google"] .input-box:focus-within {
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 3px var(--accent-blue-bg), var(--shadow-sm);
+}
+
+:root[data-theme-preset="google"]
+  :is(.chat-message-tool, .context-compaction-message,
+    .context-compaction-stream, .file-changes-card, .tool-call-bash-terminal) {
+  border-color: var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-island-muted);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.ai-message .code-block-wrapper, .context-compaction-markdown .code-block-wrapper,
+    .file-viewer, .diff-viewer, .git-diff-view, .terminal-container,
+    .browser-panel, .codebase-panel-table-wrap) {
+  border-color: var(--border-color);
+  background: var(--bg-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(.ai-message a, .context-compaction-markdown a, .chat-fork-divider-link,
+    .codebase-sphere-tooltip-neighbor span:last-child) {
+  color: var(--accent-blue-text);
+}
+
+:root[data-theme-preset="google"] ::selection {
+  background: var(--selection-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="google"] * {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ===== Google Material refinement =====
+   The Google preset uses a cool app field, clean tonal surfaces, outlined
+   controls, and the four brand colors as semantic signals instead of generic
+   decorative accents. */
+:root[data-theme-preset="google"] {
+  --font-sans: "Roboto", "Google Sans Text", "Segoe UI", Arial, sans-serif;
+  --font-brand-body: var(--font-sans);
+  --font-brand-display: "Google Sans", "Roboto", "Segoe UI", Arial, sans-serif;
+  --google-blue: #0b57d0;
+  --google-blue-classic: #1a73e8;
+  --google-blue-container: #d3e3fd;
+  --google-on-primary: #ffffff;
+  --google-red: #b3261e;
+  --google-red-container: #f9dedc;
+  --google-yellow: #f9ab00;
+  --google-yellow-container: #fef7e0;
+  --google-green: #137333;
+  --google-green-container: #e6f4ea;
+  --google-outline: #dadce0;
+  --google-outline-variant: #e8eaed;
+  --google-elevation-1: 0 1px 2px rgba(60, 64, 67, 0.14),
+    0 1px 3px rgba(60, 64, 67, 0.08);
+  --google-elevation-2: 0 4px 10px rgba(60, 64, 67, 0.16),
+    0 1px 3px rgba(60, 64, 67, 0.1);
+  --accent: var(--google-blue);
+  --accent-primary: var(--google-blue);
+  --accent-secondary: var(--google-green);
+  --accent-color: var(--google-blue);
+  --accent-orange: var(--google-yellow);
+  --accent-orange-bg: var(--google-yellow-container);
+  --accent-orange-text: #8f5b00;
+  --color-primary: var(--google-blue);
+  --color-success: var(--google-green);
+  --color-error: var(--google-red);
+  --success: var(--google-green);
+  --warning: var(--google-yellow);
+  --danger: var(--google-red);
+  --text-link: var(--google-blue);
+  --border-focus: var(--google-blue);
+  --surface-hover: rgba(11, 87, 208, 0.08);
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --backdrop-blur-lg: none;
+}
+
+:root[data-theme-preset="google"][data-theme="light"] {
+  --google-surface-0: #ffffff;
+  --google-surface-1: #f8fafd;
+  --google-surface-2: #f1f3f4;
+  --google-surface-3: #e8eaed;
+  --surface-island: #ffffff;
+  --surface-island-strong: #ffffff;
+  --surface-island-muted: #f8fafd;
+  --island-shadow: var(--google-elevation-1);
+  --app-bg: var(--google-surface-2) !important;
+  --chrome-bg: var(--google-surface-1) !important;
+  --bg-primary: var(--google-surface-0) !important;
+  --bg-secondary: var(--google-surface-1) !important;
+  --bg-tertiary: var(--google-surface-2) !important;
+  --bg-hover: #f1f3f4 !important;
+  --bg-active: #e8f0fe !important;
+  --border-color: var(--google-outline) !important;
+  --border-light: var(--google-outline-variant) !important;
+  --border-subtle: #bdc1c6 !important;
+  --text-primary: #202124 !important;
+  --text-secondary: #3c4043 !important;
+  --text-tertiary: #5f6368 !important;
+  --text-muted: #80868b !important;
+  --accent-blue: var(--google-blue) !important;
+  --accent-blue-bg: #e8f0fe !important;
+  --accent-blue-text: #174ea6 !important;
+  --accent-green: var(--google-green) !important;
+  --accent-green-bg: var(--google-green-container) !important;
+  --accent-green-text: #137333 !important;
+  --accent-red: var(--google-red) !important;
+  --accent-red-bg: var(--google-red-container) !important;
+  --accent-red-text: #a50e0e !important;
+  --selection-bg: rgba(11, 87, 208, 0.18) !important;
+  --focus-ring: rgba(11, 87, 208, 0.24) !important;
+  --on-solid: #ffffff !important;
+}
+
+:root[data-theme-preset="google"][data-theme="dark"] {
+  --google-blue: #a8c7fa;
+  --google-blue-classic: #8ab4f8;
+  --google-blue-container: #004a77;
+  --google-on-primary: #062e6f;
+  --google-red: #f2b8b5;
+  --google-red-container: #601410;
+  --google-yellow: #fdd663;
+  --google-yellow-container: #5f4300;
+  --google-green: #81c995;
+  --google-green-container: #0f3d21;
+  --google-outline: #5f6368;
+  --google-outline-variant: #3c4043;
+  --google-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.34);
+  --google-elevation-2: 0 6px 18px rgba(0, 0, 0, 0.38),
+    0 2px 6px rgba(0, 0, 0, 0.24);
+  --surface-hover: rgba(168, 199, 250, 0.14);
+  --google-surface-0: #202124;
+  --google-surface-1: #292a2d;
+  --google-surface-2: #303134;
+  --google-surface-3: #3c4043;
+  --surface-island: #292a2d;
+  --surface-island-strong: #292a2d;
+  --surface-island-muted: #202124;
+  --island-shadow: var(--google-elevation-1);
+  --app-bg: #17181a !important;
+  --chrome-bg: #202124 !important;
+  --bg-primary: var(--google-surface-0) !important;
+  --bg-secondary: var(--google-surface-1) !important;
+  --bg-tertiary: var(--google-surface-2) !important;
+  --bg-hover: #303134 !important;
+  --bg-active: #3c4043 !important;
+  --border-color: var(--google-outline-variant) !important;
+  --border-light: #303134 !important;
+  --border-subtle: var(--google-outline) !important;
+  --text-primary: #e8eaed !important;
+  --text-secondary: #bdc1c6 !important;
+  --text-tertiary: #9aa0a6 !important;
+  --text-muted: #80868b !important;
+  --accent-blue: var(--google-blue) !important;
+  --accent-blue-bg: rgba(168, 199, 250, 0.18) !important;
+  --accent-blue-text: #aecbfa !important;
+  --accent-green: var(--google-green) !important;
+  --accent-green-bg: rgba(129, 201, 149, 0.18) !important;
+  --accent-green-text: #a8dab5 !important;
+  --accent-red: var(--google-red) !important;
+  --accent-red-bg: rgba(242, 184, 181, 0.18) !important;
+  --accent-red-text: #f6aea7 !important;
+  --accent-orange-bg: rgba(253, 214, 99, 0.18) !important;
+  --accent-orange-text: #fdd663 !important;
+  --selection-bg: rgba(168, 199, 250, 0.28) !important;
+  --focus-ring: rgba(168, 199, 250, 0.3) !important;
+  --on-solid: #202124 !important;
+}
+
+:root[data-theme-preset="google"] body,
+:root[data-theme-preset="google"] button,
+:root[data-theme-preset="google"] input,
+:root[data-theme-preset="google"] select,
+:root[data-theme-preset="google"] textarea {
+  font-family: var(--app-font-family, var(--font-sans));
+  letter-spacing: 0.01em;
+}
+
+:root[data-theme-preset="google"]
+  :is(h1, h2, h3, h4, h5, h6, .api-settings-title-group strong) {
+  font-family: var(--font-brand-display);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+:root[data-theme-preset="google"] .app-shell,
+:root[data-theme-preset="google"] .app-layout,
+:root[data-theme-preset="google"] .top-bar {
+  background: var(--app-bg);
+}
+
+:root[data-theme-preset="google"] .app-layout {
+  padding: 0 8px 8px;
+}
+
+:root[data-theme-preset="google"] .top-bar {
+  gap: 8px;
+  padding: 8px;
+}
+
+:root[data-theme-preset="google"] .top-bar::before {
+  height: 4px;
+  border-radius: 0;
+  background: linear-gradient(
+    90deg,
+    var(--google-blue-classic) 0 25%,
+    var(--google-red) 25% 50%,
+    var(--google-yellow) 50% 75%,
+    var(--google-green) 75% 100%
+  );
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-left, .top-bar-main, .top-bar-right, .sidebar,
+    .main-content, .right-panel) {
+  border-color: var(--google-outline);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--google-elevation-1);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-left, .top-bar-right, .sidebar, .right-panel) {
+  background: var(--surface-island-muted);
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-main, .main-content) {
+  background: var(--surface-island-strong);
+}
+
+:root[data-theme-preset="google"] .sidebar {
+  padding: 0 4px 6px;
+}
+
+:root[data-theme-preset="google"] .sidebar-top {
+  padding: 12px 8px 6px;
+}
+
+:root[data-theme-preset="google"]
+  :is(.icon-btn, .nav-item, .list-item, .settings-item, .chat-item,
+    .panel-tab, .panel-tab-btn, .toolbar-btn, .browser-nav-btn) {
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+:root[data-theme-preset="google"] .icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
+:root[data-theme-preset="google"] .icon-btn:hover,
+:root[data-theme-preset="google"] .panel-tab-btn:hover,
+:root[data-theme-preset="google"] .browser-nav-btn:hover:not(:disabled) {
+  background: var(--accent-blue-bg);
+  color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"] .top-bar .new-chat-btn {
+  background: var(--google-blue);
+  color: var(--google-on-primary);
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.28);
+}
+
+:root[data-theme-preset="google"] .top-bar .new-chat-btn:hover {
+  background: color-mix(in srgb, var(--google-blue) 88%, #000000);
+  color: var(--google-on-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(.nav-item, .list-item, .settings-item, .chat-item) {
+  min-height: 36px;
+  border-radius: 18px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+:root[data-theme-preset="google"] .nav-item {
+  padding-left: 12px;
+  padding-right: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+:root[data-theme-preset="google"] .nav-item:hover,
+:root[data-theme-preset="google"] .list-item:hover,
+:root[data-theme-preset="google"] .settings-item:hover,
+:root[data-theme-preset="google"] .chat-item:hover,
+:root[data-theme-preset="google"] .chat-item.menu-open {
+  background: var(--accent-blue-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"] .nav-item svg {
+  color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  :is(.list-item.active, .settings-item.active, .chat-item.active) {
+  border-color: transparent;
+  background: var(--google-blue-container);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.settings-item.active, .chat-item.active)::before {
+  position: absolute;
+  left: 4px;
+  width: 3px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--google-blue);
+  content: "";
+}
+
+:root[data-theme-preset="google"] .settings-item.active .settings-item-title,
+:root[data-theme-preset="google"] .chat-item.active .chat-item-title {
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"] .chat-item-icon {
+  border-color: var(--google-outline);
+  background: var(--google-surface-2);
+}
+
+:root[data-theme-preset="google"] .chat-item-icon.streaming,
+:root[data-theme-preset="google"] .chat-item-icon.completed {
+  border-color: var(--google-blue);
+  color: var(--google-blue);
+  background: var(--accent-blue-bg);
+}
+
+:root[data-theme-preset="google"]
+  :is(.main-header, .panel-tabs, .browser-toolbar, .git-control-header,
+    .codebase-panel-header, .file-viewer-header) {
+  border-bottom: 1px solid var(--google-outline-variant);
+  background: transparent;
+}
+
+:root[data-theme-preset="google"] .header-title,
+:root[data-theme-preset="google"] .sidebar-content-title {
+  font-family: var(--font-brand-display);
+  font-weight: 500;
+}
+
+:root[data-theme-preset="google"]
+  :is(.panel-tab, .toolbar-btn.model, .btn-commit) {
+  border: 1px solid var(--google-outline);
+  border-radius: 18px;
+  background: var(--surface-island-strong);
+}
+
+:root[data-theme-preset="google"] .panel-tab.active {
+  border-color: transparent;
+  background: var(--google-blue-container);
+  color: var(--google-blue);
+  font-weight: 600;
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn, .api-settings-form-btn, .confirm-dialog-btn,
+    .btn-commit, .project-codebase-embed-btn, .model-manual-btn.primary,
+    .git-commit-btn.primary, .scheduled-tasks-create-btn) {
+  min-height: 36px;
+  border-radius: 18px;
+  padding: 8px 16px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .tool-call-user-question-submit, .tool-call-plan-approval-approve,
+    .project-sensitive-command-save, .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn, .git-commit-btn.primary,
+    .memo-new-btn, .scheduled-tasks-create-btn, .mcp-editor-mode-btn.active) {
+  border-color: var(--google-blue);
+  background: var(--google-blue);
+  color: var(--google-on-primary);
+  box-shadow: 0 1px 2px rgba(11, 87, 208, 0.2);
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.primary, .api-settings-form-btn.primary,
+    .model-manual-btn.primary, .project-codebase-embed-btn.primary,
+    .tool-call-user-question-submit, .tool-call-plan-approval-approve,
+    .project-sensitive-command-save, .personalization-save-btn,
+    .branch-create-submit-btn, .git-commit-btn, .git-commit-btn.primary,
+    .memo-new-btn, .scheduled-tasks-create-btn,
+    .mcp-editor-mode-btn.active):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--google-blue) 88%, #000000);
+  background: color-mix(in srgb, var(--google-blue) 88%, #000000);
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.secondary, .api-settings-form-btn.secondary,
+    .confirm-dialog-btn.cancel, .btn-commit) {
+  border-color: var(--google-outline);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+:root[data-theme-preset="google"]
+  :is(.api-settings-action-btn.secondary, .api-settings-form-btn.secondary,
+    .confirm-dialog-btn.cancel, .btn-commit):hover:not(:disabled) {
+  border-color: var(--google-blue);
+  background: var(--accent-blue-bg);
+  color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  .confirm-dialog:not(.confirm-dialog-danger):not(.confirm-dialog-warning)
+  .confirm-dialog-btn.confirm {
+  border: 1px solid var(--google-blue);
+  background: var(--google-blue);
+  color: var(--google-on-primary);
+}
+
+:root[data-theme-preset="google"]
+  .confirm-dialog:not(.confirm-dialog-danger):not(.confirm-dialog-warning)
+  .confirm-dialog-btn.confirm:hover {
+  background: color-mix(in srgb, var(--google-blue) 88%, #000000);
+}
+
+:root[data-theme-preset="google"]
+  .confirm-dialog-warning .confirm-dialog-btn.confirm {
+  border: 1px solid var(--google-yellow);
+  background: var(--google-yellow-container);
+  color: var(--accent-orange-text);
+}
+
+:root[data-theme-preset="google"]
+  .confirm-dialog-danger .confirm-dialog-btn.confirm {
+  border: 1px solid var(--google-red);
+  background: var(--google-red-container);
+  color: var(--google-red);
+}
+
+:root[data-theme-preset="google"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select, textarea, .custom-select-trigger, .model-manual-field,
+    .search-modal-input, .browser-address-input, .browser-find-input,
+    .git-commit-input, .file-viewer-search-input, .branch-create-input) {
+  min-height: 36px;
+  border: 1px solid var(--google-outline);
+  border-radius: var(--radius-md);
+  background: var(--google-surface-0);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select, textarea, .custom-select-trigger, .model-manual-field,
+    .search-modal-input, .browser-address-input, .browser-find-input,
+    .git-commit-input, .file-viewer-search-input, .branch-create-input):hover {
+  border-color: var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+    select, textarea, .custom-select-trigger, .model-manual-field,
+    .search-modal-input, .browser-address-input, .browser-find-input,
+    .git-commit-input, .file-viewer-search-input, .branch-create-input):focus {
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+  outline: none;
+}
+
+:root[data-theme-preset="google"] .toggle-slider {
+  width: 36px;
+  height: 20px;
+  border-color: var(--google-outline);
+  background: var(--google-surface-3);
+}
+
+:root[data-theme-preset="google"] .toggle-slider::after {
+  top: 1px;
+  left: 1px;
+  width: 16px;
+  height: 16px;
+  background: var(--text-tertiary);
+}
+
+:root[data-theme-preset="google"] .toggle-switch input:checked + .toggle-slider {
+  border-color: var(--google-blue);
+  background: var(--google-blue);
+}
+
+:root[data-theme-preset="google"]
+  .toggle-switch input:checked + .toggle-slider::after {
+  transform: translateX(16px);
+  background: #ffffff;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-plus-dropdown, .top-bar-todo-dropdown, .plus-menu-dropdown,
+    .model-dropdown, .file-mention-popup, .chat-command-panel,
+    .custom-select-dropdown, .custom-select-dropdown-portal,
+    .browser-menu-dropdown, .branch-dropdown, .app-modal-dialog,
+    .confirm-dialog, .search-modal, .explorer-entry-context-menu) {
+  border-color: var(--google-outline);
+  border-radius: var(--radius-lg);
+  background: var(--google-surface-0);
+  box-shadow: var(--google-elevation-2);
+  backdrop-filter: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.top-bar-plus-dropdown-item, .top-bar-todo-item, .plus-menu-item,
+    .model-dropdown-item, .custom-select-item, .browser-menu-item,
+    .branch-dropdown-item, .chat-command-item, .mention-entry,
+    .explorer-entry-context-menu-item):hover {
+  border-radius: var(--radius-md);
+  background: var(--accent-blue-bg);
+  color: var(--text-primary);
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-brand {
+  position: relative;
+  flex-direction: column;
+  gap: 10px;
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-brand::after {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--google-blue-classic) 0 25%,
+    var(--google-red) 25% 50%,
+    var(--google-yellow) 50% 75%,
+    var(--google-green) 75% 100%
+  );
+  content: "";
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-logo {
+  color: var(--google-blue);
+  filter: drop-shadow(0 2px 4px rgba(11, 87, 208, 0.2));
+}
+
+:root[data-theme-preset="google"] .chat-empty-greeting-title {
+  font-family: var(--font-brand-display);
+  font-size: 29px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-actions {
+  gap: 10px;
+  margin-top: 48px;
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card {
+  border-radius: var(--radius-lg);
+  background: var(--google-surface-0);
+  box-shadow: var(--google-elevation-1);
+  transition: border-color 0.16s ease, background 0.16s ease,
+    box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+:root[data-theme-preset="google"] .chat-empty-quick-card:hover:not(:disabled),
+:root[data-theme-preset="google"] .chat-empty-quick-card:focus-visible {
+  border-color: var(--google-blue);
+  background: var(--accent-blue-bg);
+  box-shadow: var(--google-elevation-2);
+  transform: translateY(-2px);
+}
+
+:root[data-theme-preset="google"] .user-message-bubble {
+  border: 1px solid color-mix(in srgb, var(--google-blue) 24%, var(--google-outline));
+  border-radius: 18px;
+  background: var(--accent-blue-bg);
+}
+
+:root[data-theme-preset="google"] .input-box {
+  border-color: var(--google-outline);
+  border-radius: 24px;
+  background: var(--google-surface-0);
+  box-shadow: var(--google-elevation-1);
+}
+
+:root[data-theme-preset="google"] .input-box:focus-within {
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 3px var(--accent-blue-bg), var(--google-elevation-1);
+}
+
+:root[data-theme-preset="google"] .send-btn {
+  background: var(--google-blue);
+  color: var(--google-on-primary);
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.24);
+}
+
+:root[data-theme-preset="google"] .send-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--google-blue) 88%, #000000);
+  opacity: 1;
+}
+
+/* Pending message preview uses Material surface tones with the blue accent
+   for send and red for destructive withdraw. */
+:root[data-theme-preset="google"] .pending-messages-area {
+  border-color: var(--google-outline);
+  border-radius: var(--radius-lg);
+  background: var(--google-surface-1);
+}
+
+:root[data-theme-preset="google"] .pending-message-item {
+  border-radius: var(--radius-md);
+}
+
+:root[data-theme-preset="google"] .pending-message-item:hover {
+  background: var(--accent-blue-bg);
+}
+
+:root[data-theme-preset="google"] .pending-message-send-now {
+  background: var(--google-blue);
+  color: var(--google-on-primary);
+  box-shadow: 0 1px 3px rgba(11, 87, 208, 0.24);
+}
+
+:root[data-theme-preset="google"] .pending-message-send-now:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--google-blue) 88%, #000000);
+}
+
+:root[data-theme-preset="google"] .pending-message-withdraw:hover {
+  background: var(--accent-red-bg);
+  color: var(--google-red);
+}
+
+:root[data-theme-preset="google"]
+  :is(.chat-message-tool, .context-compaction-message,
+    .context-compaction-stream, .file-changes-card, .tool-call-bash-terminal) {
+  border-color: var(--google-outline-variant);
+  border-radius: var(--radius-lg);
+  background: var(--google-surface-1);
+  box-shadow: none;
+}
+
+:root[data-theme-preset="google"]
+  :is(.tool-call-pending, .tool-call-codebase-pending,
+    .tool-call-browser-pending-running, .tool-call-grep-pending-running,
+    .tool-call-codelens-pending) {
+  border-left: 3px solid var(--google-blue);
+  background: var(--accent-blue-bg);
+}
+
+:root[data-theme-preset="google"]
+  :is(.tool-call-error, .file-viewer-error, .git-control-error) {
+  color: var(--google-red);
+}
+
+:root[data-theme-preset="google"]
+  :is(.tool-call-success-row, .file-viewer-edit-status.saved) {
+  color: var(--google-green);
+}
+
+:root[data-theme-preset="google"]
+  :is(.ai-message .code-block-wrapper, .context-compaction-markdown .code-block-wrapper,
+    .file-viewer, .diff-viewer, .git-diff-view, .terminal-container,
+    .browser-panel, .codebase-panel-table-wrap) {
+  border-color: var(--google-outline-variant);
+  background: var(--google-surface-0);
+}
+
+:root[data-theme-preset="google"]
+  :is(.ai-message a, .context-compaction-markdown a, .chat-fork-divider-link,
+    .codebase-sphere-tooltip-neighbor span:last-child) {
+  color: var(--google-blue);
+  text-decoration-color: color-mix(in srgb, var(--google-blue) 42%, transparent);
+}
+
+:root[data-theme-preset="google"] .theme-preset-card-google {
+  border-color: color-mix(in srgb, var(--google-blue) 48%, var(--google-outline));
+  background: var(--google-surface-1);
+}
+
+:root[data-theme-preset="google"] .theme-preset-card-google.active {
+  border-color: var(--google-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--google-blue) 24%, transparent);
+}
+
+.theme-preset-brand-stripe {
+  display: flex;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.theme-preset-brand-stripe span {
+  flex: 1;
+}
+
+.theme-preset-brand-stripe .google-blue {
+  background: #4285f4;
+}
+
+.theme-preset-brand-stripe .google-red {
+  background: #ea4335;
+}
+
+.theme-preset-brand-stripe .google-yellow {
+  background: #fbbc05;
+}
+
+.theme-preset-brand-stripe .google-green {
+  background: #34a853;
+}
+
+:root[data-theme-preset="google"] ::selection {
+  background: var(--selection-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-preset="google"] .chat-empty-quick-card {
+    transition: none;
+  }
+}

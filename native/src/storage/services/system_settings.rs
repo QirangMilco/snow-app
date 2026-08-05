@@ -53,6 +53,10 @@ const DEFAULT_REQUEST_LOGGING_EXPIRY_SETTING_NAME: &str = "Request logging expir
 const DEFAULT_REQUEST_LOGGING_EXPIRY_SETTING_CODE: &str = "request_logging_expires_at";
 const DEFAULT_REQUEST_LOGGING_EXPIRY_SETTING_VALUE: &str = "0";
 
+const DEFAULT_IMAGE_LIBRARY_DIR_SETTING_NAME: &str = "Image library directory";
+const DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE: &str = "image_library_dir";
+const DEFAULT_IMAGE_LIBRARY_DIR_SETTING_VALUE: &str = "";
+
 const DEFAULT_PRIVACY_SETTING_NAME: &str = "Privacy settings";
 const DEFAULT_PRIVACY_SETTING_CODE: &str = "privacy_settings";
 const DEFAULT_PRIVACY_SETTING_VALUE: &str = "{\"enabled\":false,\"mode\":\"local\",\"api\":{\"url\":\"\",\"apiKey\":\"\",\"model\":\"openai/privacy-filter\"},\"toolResults\":{\"tools\":[\"filesystem-read\",\"grep-search\",\"bash-terminal-execute\"]}}";
@@ -73,12 +77,23 @@ const PROJECT_CODEBASE_SETTING_CODE_PREFIX: &str = "project_codebase_scope_";
 const PROJECT_TOOL_APPROVAL_SETTING_NAME: &str = "Project Tool approval scope";
 const PROJECT_TOOL_APPROVAL_SETTING_CODE_PREFIX: &str = "project_tool_approval_scope_";
 
+/// Built-in MCP servers that are **disabled by default** — they are only
+/// exposed to the model when a project scope explicitly enables them via
+/// the `enabled_server_ids` whitelist. This saves request context tokens
+/// for tools that are only useful on demand (e.g. terminal control).
+const DEFAULT_DISABLED_BUILTIN_SERVERS: &[&str] = &["terminal"];
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct McpProjectScopeSettings {
     pub project_id: String,
     pub disabled_server_ids: BTreeSet<String>,
     pub disabled_tool_names: BTreeSet<String>,
+    /// Whitelist of servers that are disabled-by-default but have been
+    /// explicitly enabled by the user for this project. Used together
+    /// with `DEFAULT_DISABLED_BUILTIN_SERVERS`: a server in that list is
+    /// only enabled when it appears here.
+    pub enabled_server_ids: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -89,8 +104,24 @@ pub struct SkillsProjectScopeSettings {
 }
 
 impl McpProjectScopeSettings {
+    /// Whether a built-in server (by its scope id, e.g. `builtin:terminal`)
+    /// is enabled for this project.
+    ///
+    /// Most servers are enabled by default and only disabled when present
+    /// in `disabled_server_ids`. Servers listed in
+    /// `DEFAULT_DISABLED_BUILTIN_SERVERS` are disabled by default and must
+    /// be explicitly added to `enabled_server_ids` to become active.
     pub fn is_server_enabled(&self, server_id: &str) -> bool {
-        !self.disabled_server_ids.contains(server_id)
+        if self.disabled_server_ids.contains(server_id) {
+            return false;
+        }
+        if DEFAULT_DISABLED_BUILTIN_SERVERS
+            .iter()
+            .any(|id| server_id == *id || server_id == format!("builtin:{id}"))
+        {
+            return self.enabled_server_ids.contains(server_id);
+        }
+        true
     }
 
     pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
@@ -98,7 +129,20 @@ impl McpProjectScopeSettings {
     }
 
     fn set_server_enabled(&mut self, server_id: &str, enabled: bool) {
-        update_disabled_set(&mut self.disabled_server_ids, server_id, enabled);
+        if DEFAULT_DISABLED_BUILTIN_SERVERS
+            .iter()
+            .any(|id| server_id == *id || server_id == format!("builtin:{id}"))
+        {
+            // For default-disabled servers, toggle the whitelist entry.
+            if enabled {
+                self.enabled_server_ids.insert(server_id.to_string());
+            } else {
+                self.enabled_server_ids.remove(server_id);
+            }
+        } else {
+            // For default-enabled servers, toggle the blacklist entry.
+            update_disabled_set(&mut self.disabled_server_ids, server_id, enabled);
+        }
     }
 
     fn set_tool_enabled(&mut self, tool_name: &str, enabled: bool) {
@@ -109,6 +153,7 @@ impl McpProjectScopeSettings {
         self.project_id = self.project_id.trim().to_string();
         self.disabled_server_ids = normalized_set(&self.disabled_server_ids);
         self.disabled_tool_names = normalized_set(&self.disabled_tool_names);
+        self.enabled_server_ids = normalized_set(&self.enabled_server_ids);
     }
 }
 
@@ -365,6 +410,25 @@ pub fn set_request_logging_expiry(database_path: &Path, expires_at_ms: i64) -> R
     )
 }
 
+/// 获取图库自定义保存目录。返回空字符串表示未设置（使用默认 ~/.snowapp/image）。
+pub fn get_image_library_dir(database_path: &Path) -> Result<String> {
+    let Some(value) = get_system_setting_value(database_path, DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE)?
+    else {
+        return Ok(String::new());
+    };
+    Ok(value.trim().to_string())
+}
+
+/// 设置图库自定义保存目录。传入空字符串可重置为默认目录。
+pub fn set_image_library_dir(database_path: &Path, dir: &str) -> Result<()> {
+    set_system_setting(
+        database_path,
+        DEFAULT_IMAGE_LIBRARY_DIR_SETTING_NAME,
+        DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE,
+        dir.trim(),
+    )
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PrivacyApiConfig {
@@ -473,6 +537,7 @@ pub struct ThemePalette {
     pub accent_blue: String,
     pub accent_blue_bg: String,
     pub accent_blue_text: String,
+    pub accent_color: String,
     pub on_solid: String,
     pub selection_bg: String,
     pub focus_ring: String,
@@ -514,6 +579,7 @@ impl ThemePalette {
         fill!(accent_blue);
         fill!(accent_blue_bg);
         fill!(accent_blue_text);
+        fill!(accent_color);
         fill!(on_solid);
         fill!(selection_bg);
         fill!(focus_ring);
@@ -1034,7 +1100,7 @@ fn update_disabled_set(values: &mut BTreeSet<String>, value: &str, enabled: bool
     }
 }
 
-fn set_system_setting_with_connection(
+pub(crate) fn set_system_setting_with_connection(
     connection: &Connection,
     setting_name: &str,
     setting_code: &str,
@@ -1141,6 +1207,12 @@ fn seed_default_settings_with_connection(connection: &Connection) -> rusqlite::R
     )?;
     insert_default_setting(
         connection,
+        DEFAULT_IMAGE_LIBRARY_DIR_SETTING_NAME,
+        DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE,
+        DEFAULT_IMAGE_LIBRARY_DIR_SETTING_VALUE,
+    )?;
+    insert_default_setting(
+        connection,
         DEFAULT_PRIVACY_SETTING_NAME,
         DEFAULT_PRIVACY_SETTING_CODE,
         DEFAULT_PRIVACY_SETTING_VALUE,
@@ -1157,4 +1229,3 @@ fn seed_default_settings_with_connection(connection: &Connection) -> rusqlite::R
 
     Ok(())
 }
-

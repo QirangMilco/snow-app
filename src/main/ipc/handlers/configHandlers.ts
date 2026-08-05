@@ -225,15 +225,34 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
   );
 
   // ===== Sub-agent Configs =====
-  ipcMain.handle("sub-agent-configs:list", () => native.listSubAgentConfigs());
+  const normalizeOptionalProjectId = (value: unknown): string | undefined =>
+    typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+  ipcMain.handle("sub-agent-configs:list", (_event, projectId: unknown) =>
+    native.listSubAgentConfigs(normalizeOptionalProjectId(projectId))
+  );
+  ipcMain.handle(
+    "sub-agent-configs:get",
+    async (_event, agentId: unknown, projectId: unknown) => {
+      if (typeof agentId !== "string" || !agentId.trim()) {
+        throw new Error("Agent ID is required to get sub-agent config");
+      }
+      return native.getSubAgentConfig(
+        agentId.trim(),
+        normalizeOptionalProjectId(projectId)
+      );
+    }
+  );
   ipcMain.handle(
     "sub-agent-configs:upsert",
     async (_event, projectId: unknown, item: unknown) => {
-      const normalizedProjectId =
-        typeof projectId === "string" && projectId.trim()
-          ? projectId.trim()
-          : undefined;
-      const normalized = normalizeSubAgentConfig(item);
+      const normalizedProjectId = normalizeOptionalProjectId(projectId);
+      const normalized = normalizeSubAgentConfig({
+        ...(typeof item === "object" && item !== null
+          ? (item as Record<string, unknown>)
+          : {}),
+        projectId: normalizedProjectId,
+      });
       const apiConfigs = await native.listApiConfigs();
       if (
         normalized.configProfile &&
@@ -249,18 +268,19 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
         normalized.toolsJson
       );
       await native.upsertSubAgentConfig(normalized);
-      return native.listSubAgentConfigs();
+      return native.listSubAgentConfigs(normalizedProjectId);
     }
   );
   ipcMain.handle(
     "sub-agent-configs:delete",
-    async (_event, agentId: unknown) => {
+    async (_event, agentId: unknown, projectId: unknown) => {
       if (typeof agentId !== "string" || !agentId.trim()) {
         throw new Error("Sub-agent ID is required");
       }
 
       const normalizedAgentId = agentId.trim();
-      const existing = await native.listSubAgentConfigs();
+      const normalizedProjectId = normalizeOptionalProjectId(projectId);
+      const existing = await native.listSubAgentConfigs(normalizedProjectId);
       if (
         existing.some(
           (item) => item.agentId === normalizedAgentId && item.builtin
@@ -269,8 +289,11 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
         throw new Error("Built-in sub-agents cannot be deleted");
       }
 
-      await native.deleteSubAgentConfig(normalizedAgentId);
-      return native.listSubAgentConfigs();
+      await native.deleteSubAgentConfig(
+        normalizedAgentId,
+        normalizedProjectId
+      );
+      return native.listSubAgentConfigs(normalizedProjectId);
     }
   );
 

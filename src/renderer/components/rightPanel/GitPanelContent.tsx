@@ -19,9 +19,11 @@ export function GitPanelContent({
   activeDirectory,
   onOpenInTab,
   onOpenFile,
+  onOpenTerminal,
 }: RightPanelContentProps & {
   onOpenInTab?: OpenDiffTabCallback;
   onOpenFile?: (filePath: string, fileName: string) => void;
+  onOpenTerminal?: (cwd: string) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const [selectedFile, setSelectedFile] = useState<GitFileStatus | null>(null);
@@ -108,6 +110,7 @@ export function GitPanelContent({
           onFileSelect={setSelectedFile}
           onStatusChange={setGitStatus}
           onOpenFile={onOpenFile}
+          onOpenTerminal={onOpenTerminal}
         />
       </div>
 

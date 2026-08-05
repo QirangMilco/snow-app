@@ -1,6 +1,6 @@
 import type { ChatConversationRecord } from "../../../../preload";
 
-export type TimeGroupKey = "today" | "yesterday" | "last7days" | "earlier";
+export type TimeGroupKey = "running" | "today" | "yesterday" | "last7days" | "earlier";
 
 export type TimeGroup = {
   key: TimeGroupKey;
@@ -105,12 +105,46 @@ export const formatTimeLabel = (
  * Group a list of conversations (already sorted by updatedAt DESC)
  * into time-based sections. Consecutive items in the same group
  * are merged into a single group entry.
+ *
+ * 运行中的会话（streamingIds）会被独立分组为 "running"，
+ * 显示在所有时间分组的顶部。该分组只包含运行中的会话，
+ * 其余会话按 today/yesterday/last7days/earlier 分组。
  */
 export const groupConversationsByTime = (
   conversations: ChatConversationRecord[],
-  now: Date = new Date()
+  now: Date = new Date(),
+  streamingIds?: Set<string>
 ): TimeGroup[] => {
   const groups: TimeGroup[] = [];
+
+  // 运行中会话独立分组，置顶显示
+  if (streamingIds && streamingIds.size > 0) {
+    const running: ChatConversationRecord[] = [];
+    const rest: ChatConversationRecord[] = [];
+    for (const conv of conversations) {
+      if (streamingIds.has(conv.conversationId)) {
+        running.push(conv);
+      } else {
+        rest.push(conv);
+      }
+    }
+    if (running.length > 0) {
+      groups.push({ key: "running", conversations: running });
+    }
+    // 分组剩余会话
+    for (const conversation of rest) {
+      const date = parseDbTimestamp(conversation.updatedAt);
+      const key = getTimeGroup(date, now);
+
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.key === key) {
+        lastGroup.conversations.push(conversation);
+      } else {
+        groups.push({ key, conversations: [conversation] });
+      }
+    }
+    return groups;
+  }
 
   for (const conversation of conversations) {
     const date = parseDbTimestamp(conversation.updatedAt);

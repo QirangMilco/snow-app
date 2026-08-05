@@ -1,8 +1,10 @@
 pub mod database;
+mod migrations;
 mod paths;
 pub mod services;
 
 use std::{
+    collections::HashMap,
     fs,
     path::PathBuf,
     sync::{Mutex, Once, OnceLock},
@@ -11,6 +13,8 @@ use std::{
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::api::conversation::images::resolve_inline_images_from_disk;
 
@@ -89,6 +93,8 @@ pub struct SystemPromptItemInput {
     pub content: String,
     pub is_active: bool,
     pub sort_order: i32,
+    pub scope: Option<String>,
+    pub project_id: Option<String>,
 }
 
 #[napi(object)]
@@ -99,6 +105,8 @@ pub struct SystemPromptItemRecord {
     pub content: String,
     pub is_active: bool,
     pub sort_order: i32,
+    pub scope: String,
+    pub project_id: Option<String>,
     pub updated_at: String,
 }
 
@@ -198,6 +206,186 @@ pub struct ProjectMcpServerConfigRecord {
 }
 
 #[napi(object)]
+pub struct ImportResourceSourceInput {
+    pub provider: String,
+    pub scope: String,
+    pub origin_path: String,
+    pub project_id: Option<String>,
+    pub content_hash: String,
+}
+
+#[napi(object)]
+pub struct ImportResourceInput {
+    pub resource_id: String,
+    pub resource_type: String,
+    pub scope: String,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_path: String,
+    pub management: String,
+    pub sources: Vec<ImportResourceSourceInput>,
+}
+
+#[napi(object)]
+pub struct ProjectMcpServerImportInput {
+    pub project_id: String,
+    pub input: McpServerConfigInput,
+}
+
+#[napi(object)]
+pub struct ImportDatabaseTransactionInput {
+    pub mcp_servers: Vec<McpServerConfigInput>,
+    pub project_mcp_servers: Vec<ProjectMcpServerImportInput>,
+    pub system_prompts: Vec<SystemPromptItemInput>,
+    pub plugins: Vec<PluginInput>,
+    pub import_resources: Vec<ImportResourceInput>,
+}
+
+#[napi(object)]
+pub struct ImportResourceSourceRecord {
+    pub source_id: String,
+    pub provider: String,
+    pub scope: String,
+    pub origin_path: String,
+    pub project_id: Option<String>,
+    pub imported_hash: String,
+    pub current_hash: String,
+    pub last_scanned_at: String,
+}
+
+#[napi(object)]
+pub struct ImportResourceRecord {
+    pub resource_id: String,
+    pub resource_type: String,
+    pub scope: String,
+    pub project_id: Option<String>,
+    pub target_id: String,
+    pub target_path: String,
+    pub management: String,
+    pub source_count: i32,
+    pub sources: Vec<ImportResourceSourceRecord>,
+    pub updated_at: String,
+}
+
+#[napi(object)]
+pub struct ImportResourceReleaseInput {
+    pub resource_id: String,
+    pub source_id: String,
+    pub disposition: String,
+}
+
+#[napi(object)]
+pub struct ImportResourceRelease {
+    pub resource: ImportResourceRecord,
+    pub cleanup_target: bool,
+    pub remaining_source_count: i32,
+}
+
+#[napi(object)]
+pub struct PluginComponentInput {
+    pub component_id: String,
+    pub component_type: String,
+    pub logical_id: String,
+    pub target_id: String,
+    pub target_path: String,
+    pub origin_path: String,
+    pub content_hash: String,
+    pub status: String,
+    pub unsupported_reason: Option<String>,
+    pub sort_order: i32,
+}
+
+#[napi(object)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PluginRuntimeDeclaration {
+    pub entry: String,
+    pub permissions: Vec<String>,
+    pub timeout_ms: i32,
+}
+
+#[napi(object)]
+pub struct PluginInput {
+    pub plugin_id: String,
+    pub name: String,
+    pub version: String,
+    pub provider: String,
+    pub source_path: String,
+    pub manifest_path: String,
+    pub scope: String,
+    pub project_id: Option<String>,
+    pub state: String,
+    pub capabilities: Vec<String>,
+    pub runtime: Option<PluginRuntimeDeclaration>,
+    pub content_hash: String,
+    pub components: Vec<PluginComponentInput>,
+}
+
+#[napi(object)]
+pub struct PluginComponentRecord {
+    pub component_id: String,
+    pub plugin_id: String,
+    pub component_type: String,
+    pub logical_id: String,
+    pub target_id: String,
+    pub target_path: String,
+    pub origin_path: String,
+    pub content_hash: String,
+    pub status: String,
+    pub unsupported_reason: Option<String>,
+    pub sort_order: i32,
+}
+
+#[napi(object)]
+pub struct PluginRecord {
+    pub plugin_id: String,
+    pub name: String,
+    pub version: String,
+    pub provider: String,
+    pub source_path: String,
+    pub manifest_path: String,
+    pub scope: String,
+    pub project_id: Option<String>,
+    pub state: String,
+    pub desired_state: String,
+    pub capabilities: Vec<String>,
+    pub runtime: Option<PluginRuntimeDeclaration>,
+    pub content_hash: String,
+    pub imported_at: String,
+    pub updated_at: String,
+    pub components: Vec<PluginComponentRecord>,
+}
+
+#[napi(object)]
+pub struct PluginMarketplaceInput {
+    pub marketplace_id: String,
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub source_type: String,
+    pub source_path: String,
+    pub ref_name: Option<String>,
+    pub cache_path: Option<String>,
+    pub manifest_path: String,
+    pub content_hash: String,
+}
+
+#[napi(object)]
+pub struct PluginMarketplaceRecord {
+    pub marketplace_id: String,
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub source_type: String,
+    pub source_path: String,
+    pub ref_name: Option<String>,
+    pub cache_path: Option<String>,
+    pub manifest_path: String,
+    pub content_hash: String,
+    pub added_at: String,
+    pub updated_at: String,
+}
+
+#[napi(object)]
 pub struct SubAgentConfigInput {
     pub agent_id: String,
     pub name: String,
@@ -208,6 +396,9 @@ pub struct SubAgentConfigInput {
     pub builtin: bool,
     pub sort_order: i32,
     pub source: String,
+    /// 项目 ID。空/缺省表示全局子代理；指定后为项目级子代理
+    /// （项目级与全局同 agent_id 时，项目级优先）。
+    pub project_id: Option<String>,
 }
 
 #[napi(object)]
@@ -223,6 +414,8 @@ pub struct SubAgentConfigRecord {
     pub sort_order: i32,
     pub source: String,
     pub updated_at: String,
+    /// 项目 ID，空字符串表示全局子代理。
+    pub project_id: String,
 }
 
 #[napi(object)]
@@ -516,6 +709,29 @@ pub fn get_goal_mode_token_budget() -> Result<i64> {
 pub fn set_goal_mode_token_budget(budget: i64) -> Result<()> {
     let database_path = ensure_database_file()?;
     services::goal_settings::set_goal_mode_token_budget(&database_path, budget)
+}
+
+pub fn get_conversation_modes(
+    conversation_id: &str,
+) -> Result<services::chat_conversations::ConversationModes> {
+    let database_path = ensure_database_file()?;
+    services::chat_conversations::get_conversation_modes(&database_path, conversation_id)
+}
+
+pub fn set_conversation_modes(
+    conversation_id: &str,
+    plan_mode: Option<bool>,
+    goal_mode: Option<bool>,
+    goal_mode_token_budget: Option<i64>,
+) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::chat_conversations::set_conversation_modes(
+        &database_path,
+        conversation_id,
+        plan_mode,
+        goal_mode,
+        goal_mode_token_budget,
+    )
 }
 
 pub fn get_request_logging() -> Result<bool> {
@@ -834,6 +1050,30 @@ pub fn check_project_has_gitignore(project_id: String) -> Result<bool> {
     Ok(gitignore_path.exists())
 }
 
+/// Returns whether the project belongs to a remote (SSH) workspace directory.
+/// Remote workspaces have no local filesystem to index, so codebase features
+/// are unavailable for them.
+pub fn check_project_is_remote(project_id: String) -> Result<bool> {
+    let database_path = ensure_database_file()?;
+    let normalized_project_id = project_id.trim().to_string();
+    if normalized_project_id.is_empty() {
+        return Err(Error::new(
+            Status::InvalidArg,
+            "Project id is required".to_string(),
+        ));
+    }
+
+    let Some(kind) = services::workspace_directories::get_workspace_directory_kind(
+        &database_path,
+        &normalized_project_id,
+    )?
+    else {
+        return Ok(false);
+    };
+
+    Ok(kind == "ssh")
+}
+
 pub fn list_api_configs() -> Result<Vec<ApiConfigRecord>> {
     let database_path = ensure_database_file()?;
     services::api_configs::list_api_configs(&database_path)
@@ -982,14 +1222,112 @@ pub fn delete_project_mcp_server_config(
         &server_id,
     )
 }
-pub fn list_sub_agent_configs() -> Result<Vec<SubAgentConfigRecord>> {
+
+pub fn list_import_resources() -> Result<Vec<ImportResourceRecord>> {
     let database_path = ensure_database_file()?;
-    services::sub_agent_configs::list_sub_agent_configs(&database_path)
+    services::import_resources::list_import_resources(&database_path)
 }
 
-pub fn get_sub_agent_config(agent_id: String) -> Result<Option<SubAgentConfigRecord>> {
+pub fn upsert_import_resources(items: Vec<ImportResourceInput>) -> Result<()> {
     let database_path = ensure_database_file()?;
-    services::sub_agent_configs::get_sub_agent_config(&database_path, &agent_id)
+    services::import_resources::upsert_import_resources(&database_path, &items)
+}
+
+pub fn commit_import_transaction(input: ImportDatabaseTransactionInput) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    commit_import_transaction_at_path(&database_path, input)
+}
+
+fn commit_import_transaction_at_path(
+    database_path: &std::path::Path,
+    input: ImportDatabaseTransactionInput,
+) -> Result<()> {
+    database::open_connection(database_path)
+        .and_then(|mut connection| {
+            let transaction = connection.transaction()?;
+            for item in &input.mcp_servers {
+                services::mcp_server_configs::upsert_mcp_server_config_with_connection(
+                    &transaction,
+                    item,
+                )?;
+            }
+            for item in &input.project_mcp_servers {
+                services::project_mcp_server_configs::upsert_project_mcp_server_config_with_connection(
+                    &transaction,
+                    &item.project_id,
+                    &item.input,
+                )?;
+            }
+            for item in &input.system_prompts {
+                services::system_prompts::upsert_system_prompt_with_connection(&transaction, item)?;
+            }
+            for item in &input.plugins {
+                services::plugins::upsert_plugin(&transaction, item)?;
+            }
+            for item in &input.import_resources {
+                services::import_resources::upsert_resource(&transaction, item)?;
+            }
+            transaction.commit()
+        })
+        .map_err(|error| database::database_error(database_path, "commit import transaction", error))
+}
+
+pub fn release_import_resource(input: ImportResourceReleaseInput) -> Result<ImportResourceRelease> {
+    let database_path = ensure_database_file()?;
+    services::import_resources::release_import_resource(&database_path, &input)
+}
+
+pub fn list_plugins() -> Result<Vec<PluginRecord>> {
+    let database_path = ensure_database_file()?;
+    services::plugins::list_plugins(&database_path)
+}
+
+pub fn upsert_plugins(items: Vec<PluginInput>) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::plugins::upsert_plugins(&database_path, &items)
+}
+
+pub fn set_plugin_state(plugin_id: String, state: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::plugins::set_plugin_state(&database_path, &plugin_id, &state)
+}
+
+pub fn delete_plugin(plugin_id: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::plugins::delete_plugin(&database_path, &plugin_id)
+}
+
+pub fn list_plugin_marketplaces() -> Result<Vec<PluginMarketplaceRecord>> {
+    let database_path = ensure_database_file()?;
+    services::plugin_marketplaces::list_plugin_marketplaces(&database_path)
+}
+
+pub fn upsert_plugin_marketplace(item: PluginMarketplaceInput) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::plugin_marketplaces::upsert_plugin_marketplace(&database_path, &item)
+}
+
+pub fn delete_plugin_marketplace(marketplace_id: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::plugin_marketplaces::delete_plugin_marketplace(&database_path, &marketplace_id)
+}
+/// 列出子代理配置。project_id 为 None 时返回全部（全局 + 所有项目），
+/// 指定时只返回该项目的子代理。
+pub fn list_sub_agent_configs(project_id: Option<String>) -> Result<Vec<SubAgentConfigRecord>> {
+    let database_path = ensure_database_file()?;
+    services::sub_agent_configs::list_sub_agent_configs(&database_path, project_id.as_deref())
+}
+
+pub fn get_sub_agent_config(
+    agent_id: String,
+    project_id: Option<String>,
+) -> Result<Option<SubAgentConfigRecord>> {
+    let database_path = ensure_database_file()?;
+    services::sub_agent_configs::get_sub_agent_config(
+        &database_path,
+        &agent_id,
+        project_id.as_deref(),
+    )
 }
 
 pub fn upsert_sub_agent_config(item: SubAgentConfigInput) -> Result<()> {
@@ -997,9 +1335,13 @@ pub fn upsert_sub_agent_config(item: SubAgentConfigInput) -> Result<()> {
     services::sub_agent_configs::upsert_sub_agent_config(&database_path, &item)
 }
 
-pub fn delete_sub_agent_config(agent_id: String) -> Result<()> {
+pub fn delete_sub_agent_config(agent_id: String, project_id: Option<String>) -> Result<()> {
     let database_path = ensure_database_file()?;
-    services::sub_agent_configs::delete_sub_agent_config(&database_path, &agent_id)
+    services::sub_agent_configs::delete_sub_agent_config(
+        &database_path,
+        &agent_id,
+        project_id.as_deref(),
+    )
 }
 
 pub fn list_sensitive_command_configs() -> Result<Vec<SensitiveCommandConfigRecord>> {
@@ -1199,6 +1541,16 @@ pub fn list_sub_agent_conversations(
     )
 }
 
+pub fn list_sub_agent_conversations_by_parents(
+    parent_conversation_ids: Vec<String>,
+) -> Result<HashMap<String, Vec<ChatConversationRecord>>> {
+    let database_path = ensure_database_file()?;
+    services::chat_conversations::list_sub_agent_conversations_by_parents(
+        &database_path,
+        &parent_conversation_ids,
+    )
+}
+
 pub fn create_sub_agent_session(
     conversation_id: String,
     parent_conversation_id: String,
@@ -1298,6 +1650,11 @@ pub fn update_conversation_api_profile(
 pub fn delete_conversation(conversation_id: String) -> Result<()> {
     let database_path = ensure_database_file()?;
     services::chat_conversations::delete_conversation(&database_path, &conversation_id)
+}
+
+pub fn delete_conversations(conversation_ids: Vec<String>) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::chat_conversations::delete_conversations(&database_path, &conversation_ids)
 }
 
 pub fn append_tool_message(conversation_id: String, content: String) -> Result<()> {
@@ -1576,4 +1933,111 @@ pub fn set_keyboard_shortcuts_settings(
 ) -> Result<()> {
     let database_path = ensure_database_file()?;
     services::keyboard_shortcuts::set_keyboard_shortcuts_settings(&database_path, &settings)
+}
+
+// ============================================================================
+// 图像管理系统（Image Library）
+// ============================================================================
+
+#[napi(object)]
+pub struct ImageLibraryRecord {
+    pub id: String,
+    pub relative_path: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub size_bytes: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+    pub prompt: String,
+    pub model: String,
+    pub provider: String,
+    pub created_at: String,
+}
+
+impl From<services::image_library::ImageLibraryRecord> for ImageLibraryRecord {
+    fn from(record: services::image_library::ImageLibraryRecord) -> Self {
+        ImageLibraryRecord {
+            id: record.id,
+            relative_path: record.relative_path,
+            file_name: record.file_name,
+            mime_type: record.mime_type,
+            size_bytes: record.size_bytes,
+            width: record.width,
+            height: record.height,
+            prompt: record.prompt,
+            model: record.model,
+            provider: record.provider,
+            created_at: record.created_at,
+        }
+    }
+}
+
+/// 图库根目录绝对路径（优先用户自定义路径，回退 `~/.snowapp/image`）。
+pub fn get_image_library_root() -> Result<String> {
+    services::image_library::image_library_root()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// 读取图库自定义保存目录（空字符串表示使用默认目录）。
+pub fn get_image_library_dir() -> Result<String> {
+    let database_path = ensure_database_file()?;
+    services::system_settings::get_image_library_dir(&database_path)
+}
+
+/// 设置图库自定义保存目录（传入空字符串重置为默认目录）。
+pub fn set_image_library_dir(dir: String) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::system_settings::set_image_library_dir(&database_path, &dir)
+}
+
+/// 列出图库全部图片（按创建时间倒序）。
+pub fn list_image_library() -> Result<Vec<ImageLibraryRecord>> {
+    let database_path = ensure_database_file()?;
+    services::image_library::list_images(&database_path).map(|records| {
+        records
+            .into_iter()
+            .map(ImageLibraryRecord::from)
+            .collect()
+    })
+}
+
+/// 读取图库图片并返回 data URL；路径非法或文件不存在返回 None。
+pub fn read_image_library_file(relative_path: &str) -> Result<Option<String>> {
+    services::image_library::read_image_file(relative_path)
+}
+
+/// 删除图片：物理文件 + 索引 + 同步重写引用该图的会话消息。
+pub fn delete_image_library_image(id: &str) -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::image_library::delete_image(&database_path, id)
+}
+
+/// 生成结果落盘 + 索引（由 imagegen 工具调用；失败不阻断，保留 base64）。
+pub fn persist_generated_images(
+    prompt: &str,
+    model: &str,
+    provider: &str,
+    blocks: &mut Vec<Value>,
+) -> Result<Vec<String>> {
+    let database_path = ensure_database_file()?;
+    services::image_library::persist_generated_images(
+        &database_path,
+        prompt,
+        model,
+        provider,
+        blocks,
+    )
+}
+
+/// 统计指定会话中引用的图库图片数量（删除会话确认框展示用）。
+pub fn count_conversation_images(conversation_ids: Vec<String>) -> Result<i64> {
+    let database_path = ensure_database_file()?;
+    services::image_library::count_conversation_images(&database_path, &conversation_ids)
+}
+
+/// 级联删除指定会话中引用的图库图片（物理文件 + 索引行）。
+/// 由删除会话流程调用；会话本身随后被删除，无需重写消息。
+pub fn delete_conversation_images(conversation_ids: Vec<String>) -> Result<i64> {
+    let database_path = ensure_database_file()?;
+    services::image_library::delete_conversation_images(&database_path, &conversation_ids)
 }

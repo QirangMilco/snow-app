@@ -25,6 +25,9 @@ function renderStatusIcon(status: string): React.ReactNode {
 /**
  * 子代理列表面板：独立的自包含面板，拥有自己的表面背景，
  * 不依赖父级会话项的选中/悬停状态，避免嵌套背景互相冲突。
+ *
+ * 注意：子代理会话不允许单独删除（随父会话级联删除），
+ * 因此不参与多选批量删除，列表项仅支持点击打开会话。
  */
 export function SubAgentListPanel({
   conversations,
@@ -32,6 +35,15 @@ export function SubAgentListPanel({
   onSelect,
 }: SubAgentListPanelProps): React.JSX.Element {
   const { t } = useI18n();
+
+  const handleItemClick = (
+    event: React.MouseEvent,
+    conversationId: string
+  ): void => {
+    // 面板是独立交互区域，阻止点击事件继续冒泡
+    event.stopPropagation();
+    onSelect?.(conversationId);
+  };
 
   return (
     <div className="sub-agent-list-panel">
@@ -41,11 +53,9 @@ export function SubAgentListPanel({
           className={`sub-agent-list-item${
             subAgent.conversationId === activeConversationId ? " active" : ""
           }`}
-          onClick={(event) => {
-            // 面板是独立交互区域，阻止点击事件继续冒泡
-            event.stopPropagation();
-            onSelect?.(subAgent.conversationId);
-          }}
+          onClick={(event) =>
+            handleItemClick(event, subAgent.conversationId)
+          }
           role="button"
           tabIndex={0}
           onKeyDown={(event) => {

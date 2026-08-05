@@ -22,6 +22,8 @@ import type {
   SkillBatchInstallResult,
   SkillDefinition,
   SkillUninstallResult,
+  TerminalCommandRequest,
+  TerminalCommandResponse,
   UpdateStatus,
   UserQuestionRequest,
   UserQuestionResponse,
@@ -30,6 +32,8 @@ import type {
 const MCP_TOOL_CHUNK_CHANNEL = "mcp:call-tool:chunk";
 const BROWSER_COMMAND_CHANNEL = "browser:command";
 const BROWSER_COMMAND_RESPONSE_CHANNEL = "browser:command-response";
+const TERMINAL_COMMAND_CHANNEL = "terminal:command";
+const TERMINAL_COMMAND_RESPONSE_CHANNEL = "terminal:command-response";
 const USER_QUESTION_CHANNEL = "user-question:request";
 const USER_QUESTION_RESPONSE_CHANNEL = "user-question:response";
 const APP_CONTROL_CHANNEL = "app-control:request";
@@ -173,6 +177,8 @@ export const systemApi = {
     ipcRenderer.invoke("codebase:set-project-reranking", projectId, enabled),
   checkProjectHasGitignore: (projectId: string): Promise<boolean> =>
     ipcRenderer.invoke("codebase:check-project-gitignore", projectId),
+  checkProjectIsRemote: (projectId: string): Promise<boolean> =>
+    ipcRenderer.invoke("codebase:check-project-remote", projectId),
   startCodebaseEmbedding: (
     projectId: string,
     sessionId: string
@@ -477,6 +483,46 @@ export const systemApi = {
       void ipcRenderer.invoke("browser:renderer-unregister");
     };
   },
+  registerTerminalCommandHandler: (
+    handler: (request: TerminalCommandRequest) => Promise<string>
+  ): (() => void) => {
+    const listener = (
+      _event: IpcRendererEvent,
+      request: TerminalCommandRequest
+    ): void => {
+      if (
+        !request ||
+        typeof request.commandId !== "string" ||
+        typeof request.operation !== "string" ||
+        typeof request.argsJson !== "string"
+      ) {
+        return;
+      }
+
+      void handler(request)
+        .then((resultJson) => {
+          const response: TerminalCommandResponse = {
+            commandId: request.commandId,
+            resultJson,
+          };
+          ipcRenderer.send(TERMINAL_COMMAND_RESPONSE_CHANNEL, response);
+        })
+        .catch((error: unknown) => {
+          const response: TerminalCommandResponse = {
+            commandId: request.commandId,
+            error: error instanceof Error ? error.message : String(error),
+          };
+          ipcRenderer.send(TERMINAL_COMMAND_RESPONSE_CHANNEL, response);
+        });
+    };
+
+    ipcRenderer.on(TERMINAL_COMMAND_CHANNEL, listener);
+    void ipcRenderer.invoke("terminal:renderer-register");
+    return () => {
+      ipcRenderer.removeListener(TERMINAL_COMMAND_CHANNEL, listener);
+      void ipcRenderer.invoke("terminal:renderer-unregister");
+    };
+  },
   registerUserQuestionHandler: (
     handler: (request: UserQuestionRequest) => Promise<string>
   ): (() => void) => {
@@ -615,9 +661,15 @@ export const systemApi = {
     ipcRenderer.invoke("checkpoint:list-changes", checkpointId, workDir),
   listCheckpointDiffs: (
     checkpointId: string,
-    workDir: string
+    workDir: string,
+    includeAll?: boolean
   ): Promise<CheckpointFileDiff[]> =>
-    ipcRenderer.invoke("checkpoint:list-diffs", checkpointId, workDir),
+    ipcRenderer.invoke(
+      "checkpoint:list-diffs",
+      checkpointId,
+      workDir,
+      includeAll ?? false
+    ),
   writeLog: (level: string, entry: unknown): Promise<void> =>
     ipcRenderer.invoke("debug:write-log", level, entry),
   sum: (a: number, b: number): Promise<number> =>
@@ -716,10 +768,41 @@ export const windowApi = {
   stopWindowDrag: (): Promise<void> => ipcRenderer.invoke("window:stop-drag"),
   writeImageToClipboard: (dataUrl: string): Promise<void> =>
     ipcRenderer.invoke("clipboard:write-image", dataUrl),
+  readClipboardText: (): Promise<string> =>
+    ipcRenderer.invoke("clipboard:read-text"),
+  writeClipboardText: (text: string): Promise<void> =>
+    ipcRenderer.invoke("clipboard:write-text", text),
+  /** 在系统文件管理器中显示指定路径（文件高亮选中，目录直接打开）。 */
+  showItemInFolder: (path: string): Promise<void> =>
+    ipcRenderer.invoke("shell:show-item-in-folder", path),
   clearBrowserCache: (): Promise<void> =>
     ipcRenderer.invoke("browser:clear-cache"),
   clearBrowserCookies: (): Promise<void> =>
     ipcRenderer.invoke("browser:clear-cookies"),
+  browserNetworkRequests: (
+    webContentsId: number,
+    filter?: string,
+    limit?: number
+  ): Promise<unknown[]> =>
+    ipcRenderer.invoke(
+      "browser:network-requests",
+      webContentsId,
+      filter,
+      limit
+    ),
+  browserDialogs: (webContentsId: number): Promise<unknown[]> =>
+    ipcRenderer.invoke("browser:dialogs-list", webContentsId),
+  browserDialogRespond: (
+    webContentsId: number,
+    accept: boolean,
+    promptText?: string
+  ): Promise<{ responded: boolean; remaining: number; error?: string }> =>
+    ipcRenderer.invoke(
+      "browser:dialog-respond",
+      webContentsId,
+      accept,
+      promptText
+    ),
   onWindowMaximizeStateChanged: (
     callback: (isMaximized: boolean) => void
   ): (() => void) => {

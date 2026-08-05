@@ -6,7 +6,7 @@
 //! `stream` modules so that this file stays focused on orchestration.
 
 mod event;
-mod payload;
+pub(crate) mod payload;
 mod stream;
 
 use std::collections::HashMap;
@@ -173,8 +173,15 @@ async fn create_chat_completion_response_async(
             return Err(error);
         }
     };
-    let raw_response_json = serde_json::to_string(&streamed_response.raw_events)
-        .unwrap_or_else(|_| "[]".to_string());
+    // The full SSE chunk array (raw_events) used to be serialized into
+    // raw_response_json and persisted into chat_messages.raw_json for assistant
+    // messages. That column is only read back for tool-role messages (to
+    // reconstruct tool_call_id) and for image-ref stripping (which only
+    // operates on the [{name,callId,result}] tool format). Persisting the
+    // entire chunk stream for assistant messages wasted ~90% of the database
+    // space (each token produced a chunk repeating id/model/fingerprint), so we
+    // now store "{}" instead.
+    let raw_response_json = "{}";
 
     for parse_error in &streamed_response.tool_parse_errors {
         log_api_warning(

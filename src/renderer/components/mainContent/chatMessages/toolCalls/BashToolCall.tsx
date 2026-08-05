@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, Info, Send, Square, Timer } from "lucide-react";
+import { Activity, AlertCircle, FileText, Info, Send, Square, Timer } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import type { ToolCallInfo } from "../utils/conversationTypes";
 import { ToolCallNode } from "./shared/ToolCallNode";
@@ -14,6 +14,7 @@ type ParsedBashArgs = {
   workingDirectory: string;
   timeout?: number;
   isInteractive?: boolean;
+  detach?: boolean;
 };
 
 type ParsedBashResult =
@@ -24,6 +25,7 @@ type ParsedBashResult =
     }
   | { type: "timeout"; message: string; output: string }
   | { type: "error"; message: string; output: string }
+  | { type: "detached"; pid: number; logPath: string }
   | { type: "raw"; text: string }
   | { type: "empty" };
 
@@ -50,6 +52,8 @@ const parseArgs = (args: string): ParsedBashArgs | null => {
       typeof parsed.isInteractive === "boolean"
         ? parsed.isInteractive
         : undefined;
+    const detach =
+      typeof parsed.detach === "boolean" ? parsed.detach : undefined;
     return {
       command: parsed.command,
       description:
@@ -59,6 +63,7 @@ const parseArgs = (args: string): ParsedBashArgs | null => {
       workingDirectory: parsed.workingDirectory,
       timeout,
       isInteractive,
+      detach,
     };
   } catch {
     return null;
@@ -101,6 +106,17 @@ const parseResult = (result: string | undefined): ParsedBashResult => {
         };
       }
       return { type: "error", message: parsed.error, output: partialOutput };
+    }
+
+    // Detached (background) execution: the call returned immediately with
+    // { detached: true, pid, logPath } and the process keeps running.
+    if (parsed.detached === true) {
+      return {
+        type: "detached",
+        pid: typeof parsed.pid === "number" ? parsed.pid : 0,
+        logPath:
+          typeof parsed.logPath === "string" ? parsed.logPath : "",
+      };
     }
 
     if (
@@ -158,9 +174,11 @@ export const BashToolCall = ({
   // Live countdown: ticks every 200ms while running so the user can
   // see how much time is left before the command is killed.
   // Interactive commands have no meaningful countdown, so we skip it.
+  // Detached commands ignore the timeout entirely (the call returns
+  // immediately), so a countdown would be misleading — skip it too.
   const [remainingMs, setRemainingMs] = useState<number | null>(null);
   useEffect(() => {
-    if (!isRunning || !startedAt || isInteractive) {
+    if (!isRunning || !startedAt || isInteractive || parsedArgs?.detach) {
       setRemainingMs(null);
       return;
     }
@@ -311,6 +329,14 @@ export const BashToolCall = ({
               })}
             </span>
           ) : null}
+          {parsedResult.type === "detached" ? (
+            <span className="tool-call-bash-detached-badge">
+              <Activity size={11} aria-hidden="true" />
+              {t("toolCall.bash.detached", {
+                values: { pid: parsedResult.pid },
+              })}
+            </span>
+          ) : null}
           {parsedResult.type === "timeout" ? (
             <span className="tool-call-bash-timeout-badge">
               {t("toolCall.bash.timeout")}
@@ -384,6 +410,17 @@ export const BashToolCall = ({
             </span>
             <code>{command}</code>
           </pre>
+
+          {parsedResult.type === "detached" && parsedResult.logPath ? (
+            <div className="tool-call-bash-logpath">
+              <FileText size={12} aria-hidden="true" />
+              <span>
+                {t("toolCall.bash.logPath", {
+                  values: { path: parsedResult.logPath },
+                })}
+              </span>
+            </div>
+          ) : null}
 
           {hasOutput ? (
             <pre className="tool-call-bash-output-pre">

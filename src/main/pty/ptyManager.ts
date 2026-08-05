@@ -42,8 +42,20 @@ const sessions = new Map<string, PtySession>();
 const generatePtyId = (): string =>
   `pty-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/**
+ * Windows 默认 shell 选择：优先 PowerShell 7 (pwsh.exe) —— 其自带的
+ * PSReadLine 在 ConPTY 下 Ctrl+C 行为正确（仅取消当前行/中断，不会
+ * 退出 shell），与 Windows Terminal 体验一致；其次 Windows PowerShell；
+ * 最后回退 COMSPEC (cmd.exe)。
+ */
 const getShell = (): string => {
   if (process.platform === "win32") {
+    for (const name of ["pwsh.exe", "powershell.exe"]) {
+      const resolved = resolveWindowsExecutable(name);
+      if (isAbsolute(resolved)) {
+        return resolved;
+      }
+    }
     return process.env.COMSPEC ?? "cmd.exe";
   }
   return process.env.SHELL ?? "/bin/zsh";
@@ -346,7 +358,7 @@ export const writePtyInput = (id: string, data: string): void => {
   if (!session) {
     throw new Error(`PTY session not found: ${id}`);
   }
-  session.pty.write(data);
+  session.pty.write(data.replace(/\r\n/g, "\r").replace(/\n/g, "\r"));
 };
 
 export const resizePty = (id: string, cols: number, rows: number): void => {

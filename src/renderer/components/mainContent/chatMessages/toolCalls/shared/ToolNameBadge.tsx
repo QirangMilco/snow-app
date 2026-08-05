@@ -13,6 +13,7 @@ import {
   Bot,
   Hammer,
   ScanSearch,
+  Image as ImageIcon,
   type LucideIcon,
 } from "lucide-react";
 
@@ -29,6 +30,7 @@ export type ToolCategory =
   | "interaction"
   | "agent"
   | "lens"
+  | "image"
   | "generic";
 
 export const TOOL_ICON_MAP: Record<ToolCategory, LucideIcon> = {
@@ -44,6 +46,7 @@ export const TOOL_ICON_MAP: Record<ToolCategory, LucideIcon> = {
   interaction: MessageCircleQuestion,
   agent: Bot,
   lens: ScanSearch,
+  image: ImageIcon,
   generic: Wrench,
 };
 
@@ -86,6 +89,8 @@ export const getToolCategory = (toolName: string): ToolCategory => {
     return "terminal";
   if (lower.includes("web") || lower.includes("fetch") || lower.includes("url"))
     return "web";
+  if (lower.includes("imagegen") || lower.includes("generate-image"))
+    return "image";
   if (lower.includes("git")) return "git";
   if (lower.includes("codelens") || lower.includes("diagnose")) {
     return "lens";

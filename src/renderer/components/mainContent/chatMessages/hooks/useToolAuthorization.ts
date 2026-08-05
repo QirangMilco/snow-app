@@ -9,6 +9,8 @@ import {
   runHook,
 } from "./hookOutcome";
 import { directoryIdToPath } from "../utils/conversationHelpers";
+import { PENDING_SESSION_KEY } from "../utils/conversationTypes";
+import { APP_CONTROL_MODE_CHANGED_EVENT } from "../../../../hooks/useAppControl";
 
 /**
  * 工具授权逻辑：YOLO 模式、敏感命令检查、批量授权闸门等。
@@ -69,17 +71,45 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     }
   }, [applyYoloMode]);
 
+  // Persist the session's current mode overrides to the per-conversation
+  // record. Fire-and-forget: the in-memory session ref is authoritative for
+  // the running loop; the DB row is only for restoring after a restart.
+  // Pending (not yet persisted) sessions skip the DB write — their mode
+  // follows the session through migrateSession and is written afterwards.
+  const persistSessionModes = useCallback(
+    (key: string): void => {
+      if (key === PENDING_SESSION_KEY) {
+        return;
+      }
+      const ref = ctx.sessionsRefData.current.get(key);
+      if (!ref) {
+        return;
+      }
+      void window.snow.setConversationModes(
+        key,
+        ref.planMode,
+        ref.goalMode,
+        ref.goalModeTokenBudget
+      );
+    },
+    [ctx.sessionsRefData]
+  );
+
   const applyPlanMode = useCallback(
     (enabled: boolean): void => {
       ctx.planModeRef.current = enabled;
       ctx.setPlanModeState(enabled);
       if (!enabled) {
-        // Plan Mode off = every approval is invalidated (user toggle, Goal
-        // Mode mutual exclusion, or external sync). Switching conversations
-        // restores the target session's mode without going through
-        // applyPlanMode, so it never clears approvals here — an approved plan
-        // survives navigating away and back.
-        ctx.planApprovedSessionKeysRef.current.clear();
+        // Plan Mode off = this conversation's approval is invalidated (user
+        // toggle, Goal Mode mutual exclusion, or external sync). Per-session
+        // scope: other conversations keep their independently approved plans,
+        // including ones still executing in the background. Switching
+        // conversations restores the target session's mode without going
+        // through applyPlanMode, so it never clears approvals here — an
+        // approved plan survives navigating away and back.
+        const key =
+          ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+        ctx.planApprovedSessionKeysRef.current.delete(key);
       }
     },
     [ctx.planModeRef, ctx.setPlanModeState, ctx.planApprovedSessionKeysRef]
@@ -87,14 +117,30 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
 
   const refreshPlanMode = useCallback(async (): Promise<boolean> => {
     try {
+      // Refresh the persisted global default, then resolve the EFFECTIVE
+      // mode for the current session: the session's own ref wins (it is the
+      // runtime authority), falling back to the global default for cold
+      // sessions. Reading the global value directly here would desync the
+      // UI from the session ref whenever another conversation changed the
+      // global default (PlusMenu re-reads on every open).
       const enabled = await window.snow.getPlanMode();
-      applyPlanMode(enabled);
-      return enabled;
+      ctx.globalModeDefaultsRef.current.planMode = enabled;
+      const key =
+        ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+      const ref = ctx.sessionsRefData.current.get(key);
+      const effective = ref?.planMode ?? enabled;
+      applyPlanMode(effective);
+      return effective;
     } catch {
       applyPlanMode(false);
       return false;
     }
-  }, [applyPlanMode]);
+  }, [
+    applyPlanMode,
+    ctx.globalModeDefaultsRef,
+    ctx.activeConversationIdRef,
+    ctx.sessionsRefData,
+  ]);
 
   const applyGoalMode = useCallback(
     (enabled: boolean): void => {
@@ -107,13 +153,25 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
   const refreshGoalMode = useCallback(async (): Promise<boolean> => {
     try {
       const enabled = await window.snow.getGoalMode();
-      applyGoalMode(enabled);
-      return enabled;
+      ctx.globalModeDefaultsRef.current.goalMode = enabled;
+      // Effective mode for the current session: session ref wins over the
+      // global default (see refreshPlanMode).
+      const key =
+        ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+      const ref = ctx.sessionsRefData.current.get(key);
+      const effective = ref?.goalMode ?? enabled;
+      applyGoalMode(effective);
+      return effective;
     } catch {
       applyGoalMode(false);
       return false;
     }
-  }, [applyGoalMode]);
+  }, [
+    applyGoalMode,
+    ctx.globalModeDefaultsRef,
+    ctx.activeConversationIdRef,
+    ctx.sessionsRefData,
+  ]);
 
   const applyGoalModeTokenBudget = useCallback(
     (budget: number): void => {
@@ -125,22 +183,42 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
   const refreshGoalModeTokenBudget = useCallback(async (): Promise<void> => {
     try {
       const budget = await window.snow.getGoalModeTokenBudget();
-      applyGoalModeTokenBudget(budget);
+      ctx.globalModeDefaultsRef.current.goalModeTokenBudget = budget;
+      // Effective budget for the current session: session ref wins over the
+      // global default (see refreshPlanMode).
+      const key =
+        ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+      const ref = ctx.sessionsRefData.current.get(key);
+      applyGoalModeTokenBudget(ref?.goalModeTokenBudget ?? budget);
     } catch {
       applyGoalModeTokenBudget(2000000);
     }
-  }, [applyGoalModeTokenBudget]);
+  }, [
+    applyGoalModeTokenBudget,
+    ctx.globalModeDefaultsRef,
+    ctx.activeConversationIdRef,
+    ctx.sessionsRefData,
+  ]);
 
   const setGoalModeTokenBudget = useCallback(
     async (budget: number): Promise<void> => {
       try {
         await window.snow.setGoalModeTokenBudget(budget);
+        ctx.globalModeDefaultsRef.current.goalModeTokenBudget = budget;
         applyGoalModeTokenBudget(budget);
+        // Per-conversation override: the current session keeps its own
+        // budget so switching chats restores the right one.
+        const key = ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+        const ref = ctx.sessionsRefData.current.get(key);
+        if (ref) {
+          ref.goalModeTokenBudget = budget;
+          persistSessionModes(key);
+        }
       } catch {
         // persist failure - keep current state
       }
     },
-    [applyGoalModeTokenBudget]
+    [applyGoalModeTokenBudget, ctx.activeConversationIdRef, ctx.sessionsRefData, ctx.globalModeDefaultsRef, persistSessionModes]
   );
 
   // 初始化：读取磁盘 YOLO 设置和永久授权工具列表
@@ -163,39 +241,60 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     void window.snow
       .getPlanMode()
       .then((enabled) => {
-        if (!disposed) {
-          applyPlanMode(enabled);
+        if (disposed) {
+          return;
         }
+        ctx.globalModeDefaultsRef.current.planMode = enabled;
+        // Resolve the EFFECTIVE mode: if the user already opened a session
+        // while this read was in flight, its ref must win — applying the
+        // global value here would desync the UI from the session ref.
+        const key =
+          ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+        const ref = ctx.sessionsRefData.current.get(key);
+        applyPlanMode(ref?.planMode ?? enabled);
       })
       .catch(() => {
         if (!disposed) {
           applyPlanMode(false);
+          ctx.globalModeDefaultsRef.current.planMode = false;
         }
       });
 
     void window.snow
       .getGoalMode()
       .then((enabled) => {
-        if (!disposed) {
-          applyGoalMode(enabled);
+        if (disposed) {
+          return;
         }
+        ctx.globalModeDefaultsRef.current.goalMode = enabled;
+        const key =
+          ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+        const ref = ctx.sessionsRefData.current.get(key);
+        applyGoalMode(ref?.goalMode ?? enabled);
       })
       .catch(() => {
         if (!disposed) {
           applyGoalMode(false);
+          ctx.globalModeDefaultsRef.current.goalMode = false;
         }
       });
 
     void window.snow
       .getGoalModeTokenBudget()
       .then((budget) => {
-        if (!disposed) {
-          applyGoalModeTokenBudget(budget);
+        if (disposed) {
+          return;
         }
+        ctx.globalModeDefaultsRef.current.goalModeTokenBudget = budget;
+        const key =
+          ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
+        const ref = ctx.sessionsRefData.current.get(key);
+        applyGoalModeTokenBudget(ref?.goalModeTokenBudget ?? budget);
       })
       .catch(() => {
         if (!disposed) {
           applyGoalModeTokenBudget(2000000);
+          ctx.globalModeDefaultsRef.current.goalModeTokenBudget = 2000000;
         }
       });
 
@@ -223,8 +322,12 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     applyYoloMode,
     applyPlanMode,
     applyGoalMode,
+    applyGoalModeTokenBudget,
     ctx.directoryId,
     ctx.alwaysApprovedToolsRef,
+    ctx.globalModeDefaultsRef,
+    ctx.activeConversationIdRef,
+    ctx.sessionsRefData,
   ]);
 
   const setYoloMode = useCallback(
@@ -252,19 +355,32 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
 
       ctx.setIsUpdatingPlanMode(true);
       try {
+        // Write the global default first (persisted settings) so new and
+        // never-configured conversations inherit this value too. This is the
+        // ONLY path that mutates the global default — conversation switches
+        // restore per-session state without touching it.
         await window.snow.setPlanMode(enabled);
+        ctx.globalModeDefaultsRef.current.planMode = enabled;
         applyPlanMode(enabled);
         // Save to current session ref for per-conversation restore.
-        const key = ctx.activeConversationIdRef.current ?? "pending";
+        const key = ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
         const ref = ctx.sessionsRefData.current.get(key);
         if (ref) {
           ref.planMode = enabled;
           if (enabled) ref.goalMode = false;
+          persistSessionModes(key);
         }
-        // Mutual exclusion: enabling Plan Mode disables Goal Mode
+        // Mutual exclusion scoped to the current session: enabling Plan Mode
+        // disables Goal Mode for THIS conversation and the global default,
+        // but never for other conversations' stored modes.
         if (enabled && ctx.goalModeRef.current) {
+          ctx.globalModeDefaultsRef.current.goalMode = false;
           await window.snow.setGoalMode(false);
           applyGoalMode(false);
+          if (ref) {
+            ref.goalMode = false;
+            persistSessionModes(key);
+          }
         }
       } finally {
         ctx.setIsUpdatingPlanMode(false);
@@ -278,6 +394,8 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
       ctx.goalModeRef,
       ctx.activeConversationIdRef,
       ctx.sessionsRefData,
+      ctx.globalModeDefaultsRef,
+      persistSessionModes,
     ]
   );
 
@@ -290,18 +408,25 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
       ctx.setIsUpdatingGoalMode(true);
       try {
         await window.snow.setGoalMode(enabled);
+        ctx.globalModeDefaultsRef.current.goalMode = enabled;
         applyGoalMode(enabled);
         // Save to current session ref for per-conversation restore.
-        const key = ctx.activeConversationIdRef.current ?? "pending";
+        const key = ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
         const ref = ctx.sessionsRefData.current.get(key);
         if (ref) {
           ref.goalMode = enabled;
           if (enabled) ref.planMode = false;
+          persistSessionModes(key);
         }
-        // Mutual exclusion: enabling Goal Mode disables Plan Mode
+        // Mutual exclusion scoped to the current session.
         if (enabled && ctx.planModeRef.current) {
+          ctx.globalModeDefaultsRef.current.planMode = false;
           await window.snow.setPlanMode(false);
           applyPlanMode(false);
+          if (ref) {
+            ref.planMode = false;
+            persistSessionModes(key);
+          }
         }
       } finally {
         ctx.setIsUpdatingGoalMode(false);
@@ -315,6 +440,8 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
       ctx.planModeRef,
       ctx.activeConversationIdRef,
       ctx.sessionsRefData,
+      ctx.globalModeDefaultsRef,
+      persistSessionModes,
     ]
   );
 
@@ -621,6 +748,32 @@ export const useToolAuthorization = (ctx: ConversationContextValue) => {
     () => () => rejectToolAuthorizations(),
     [rejectToolAuthorizations]
   );
+
+  // app-control-setMode writes the global settings directly; replay it
+  // through the session-aware path so the active session's ref, global
+  // defaults and per-conversation DB record all stay consistent. Without
+  // this, an AI-driven mode switch would leave the running session's gate
+  // state stale (the loop reads the session ref, not the global setting).
+  useEffect(() => {
+    const onModeChanged = (event: Event): void => {
+      const detail = (event as CustomEvent<{
+        mode: string;
+        enabled: boolean;
+      }>).detail;
+      if (!detail || typeof detail.enabled !== "boolean") {
+        return;
+      }
+      if (detail.mode === "plan") {
+        void setPlanMode(detail.enabled);
+      } else if (detail.mode === "goal") {
+        void setGoalMode(detail.enabled);
+      }
+    };
+    window.addEventListener(APP_CONTROL_MODE_CHANGED_EVENT, onModeChanged);
+    return () => {
+      window.removeEventListener(APP_CONTROL_MODE_CHANGED_EVENT, onModeChanged);
+    };
+  }, [setPlanMode, setGoalMode]);
 
   return {
     approveAllPendingToolAuthorizations,

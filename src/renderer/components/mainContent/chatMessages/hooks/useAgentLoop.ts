@@ -23,10 +23,12 @@ import {
   toNonBlockingRecord,
 } from "./hookOutcome";
 import {
+  beginStreamMetricsIteration,
   createAwaitHookDecision,
   createIsRunCancelled,
   createStreamChunkHandler,
   createStreamIdHandler,
+  resetRunStreamMetrics,
 } from "./agentLoopHelpers";
 import { createSubAgentActivation } from "./subAgentActivation";
 import { createToolExecutor } from "./toolExecution";
@@ -183,12 +185,8 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
       };
 
       ctx.updateSessionField(sessionKey, "isStreaming", true);
-      // Reset the token probe immediately so the stale count from the
-      // previous streaming session does not briefly flash in StreamCursor
-      // before the first iteration resets it again.
-      ctx.updateSessionField(sessionKey, "streamTokenCount", 0);
-      ctx.updateSessionField(sessionKey, "streamElapsedMs", 1);
-      ctx.updateSessionField(sessionKey, "streamTtftMs", 0);
+      // Reset per-run and per-iteration probes before the first model request.
+      resetRunStreamMetrics(ctx, sessionKey);
       // Anchor the wall-clock start of the accumulating elapsed timer once
       // per agent loop. StreamMetrics derives its elapsed display from this
       // timestamp instead of the backend's per-iteration streamElapsedMs
@@ -302,18 +300,19 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           }
         }
 
-        // Reset the real-time token probe at the start of each agent-loop
-        // iteration. The Rust backend accumulates tokens from scratch for
-        // every `collect_streaming_response` call, so the frontend probe
-        // must also start from zero to stay in sync.
-        ctx.updateSessionField(effectiveKey, "streamTokenCount", 0);
-        ctx.updateSessionField(effectiveKey, "streamElapsedMs", 1);
-        ctx.updateSessionField(effectiveKey, "streamTtftMs", 0);
+        // Carry the completed iteration into the run totals, then reset the
+        // per-request probes before starting the next model stream.
+        beginStreamMetricsIteration(ctx, effectiveKey);
 
         // Capture the stream promise so rollback can await it before issuing
         // delete/truncate. Without this, the Rust store_chat_exchange write
         // transaction races with the delete/truncate write transaction and
         // can exceed the busy_timeout, producing "database is locked".
+        // Per-conversation mode snapshot: read the modes from THIS session's
+        // ref (falling back to the global defaults for safety), never from
+        // the live global refs — another conversation toggling its modes
+        // must not alter the behaviour of a background-running loop.
+        const iterRef = ctx.sessionsRefData.current.get(effectiveKey);
         const streamPromise = window.snow.createResponseStream(
           {
             messages: requestMessages,
@@ -322,8 +321,8 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             conversationId: currentConversationId,
             directoryId: sessionDirId,
             checkpointId,
-            planMode: ctx.planModeRef.current,
-            goalMode: ctx.goalModeRef.current,
+            planMode: iterRef?.planMode ?? ctx.planModeRef.current,
+            goalMode: iterRef?.goalMode ?? ctx.goalModeRef.current,
           },
           createStreamChunkHandler(
             ctx,
@@ -419,6 +418,20 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             ctx.migrateSession(PENDING_SESSION_KEY, response.conversationId);
             effectiveKey = response.conversationId;
             finalSessionKey = response.conversationId;
+            // The pending session's Plan/Goal Mode (set before the session
+            // had a real id) now has a persisted conversation id: write it
+            // through so the modes survive a restart.
+            const migratedRef = ctx.sessionsRefData.current.get(
+              response.conversationId
+            );
+            if (migratedRef) {
+              void window.snow.setConversationModes(
+                response.conversationId,
+                migratedRef.planMode,
+                migratedRef.goalMode,
+                migratedRef.goalModeTokenBudget
+              );
+            }
             // Only set active conversation on the first iteration when
             // migrating from pending. Subsequent tool iterations must NOT
             // override the active conversation — the user may have switched
@@ -982,6 +995,13 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             const ref = ctx.sessionsRefData.current.get(sessionKey);
             if (ref) {
               ref.checkpointIds = [...ref.checkpointIds, checkpointId];
+            }
+            if (!ctx.sessionsRef.current[sessionKey]?.baselineCheckpointId) {
+              ctx.updateSessionField(
+                sessionKey,
+                "baselineCheckpointId",
+                checkpointId
+              );
             }
             ctx.updateSessionMessages(sessionKey, (currentMessages) =>
               currentMessages.map((m) =>

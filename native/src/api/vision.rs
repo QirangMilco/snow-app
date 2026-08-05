@@ -103,8 +103,15 @@ pub async fn textify_images_in_messages(
                     if result.contains("@@image:") {
                         let parsed = parse_chat_message_content(&result, database_path)?;
                         if !parsed.images.is_empty() {
-                            let textified =
-                                textify_parsed_content(&parsed, &client, &vision_config, &prompt_template).await?;
+                            // 工具结果（如截图）不是用户上传的参考图，不附加引用块。
+                            let textified = textify_parsed_content(
+                                &parsed,
+                                &client,
+                                &vision_config,
+                                &prompt_template,
+                                false,
+                            )
+                            .await?;
                             updated.push((name, call_id, textified));
                             changed = true;
                             continue;
@@ -140,7 +147,18 @@ pub async fn textify_images_in_messages(
             continue;
         }
 
-        let textified = textify_parsed_content(&parsed, &client, &vision_config, &prompt_template).await?;
+        // 用户消息附带参考图引用块：纯文本主模型无法直接接收图片，但
+        // imagegen-generate 支持按 `path`（upload 相对路径）引用图片，
+        // 因此文本化时把每张图的引用信息一并给出，模型调用图生图工具时
+        // 可直接复制。工具结果消息（截图等）不附加，避免上下文膨胀。
+        let textified = textify_parsed_content(
+            &parsed,
+            &client,
+            &vision_config,
+            &prompt_template,
+            message.role.trim() == "user",
+        )
+        .await?;
         message.content = textified;
     }
 
@@ -184,26 +202,74 @@ impl VisionApiConfig {
     }
 }
 
+/// 文本化一段消息内容：把每张图片替换为视觉模型的文本描述。
+///
+/// `include_reference_blocks` 为 true 时（用户消息），还会为每张图片附加
+/// 一行 `[Reference image #N for imagegen-generate: ...]` 引用块，让纯文本
+/// 主模型在需要图生图/编辑时能把图片引用直接填进 imagegen-generate 的
+/// `images` 参数。优先使用磁盘相对路径（`path`，几十字节）；仅对未持久化
+/// 的内联 data URL 图片回退到完整 base64（`data`）。
 async fn textify_parsed_content(
     parsed: &crate::api::conversation::images::ParsedChatMessageContent,
     client: &reqwest::Client,
     vision_config: &VisionApiConfig,
     prompt_template: &str,
+    include_reference_blocks: bool,
 ) -> Result<String> {
     let mut result = String::with_capacity(parsed.text.len() + parsed.images.len() * 256);
     result.push_str(&parsed.text);
 
-    for image in &parsed.images {
-        let description = describe_image(client, vision_config, image, &parsed.text, prompt_template).await?;
+    if include_reference_blocks && !parsed.images.is_empty() {
+        if !result.is_empty() && !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(&format!(
+            "[The user attached {} reference image(s). When the user asks to generate or edit an image based on them, call the imagegen-generate tool and pass the corresponding JSON object(s) below in its \"images\" parameter (image-to-image) — do NOT generate from the text description alone.]",
+            parsed.images.len()
+        ));
+    }
+
+    for (index, image) in parsed.images.iter().enumerate() {
+        let description =
+            describe_image(client, vision_config, image, &parsed.text, prompt_template).await?;
         if !result.is_empty() && !result.ends_with('\n') {
             result.push('\n');
         }
         result.push_str("[Image description: ");
         result.push_str(&description);
         result.push(']');
+
+        if include_reference_blocks {
+            result.push('\n');
+            result.push_str(&format!(
+                "[Reference image #{} for imagegen-generate: {}]",
+                index + 1,
+                reference_image_json(image)
+            ));
+        }
     }
 
     Ok(result.trim().to_string())
+}
+
+/// 生成参考图的 JSON 引用对象（可直接作为 imagegen-generate `images` 数组元素）。
+///
+/// 优先 `path`（磁盘相对路径），上下文占用极小；仅在没有持久化路径时回退
+/// 到完整 base64 `data`。
+fn reference_image_json(image: &crate::api::conversation::images::ChatImage) -> String {
+    match &image.source {
+        Some(source) => {
+            let normalized = source.replace('\\', "/");
+            format!(
+                "{{\"path\":\"{}\",\"mimeType\":\"{}\"}}",
+                normalized, image.media_type
+            )
+        }
+        None => format!(
+            "{{\"data\":\"{}\",\"mimeType\":\"{}\"}}",
+            image.data, image.media_type
+        ),
+    }
 }
 
 async fn describe_image(

@@ -134,28 +134,37 @@ pub(super) fn build_chat_completions_payload(
         // --- Assistant messages with tool_calls ---
         if role == "assistant" {
             if let Some(ref tool_calls_raw) = message.tool_calls_json {
-                if let Ok(tool_calls) = serde_json::from_str::<Value>(tool_calls_raw) {
-                    if tool_calls.as_array().is_some_and(|a| !a.is_empty()) {
-                        let mut assistant_msg = json!({
-                            "role": "assistant",
-                            "tool_calls": tool_calls,
-                        });
-                        if !content.is_empty() {
-                            assistant_msg["content"] = json!(content);
-                        } else {
-                            assistant_msg["content"] = Value::Null;
-                        }
-                        // Round-trip reasoning_content for DeepSeek/OpenAI
-                        // thinking models so the AI retains its prior
-                        // reasoning across turns.
-                        if let Some(ref thinking) = message.thinking {
-                            if !thinking.is_empty() {
-                                assistant_msg["reasoning_content"] = json!(thinking);
-                            }
-                        }
-                        payload_messages.push(assistant_msg);
-                        continue;
+                // Normalize stored tool calls (any provider format — notably
+                // OpenAI Responses `function_call` items) into the Chat
+                // Completions shape. Passing them through verbatim makes the
+                // endpoint reject the request with
+                // `unknown variant function_call, expected function` when a
+                // Responses-model conversation is continued with a Chat model
+                // (issue #26).
+                let tool_calls =
+                    crate::api::conversation::tool_messages::tool_calls_as_chat_completions(
+                        tool_calls_raw,
+                    );
+                if !tool_calls.is_empty() {
+                    let mut assistant_msg = json!({
+                        "role": "assistant",
+                        "tool_calls": tool_calls,
+                    });
+                    if !content.is_empty() {
+                        assistant_msg["content"] = json!(content);
+                    } else {
+                        assistant_msg["content"] = Value::Null;
                     }
+                    // Round-trip reasoning_content for DeepSeek/OpenAI
+                    // thinking models so the AI retains its prior
+                    // reasoning across turns.
+                    if let Some(ref thinking) = message.thinking {
+                        if !thinking.is_empty() {
+                            assistant_msg["reasoning_content"] = json!(thinking);
+                        }
+                    }
+                    payload_messages.push(assistant_msg);
+                    continue;
                 }
             }
         }
@@ -259,8 +268,6 @@ pub(super) fn build_chat_completions_payload(
         },
     });
 
-    payload["temperature"] = json!(0.7);
-
     if let Some(max_tokens) = api_config.max_tokens {
         if max_tokens > 0 {
             payload["max_tokens"] = json!(max_tokens);
@@ -289,7 +296,7 @@ fn normalize_message_role(role: &str) -> &str {
     }
 }
 
-fn build_chat_reasoning_effort(config_json: &str) -> Option<String> {
+pub(crate) fn build_chat_reasoning_effort(config_json: &str) -> Option<String> {
     let parsed = serde_json::from_str::<Value>(config_json).ok()?;
     let chat_thinking = parsed.get("snowcfg")?.get("chatThinking")?.as_object()?;
     let enabled = chat_thinking

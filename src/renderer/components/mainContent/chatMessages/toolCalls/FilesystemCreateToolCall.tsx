@@ -131,6 +131,7 @@ export const FilesystemCreateToolCall = ({
         </>
       }
       displayNameTitle={filePath}
+      displayNameDataPath={filePath}
       status={effectiveStatus}
       meta={
         lineCount > 0 ? (
@@ -143,11 +144,16 @@ export const FilesystemCreateToolCall = ({
     >
       <div className="tool-call-body">
         {parsedResult.type === "success" ? (
-          <div className="tool-call-success-row">
+          <div
+            className="tool-call-success-row"
+            data-path={parsedResult.path || filePath}
+          >
             created {parsedResult.path || filePath}
           </div>
         ) : (
-          <div className="tool-call-file-path">{filePath}</div>
+          <div className="tool-call-file-path" data-path={filePath}>
+            {filePath}
+          </div>
         )}
         {hasError ? (
           <div className="tool-call-error">

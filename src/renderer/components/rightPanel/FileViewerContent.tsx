@@ -13,6 +13,7 @@ import {
   Pencil,
   Save,
   Search,
+  Terminal as TerminalIcon,
   X,
 } from "lucide-react";
 import Editor from "react-simple-code-editor";
@@ -27,6 +28,9 @@ import {
 
 import { useKeyboardShortcutsSettings } from "../KeyboardShortcutsProvider";
 import { useI18n } from "../../i18n";
+import { MarkdownBlock } from "../mainContent/chatMessages/components/markdownRenderer";
+import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
+import { rightPanelEvents } from "./rightPanelEvents";
 import type { FileContentResult } from "./types";
 
 type FileViewerContentProps = {
@@ -36,6 +40,8 @@ type FileViewerContentProps = {
   sshSessionId?: string | null;
   focusLine?: number;
   onDirtyChange?: (dirty: boolean) => void;
+  /** 在文件所在目录打开终端。 */
+  onOpenTerminal?: (cwd: string) => void;
 };
 
 const EDITOR_TEXTAREA_ID = "file-viewer-editor-textarea";
@@ -158,6 +164,62 @@ const formatSize = (bytes: number): string => {
 const isEditable = (content: FileContentResult): boolean =>
   !content.isBinary && !content.isImage;
 
+/** 解析 markdown 链接路径：支持 `path:line` 与 `path#Lline` 行号定位。 */
+const parseHrefPathWithLine = (
+  raw: string
+): { path: string; line?: number } => {
+  // 冒号后必须为纯数字，避免误伤 Windows 盘符（C:\foo）。
+  const hashMatch = raw.match(/^(.+?)#L(\d+)$/i);
+  if (hashMatch) {
+    return { path: hashMatch[1], line: parseInt(hashMatch[2], 10) };
+  }
+  const lineMatch = raw.match(/^(.+):(\d+)$/);
+  if (lineMatch) {
+    return { path: lineMatch[1], line: parseInt(lineMatch[2], 10) };
+  }
+  return { path: raw };
+};
+
+/**
+ * 将 markdown 链接路径解析为可打开文件的绝对路径（基于当前文件所在目录）。
+ * 支持 Windows 盘符 / POSIX 绝对路径 / SSH 路径 / 相对路径（含 ./ 与 ../）。
+ */
+const resolveHrefPath = (
+  baseFilePath: string,
+  raw: string
+): { path: string; line?: number } | null => {
+  const { path: hrefPath, line } = parseHrefPathWithLine(raw);
+  if (!hrefPath) {
+    return null;
+  }
+  // 绝对路径（Windows 盘符 / POSIX / SSH 风格）直接使用。
+  if (
+    /^[a-zA-Z]:[\\/]/.test(hrefPath) ||
+    hrefPath.startsWith("/") ||
+    hrefPath.startsWith("\\")
+  ) {
+    return { path: hrefPath, line };
+  }
+  // 相对路径：基于当前文件所在目录解析（统一归一化分隔符处理 ./ 与 ../）。
+  const sep = baseFilePath.includes("\\") ? "\\" : "/";
+  const normSep = "/";
+  const dir = baseFilePath.replace(/\\/g, normSep).replace(/[^/]+$/, "");
+  const parts = `${dir}${hrefPath.replace(/\\/g, normSep)}`.split(normSep);
+  const root = parts[0] === "" ? normSep : "";
+  const stack: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      stack.pop();
+    } else {
+      stack.push(part);
+    }
+  }
+  const joined = stack.join(normSep);
+  const resolved = `${root}${joined}`;
+  return { path: sep === "\\" ? resolved.replace(/\//g, "\\") : resolved, line };
+};
+
 export function FileViewerContent({
   filePath,
   fileName,
@@ -165,6 +227,7 @@ export function FileViewerContent({
   sshSessionId,
   focusLine,
   onDirtyChange,
+  onOpenTerminal,
 }: FileViewerContentProps): React.JSX.Element {
   const { t } = useI18n();
   const { registerScopedHandler } = useKeyboardShortcutsSettings();
@@ -172,7 +235,30 @@ export function FileViewerContent({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [svgMode, setSvgMode] = useState<"image" | "code">("image");
+  // Markdown 文件阅读模式：preview = 渲染预览（标题/列表/链接/代码块），
+  // code = 源码视图（保留行号与文内搜索）。
+  const [mdMode, setMdMode] = useState<"preview" | "code">("preview");
   const [copied, setCopied] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const isMarkdown = /\.(md|markdown)$/i.test(fileName);
+
+  /** 获取当前选中的文本（编辑模式读 textarea 选区，否则读浏览器选区）。 */
+  const getSelectedText = (): string => {
+    if (editMode) {
+      const textarea = document.getElementById(EDITOR_TEXTAREA_ID);
+      if (textarea instanceof HTMLTextAreaElement) {
+        const start = textarea.selectionStart ?? 0;
+        const end = textarea.selectionEnd ?? 0;
+        return textarea.value.slice(start, end);
+      }
+      return "";
+    }
+    return window.getSelection()?.toString() ?? "";
+  };
 
   // Edit mode state
   const [editMode, setEditMode] = useState(false);
@@ -227,6 +313,7 @@ export function FileViewerContent({
     setSaveError(null);
     setSavedAt(false);
     setEditedContent("");
+    setMdMode("preview");
     try {
       let result: FileContentResult;
       if (isSsh && sshSessionId) {
@@ -359,12 +446,16 @@ export function FileViewerContent({
 
   const handleEnterEditMode = useCallback(() => {
     if (!content || !isEditable(content)) return;
+    // 编辑基于源码：markdown 预览模式下自动切回源码视图。
+    if (isMarkdown) {
+      setMdMode("code");
+    }
     setEditMode(true);
     setEditedContent(content.content);
     setDirty(false);
     setSaveError(null);
     setSavedAt(false);
-  }, [content]);
+  }, [content, isMarkdown]);
 
   const handleExitEditMode = useCallback(() => {
     if (dirty) {
@@ -430,6 +521,31 @@ export function FileViewerContent({
     }
   }, [dirty, saving, isSsh, sshSessionId, filePath, editedContent, content, t]);
 
+  // Markdown 预览中点击文件链接（相对路径/绝对路径）：解析为绝对路径后
+  // 通过 open-file 事件在右侧面板新建文件阅读器 tab，替代 Electron 默认
+  // 导航（渲染进程导航到相对 URL 会导致黑屏）。
+  const handleFileLinkClick = useCallback(
+    (href: string) => {
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(href);
+      } catch {
+        decoded = href;
+      }
+      const resolved = resolveHrefPath(filePath, decoded);
+      if (!resolved) {
+        return;
+      }
+      rightPanelEvents.emit("open-file", {
+        filePath: resolved.path,
+        isSsh,
+        sshSessionId: isSsh ? sshSessionId : undefined,
+        focusLine: resolved.line,
+      });
+    },
+    [filePath, isSsh, sshSessionId]
+  );
+
   // Keyboard shortcuts handled inside the editor's onKeyDown (which runs before
   // the library's own key handling): Ctrl/Cmd+S saves, Esc exits edit mode.
   // Undo/redo (Ctrl/Cmd+Z, Ctrl+Y) is handled natively by the editor library.
@@ -464,7 +580,12 @@ export function FileViewerContent({
 
   // ===== 文内搜索逻辑 =====
 
-  const canSearch = content != null && !content.isBinary && !content.isImage;
+  const canSearch =
+    content != null &&
+    !content.isBinary &&
+    !content.isImage &&
+    // markdown 渲染预览没有可定位的文本节点，搜索仅源码视图可用。
+    !(isMarkdown && mdMode === "preview");
 
   // 搜索目标：编辑模式搜 editedContent，查看模式搜已加载内容。
   const searchTarget = useMemo(() => {
@@ -534,6 +655,10 @@ export function FileViewerContent({
   // 作用域接管的局部 handler：打开（或重新聚焦）文内搜索。
   // 编辑模式下若 textarea 存在短单行选区，以其作为初始查询。
   const openLocalSearch = useCallback(() => {
+    // markdown 预览模式无行号/文本节点定位，打开搜索时自动切回源码视图。
+    if (isMarkdown && mdMode !== "code") {
+      setMdMode("code");
+    }
     if (editMode) {
       const textarea = document.getElementById(EDITOR_TEXTAREA_ID);
       if (textarea instanceof HTMLTextAreaElement) {
@@ -553,7 +678,7 @@ export function FileViewerContent({
     searchNavTickRef.current += 1;
     setSearchOpen(true);
     focusSearchInput();
-  }, [editMode, focusSearchInput]);
+  }, [editMode, focusSearchInput, isMarkdown, mdMode]);
 
   // 拦截条件：焦点位于本文件查看器内（含搜索栏自身）。
   const shouldInterceptOpenSearch = useCallback(() => {
@@ -747,6 +872,54 @@ export function FileViewerContent({
     []
   );
 
+  const buildMenuItems = (): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+    const selected = getSelectedText().trim();
+    if (selected) {
+      items.push({
+        id: "copy",
+        label: t("rightPanel.copy", { defaultValue: "Copy" }),
+        icon: <Copy size={13} strokeWidth={1.8} />,
+        onClick: () => {
+          setContextMenu(null);
+          void window.snow.writeClipboardText(selected).catch(() => {
+            // 剪贴板写入失败时静默忽略。
+          });
+        },
+      });
+    }
+    items.push({
+      id: "copy-path",
+      label: t("rightPanel.copyPath", { defaultValue: "Copy Path" }),
+      icon: <Copy size={13} strokeWidth={1.8} />,
+      onClick: () => {
+        setContextMenu(null);
+        void window.snow.writeClipboardText(filePath).catch(() => {
+          // 剪贴板写入失败时静默忽略。
+        });
+      },
+    });
+    if (onOpenTerminal && !isSsh) {
+      items.push({
+        id: "open-terminal",
+        label: t("rightPanel.openInTerminal", {
+          defaultValue: "Open in Terminal",
+        }),
+        icon: <TerminalIcon size={13} strokeWidth={1.8} />,
+        onClick: () => {
+          setContextMenu(null);
+          const lastSep = Math.max(
+            filePath.lastIndexOf("/"),
+            filePath.lastIndexOf("\\")
+          );
+          const dir = lastSep === -1 ? filePath : filePath.slice(0, lastSep);
+          onOpenTerminal(dir);
+        },
+      });
+    }
+    return items;
+  };
+
   const renderCodeBlock = () => {
     const { html } = highlightedCode;
     // 计算高亮条位置。lineHeight 在 effect 中也测量过，这里为渲染
@@ -898,7 +1071,19 @@ export function FileViewerContent({
   const canEdit = isEditable(content);
 
   return (
-    <div className="file-viewer" ref={rootRef} tabIndex={-1}>
+    <div
+      className="file-viewer"
+      ref={rootRef}
+      tabIndex={-1}
+      onContextMenu={(e) => {
+        // 编辑模式放行浏览器原生菜单（保留 textarea 的复制/粘贴/剪切）。
+        if (editMode) {
+          return;
+        }
+        e.preventDefault();
+        setContextMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       <div className="file-viewer-header">
         <span className="file-viewer-file-name" title={filePath}>
           {fileName}
@@ -947,6 +1132,40 @@ export function FileViewerContent({
               onClick={() => setSvgMode("code")}
               title={t("rightPanel.svgCodeMode", {
                 defaultValue: "View as code",
+              })}
+            >
+              <Code2 size={13} />
+            </button>
+          </div>
+        )}
+        {isMarkdown && !editMode && (
+          <div className="file-viewer-svg-toggle">
+            <button
+              type="button"
+              className={`file-viewer-toggle-btn ${
+                mdMode === "preview" ? "active" : ""
+              }`}
+              onClick={() => {
+                setSearchOpen(false);
+                setMdMode("preview");
+              }}
+              title={t("rightPanel.mdPreviewMode", {
+                defaultValue: "Render preview",
+              })}
+            >
+              <Eye size={13} />
+            </button>
+            <button
+              type="button"
+              className={`file-viewer-toggle-btn ${
+                mdMode === "code" ? "active" : ""
+              }`}
+              onClick={() => {
+                setSearchOpen(false);
+                setMdMode("code");
+              }}
+              title={t("rightPanel.mdSourceMode", {
+                defaultValue: "View source",
               })}
             >
               <Code2 size={13} />
@@ -1132,8 +1351,31 @@ export function FileViewerContent({
           </div>
         )}
         {!content.isBinary && !isImage && editMode && renderEditBlock()}
-        {!content.isBinary && !isImage && !editMode && renderCodeBlock()}
+        {!content.isBinary &&
+          !isImage &&
+          !editMode &&
+          isMarkdown &&
+          mdMode === "preview" && (
+            <MarkdownBlock
+              className="file-viewer-markdown ai-message"
+              content={content.content}
+              onFileLinkClick={handleFileLinkClick}
+            />
+          )}
+        {!content.isBinary &&
+          !isImage &&
+          !editMode &&
+          !(isMarkdown && mdMode === "preview") &&
+          renderCodeBlock()}
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildMenuItems()}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }

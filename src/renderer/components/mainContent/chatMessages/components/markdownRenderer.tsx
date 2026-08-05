@@ -210,15 +210,36 @@ const useMarkdownRender = (content: string): string => {
   return html;
 };
 
+/** 判断非 http(s) href 是否像本地文件链接（相对路径/绝对路径/带扩展名文件名）。 */
+const isFileLinkHref = (href: string): boolean => {
+  if (!href || href.length > 512 || /\s/.test(href)) {
+    return false;
+  }
+  // 页内锚点与协议链接（mailto:/tel:/data: 等）不是文件链接；Windows 盘符（C:\）除外。
+  if (href.startsWith("#")) {
+    return false;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^[a-zA-Z]:[\\/]/.test(href)) {
+    return false;
+  }
+  return (
+    /[\\/]/.test(href) ||
+    /(?:^|[\\/])[^\\/]+\.[a-zA-Z0-9]{1,12}$/.test(href)
+  );
+};
+
 export const MarkdownBlock = memo(
   ({
     className,
     content,
     streaming = false,
+    onFileLinkClick,
   }: {
     className: string;
     content: string;
     streaming?: boolean;
+    /** 非 http(s) 文件链接点击回调：宿主（如右侧文件阅读器）用它打开新阅读器 tab。 */
+    onFileLinkClick?: (href: string) => void;
   }): React.JSX.Element => {
     const html = useMarkdownRender(content);
 
@@ -269,6 +290,14 @@ export const MarkdownBlock = memo(
         if (/^https?:\/\//i.test(href)) {
           e.preventDefault();
           rightPanelEvents.emit("open-browser-tab", { url: href });
+          return;
+        }
+        // 非 http(s) 链接：若像本地文件路径且宿主提供了回调（右侧文件阅读器），
+        // 拦截默认导航（渲染进程导航到相对 URL 会直接黑屏），
+        // 改为在右侧面板新建文件阅读器 tab。
+        if (onFileLinkClick && isFileLinkHref(href)) {
+          e.preventDefault();
+          onFileLinkClick(href);
           return;
         }
       }
@@ -342,7 +371,7 @@ export const MarkdownBlock = memo(
         copyBtn.classList.add("copied");
         window.setTimeout(() => copyBtn.classList.remove("copied"), 2000);
       });
-    }, []);
+    }, [onFileLinkClick]);
 
     return (
       <div

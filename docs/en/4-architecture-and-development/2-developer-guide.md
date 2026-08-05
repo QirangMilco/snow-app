@@ -1,0 +1,325 @@
+# Developer Guide
+
+> For contributors: environment setup, common commands, directory responsibilities, the full implementation chain for new features, and coding conventions.
+> See also: [Architecture Overview](1-architecture-overview.md), [Data Storage Locations](../3-reference/4-data-storage-locations.md).
+
+## 1. Requirements
+
+- **Node.js** >= 18 (20 LTS recommended)
+- **Rust** stable toolchain + Cargo
+- Platform requirements:
+  - Windows: Visual Studio Build Tools (C++ workload) + ConPTY (auto-ensured)
+  - macOS: Xcode Command Line Tools
+  - Linux: `build-essential`, `pkg-config`, system SQLite (or bundled)
+
+## 2. Common Commands
+
+```bash
+npm install                 # Install deps (postinstall patches spectre / ensures conpty.dll)
+
+npm run dev                 # Dev mode (electron-vite dev, renderer hot reload)
+npm run build:rust          # Compile Rust native module → snow_native.<platform>.node
+npm run typecheck           # tsc --noEmit (must pass before committing)
+npm run build               # build:rust + tsc --noEmit + electron-vite build
+npm run build:app           # Full package (electron-builder)
+npm run build:win           # Windows installers (nsis + portable)
+```
+
+> ⚠️ After changing `native/src/`, you MUST re-run `npm run build:rust` and
+> **restart the app** (`.node` modules cannot be hot-swapped). Changes under
+> `src/` are picked up by hot reload.
+
+## 3. Directory Responsibilities
+
+```
+snow-app/
+├── src/
+│   ├── main/               # Electron main process (orchestration)
+│   │   ├── app/            # bootstrap, windows, session proxy, tray, protocols
+│   │   ├── ipc/handlers/   # IPC handlers (business orchestration)
+│   │   ├── native/         # Rust bridge (nativeBridge.ts gate)
+│   │   ├── pty/            # PTY terminal
+│   │   ├── ssh/            # SSH / remote workspaces
+│   │   ├── plugins/        # Plugin runtime (isolated workers)
+│   │   ├── settings/       # Settings read/write
+│   │   ├── snowCli/        # ~/.snow CLI compatibility
+│   │   ├── updater/        # App updates
+│   │   ├── codex/          # Codex compatibility layer
+│   │   └── importConfig/   # Third-party config import
+│   ├── preload/
+│   │   ├── index.ts        # contextBridge.exposeInMainWorld("snow", api)
+│   │   ├── modules/        # One *Api.ts per domain (ipcRenderer.invoke)
+│   │   └── types/          # Cross-layer shared types
+│   └── renderer/
+│       ├── components/     # Sidebar / main content / right panel
+│       ├── hooks/          # Custom hooks (useAgentLoop etc.)
+│       ├── i18n/lang/      # zh-CN.ts / en.ts / zh-TW.ts (must stay in sync)
+│       └── utils/          # Frontend utilities
+├── native/                 # Rust native layer (capability layer)
+│   └── src/
+│       ├── exports/        # napi export entries (*.rs per domain)
+│       ├── api/            # AI provider adapters (anthropic/gemini/responses/chat)
+│       ├── mcp/            # MCP servers (servers/) + external client (external/)
+│       ├── prompt/         # System prompts
+│       └── storage/        # SQLite (database.rs / migrations.rs / services/)
+├── scripts/                # Build & utility scripts (build-native.cjs etc.)
+├── resources/              # Icons & static assets
+└── docs/                   # Docs (guides + reference + architecture & development)
+```
+
+## 4. Full Chain for Adding a Feature
+
+Using "add a settings item" as an example — the cross-layer change pattern:
+
+```
+① Renderer (UI)
+   src/renderer/components/sidebar/xxxSettingsPanel.tsx    # form UI
+   src/renderer/i18n/lang/{zh-CN,en,zh-TW}.ts               # three-language copy
+
+② Preload (types + channel)
+   src/preload/types/xxx.ts                                 # type definitions
+   src/preload/modules/xxxApi.ts                            # ipcRenderer.invoke("xxx:get")
+   src/preload/index.ts                                     # register on window.snow
+   src/preload/types/index.ts                               # export types
+
+③ Main (IPC handler)
+   src/main/ipc/handlers/xxxHandlers.ts                     # ipcMain.handle("xxx:get", ...)
+   src/main/ipc/registerIpcHandlers.ts                      # register handler
+
+④ Native (Rust capability)
+   native/src/storage/services/xxx.rs                       # SQL access layer
+   native/src/exports/storage.rs                            # napi export
+   (or native/src/api/, native/src/mcp/servers/ per domain)
+
+⑤ Build & verify
+   npm run build:rust   # required after Rust changes
+   npm run typecheck    # no `any`, must pass
+```
+
+**Read-only query chain**: Renderer → `window.snow.xxxApi` →
+`ipcRenderer.invoke` → `ipcMain.handle` → `native.xxx` (storageReady gate
+auto-waits) → rusqlite.
+
+## 5. Coding Conventions
+
+### Mandatory
+
+- **No `any` types**: `tsc --noEmit` must pass (CI red line for this project).
+- **Three-language sync**: any UI copy change updates `zh-CN.ts` / `en.ts` /
+  `zh-TW.ts` together.
+- **Rust code**: keep `cargo fmt` style; new SQL goes through the existing
+  `storage/services/` pattern.
+- **Database changes**: new table → `database.rs::create_schema`; new column →
+  post-schema migration in `migrations.rs` (must be idempotent) + bump `user_version`.
+
+### Design Constraints
+
+- The renderer must **never** require Node modules directly (always via `window.snow.*`).
+- Main-process native calls must **not** bypass `nativeBridge` (except during
+  initialization — see `bootstrap.ts` comments: raw binding avoids the
+  storageReady deadlock).
+- New MCP tools should follow the parameter-description style of existing
+  servers in `native/src/mcp/servers/` (schemas are exposed to AI models —
+  describe constraints and defaults precisely).
+- File edits follow workspace conventions: prefer apply_patch/filesystem
+  tools; shell commands use PowerShell syntax (Windows default environment).
+- **Settings-panel styles are shared, not reinvented**: every sidebar settings
+  panel reuses the `api-settings-*` classes (`api-settings-page` →
+  `page-header` → `summary-grid` → actions row → `table-panel`); do not build
+  a parallel layout. Override column ratios with a page-level class that only
+  changes `grid-template-columns`. All styles live in
+  `src/renderer/styles.css` — `grep -n "<class>"` the whole file before adding
+  or removing a class (classes from retired layouts are still reused by newer
+  panels; duplicate definitions make one copy silently win). Full conventions
+  and the CSS-specificity trap: `.trellis/spec/frontend/component-guidelines.md`.
+
+## 6. Common Pitfalls
+
+| Issue                                                                                      | Notes                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Native changes don't take effect                                                           | Forgot `npm run build:rust` or didn't restart (`.node` can't hot-swap)                                                                                                                                                                                                            |
+| storageReady deadlock                                                                      | Calling native before init without the Proxy — only bootstrap may use the raw binding                                                                                                                                                                                             |
+| tsc can't find a module                                                                    | Run `npm install` after adding deps; commit lockfile changes with the PR                                                                                                                                                                                                          |
+| Missing translation                                                                        | The three i18n files must stay structurally identical; missing keys show `undefined` at runtime                                                                                                                                                                                   |
+| CRLF warnings                                                                              | Git CRLF→LF notices on Windows are normal (repo is LF-normalized)                                                                                                                                                                                                                 |
+| DB migration failure                                                                       | Migrations must be idempotent; verify on a backup DB before committing                                                                                                                                                                                                            |
+| Standalone script calling `callMcpTool` fails with `Create threadsafe function ... failed` | Positions 7–12 of `callMcpTool` (onChunk, onBrowserCommand, onUserQuestion, onAppControl, onRemoteWorkspaceCommand, onTerminalCommand) are all **required** `ThreadsafeFunction`s; passing `undefined` fails with `InvalidArg` — see the detailed section below                   |
+| CSS rules silently don't apply                                                             | A custom class inside a shared container is overridden: `.api-settings-summary-card span/small` (specificity 0,1,1) beats a bare class selector (0,1,0) — always qualify child selectors with the container class (e.g. `.imagegen-concurrency-card .imagegen-concurrency-head`)  |
+| The same class is defined twice in styles.css                                              | Classes from retired layouts (e.g. `imagegen-*` at ~line 12180) are still reused by newer panels; `grep -n` the whole file before writing a new rule, add only delta rules                                                                                                        |
+| File corrupted after a large search-replace                                                | Replacing very long JSX/CSS blocks can leave stale tails (`})}`, stray `}`); read the region back and verify pairs immediately, then run `tsc --noEmit` + `electron-vite build`                                                                                                   |
+| imagegen reference images show only placeholders                                           | `images:resolve-upload-image` used `join(uploadRoot, normalized)` while `normalized` already carries the `upload/` prefix → double `uploadRoot\upload\...` prefix made every read fail; join against `dirname(databasePath)` instead (fixed with a comment in `imageHandlers.ts`) |
+| Debugging renderer image/file chains                                                       | Use plain `node` with `require("../native/index.cjs")`, call `initializeAppStorage()` to get `databasePath`, replicate the main-process path logic + `readFile` — no Electron needed to locate the fault                                                                          |
+
+### callMcpTool callbacks (standalone scripts / e2e verification)
+
+`native.callMcpTool(toolFullName, argsJson, ...)` is the MCP tool entry point
+exposed by the native binding. Its signature has 15 parameters, and the
+**6 callback parameters are all required** `ThreadsafeFunction`s (the Rust
+types are not `Option`) — the JS side **must pass a function for each of
+them**. Passing `undefined`/`null` throws synchronously during argument
+conversion:
+
+```
+Error: Create threadsafe function in ThreadsafeFunction::create failed
+code: 'InvalidArg'
+```
+
+| Position | Parameter                                                                   | Type           | Notes                                                                          |
+| -------- | --------------------------------------------------------------------------- | -------------- | ------------------------------------------------------------------------------ |
+| 1        | `toolFullName`                                                              | string         | Full tool name, e.g. `config-list`                                             |
+| 2        | `argsJson`                                                                  | string         | JSON string of the arguments                                                   |
+| 3–6      | projectId / checkpointIds / checkpointWorkDir / sensitiveAuthorizationToken | optional       | `undefined` is fine                                                            |
+| 7        | `onChunk`                                                                   | function       | Streaming chunk callback (`BashStreamChunk`)                                   |
+| 8        | `onBrowserCommand`                                                          | async function | Browser command forwarding                                                     |
+| 9        | `onUserQuestion`                                                            | async function | User-question interaction                                                      |
+| 10       | `onAppControl`                                                              | async function | App-control commands                                                           |
+| 11       | `onRemoteWorkspaceCommand`                                                  | async function | Remote (SSH) command forwarding                                                |
+| 12       | `onTerminalCommand`                                                         | async function | **Terminal PTY command forwarding (newest callback, most commonly forgotten)** |
+| 13–15    | subAgentAllowedTools / planMode / planApproved                              | optional       | `undefined` is fine                                                            |
+
+Placeholder pattern for standalone Node scripts (see `scripts/e2e-verify-config.cjs`):
+
+```js
+const noop = () => undefined;
+const asyncNoop = async () => "";
+const result = await native.callMcpTool(
+  "config-list",
+  JSON.stringify({ scope: "imagegen" }),
+  undefined,
+  undefined,
+  undefined,
+  undefined, // projectId / checkpointIds / checkpointWorkDir / sensitiveAuthorizationToken
+  noop, // onChunk
+  asyncNoop, // onBrowserCommand
+  asyncNoop, // onUserQuestion
+  asyncNoop, // onAppControl
+  asyncNoop, // onRemoteWorkspaceCommand
+  asyncNoop, // onTerminalCommand ← required, 6 callbacks in total
+  undefined,
+  undefined,
+  undefined // subAgentAllowedTools / planMode / planApproved
+);
+// Resolves to a Promise<string> — the tool result as a JSON string
+```
+
+> If any callback is `undefined`, napi-rs tries to create a
+> `ThreadsafeFunction` from it and returns `InvalidArg` — this is an
+> argument-validation error, not a tool-logic error. The app renderer
+> (`nativeBridge`) always passes 6 real callbacks, so it is unaffected; only
+> hand-written standalone scripts need to be careful.
+
+## 7. Commit Conventions
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/),
+keeping the same style as the repository history: `type(scope): summary - extra detail`.
+
+### 7.1 Message Format
+
+A commit message consists of a **header** and an optional **body**:
+
+```text
+<type>(<scope>): <summary>
+
+<body>
+```
+
+- **Header**: one line, at most 72 characters; `type` and `scope` are lowercase,
+  `summary` is written in Chinese (keep technical terms like `N+1`, `IPC`,
+  `localStorage` in English as-is).
+- **Body**: multiple lines, explaining *why* the change was made and its impact;
+  use `-` bullets when needed. Write a body only for complex changes or breaking
+  behavior — simple changes need just the header.
+
+### 7.2 Types
+
+| type | Purpose | Example |
+| --- | --- | --- |
+| `feat` | New feature | `feat(chat): 输入草稿按会话持久化 - 切换会话不丢失输入` |
+| `fix` | Bug fix | `fix(imagegen): 模型能力校验 - 不支持多图的模型禁用参考图` |
+| `refactor` | Refactor, behavior unchanged | `refactor(sidebar): 批量删除改用批量 API - 消除 N+1` |
+| `docs` | Documentation only | `docs: 补充 Git 提交信息规范说明` |
+| `chore` | Build/deps/misc | `chore: 排除 e2e-verify-config.cjs 出版本控制` |
+| `perf` | Performance improvement | `perf(chat): 子代理查询合并为单条 SQL - 避免 N+1` |
+| `test` | Tests | `test(storage): 批量删除级联删除用例` |
+| `style` | Styling/formatting (no logic change) | `style: 统一导入排序` |
+
+### 7.3 Scope (optional)
+
+`scope` names the affected module, lowercase and short, e.g. `chat`, `sidebar`,
+`imagegen`, `storage`, `ipc`, `native`, `docs`. Omit it when the change is not
+module-specific.
+
+### 7.4 Summary Style
+
+- Start with a verb describing *what was done*, not *what it is*;
+- One commit does one thing — keep the summary aligned with the diff, no mixed changes;
+- Append motivation with ` - ` when needed, e.g.
+  `feat(chat): 输入草稿按会话持久化 - 切换会话不丢失输入`.
+
+### 7.5 Body Example
+
+```text
+fix(sidebar): 修复右键会话菜单不显示
+
+根因：关闭菜单的 document 级 contextmenu 监听用三点按钮容器判断
+目标是否在组件内，右键发生在会话行其他区域时被误判为外部点击，
+同一事件循环内菜单刚打开就被关闭（React 批处理后锚点被清空）。
+
+修复：改用 closest('.chat-item') 比较所在会话行，同一行内右键
+不关闭菜单，其它区域右键正常切换。
+```
+
+### 7.6 Before Committing
+
+- `npm run check:ts` (`tsc --noEmit`) must pass;
+- Never commit: `out/`, `release/`, `node_modules/`, `.tmp-*.cjs`, user data dirs;
+- Syncing upstream: `git fetch upstream && git merge upstream/main`, resolve conflicts locally;
+- One commit contains only logically related changes; do not mix unfinished feature files into the same commit.
+
+## Appendix: Vision Textification & Image-to-Image Reference Mechanism
+
+When the main model does not support vision ("Supports vision" off plus a
+separately configured vision model), `textify_images_in_messages` in
+`native/src/api/vision.rs` replaces `@@image:...@@` tags with text descriptions
+from the vision model (cached per-image by hash to avoid repeated vision calls
+across turns). **User messages** additionally get image-to-image guidance
+injected during textification:
+
+```text
+[The user attached N reference image(s). When the user asks to generate or edit
+an image based on them, call the imagegen-generate tool and pass the
+corresponding JSON object(s) below in its "images" parameter (image-to-image)
+— do NOT generate from the text description alone.]
+[Image #1]
+[Image description: <text description produced by the vision model>]
+[Reference image #1 for imagegen-generate: {"path":"upload/2026-08-05/a1b2c3.png","mimeType":"image/png"}]
+```
+
+Design points & conventions:
+
+- **Why `path` instead of base64**: context is scarce for text-only models — a
+  ~1MB image expands to ~340k tokens of base64. The reference block carries
+  only a relative path (a few dozen bytes); `imagegen-generate` reads the file
+  itself via `load_reference_image_from_path` in `mcp/servers/imagegen.rs`.
+- **Security boundary**: `path` accepts only relative paths with an `upload/`
+  prefix; `..` traversal and absolute paths are rejected. The renderer
+  thumbnail IPC `images:resolve-upload-image`
+  (`src/main/ipc/handlers/imageHandlers.ts`) applies the same double check
+  (prefix match + prefix re-check after normalize).
+- **User messages only**: tool results (e.g. browser screenshots) are textified
+  without reference blocks to avoid context bloat; `ChatImage.source`
+  (`api/conversation/images.rs`) records the on-disk relative path, and
+  non-persisted data-URL images fall back to inline
+  `{"data":"<base64>","mimeType":"..."}`.
+- **Numbering**: reference block numbers match the `[Image #N]` placeholders
+  one-to-one; the guidance line is injected once per message with images.
+- **History**: reference blocks replay with the context, so later turns can
+  still reference previously uploaded images.
+- **Limits**: server `MAX_IMAGES = 14` (Gemini 3 Pro Image official cap),
+  ≤20MB each; the tool description guides the model to ≤5 per call to stay
+  compatible with stricter OpenAI edits limits.
+- **Files touched**: `api/conversation/images.rs` (`source` field),
+  `api/vision.rs` (reference-block injection),
+  `mcp/servers/imagegen.rs` (`path` resolution),
+  `src/main/ipc/handlers/imageHandlers.ts` (thumbnail IPC),
+  `ImageGenToolCall.tsx` (thumbnail rendering + in-process cache).

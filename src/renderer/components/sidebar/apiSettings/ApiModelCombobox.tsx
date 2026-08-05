@@ -17,6 +17,20 @@ type ApiModelComboboxProps = {
   onChange: (value: string) => void;
   onRequestModels: () => void;
   onRetry: () => void;
+  /**
+   * Optional metadata for known models (alias / preview / deprecated badges).
+   * The list item then renders as `id` + alias + badge instead of a plain id.
+   */
+  knownModels?: Array<{
+    id: string;
+    alias?: string;
+    preview?: boolean;
+    deprecated?: boolean;
+  }>;
+  /** 已知模型徽章文案（如 "预览" / "Preview"）。 */
+  previewBadgeText?: string;
+  /** 已知模型徽章文案（如 "已弃用" / "Deprecated"）。 */
+  deprecatedBadgeText?: string;
 };
 
 const MAX_VISIBLE_MODELS = 80;
@@ -36,6 +50,9 @@ export function ApiModelCombobox({
   onChange,
   onRequestModels,
   onRetry,
+  knownModels,
+  previewBadgeText,
+  deprecatedBadgeText,
 }: ApiModelComboboxProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [isOpen, setIsOpen] = useState(false);
@@ -189,6 +206,9 @@ export function ApiModelCombobox({
                 {filteredModels.map((model, index) => {
                   const isSelected = model.id === value;
                   const isHighlighted = index === highlightedIndex;
+                  const known = knownModels?.find(
+                    (entry) => entry.id.toLowerCase() === model.id.toLowerCase()
+                  );
 
                   return (
                     <button
@@ -209,8 +229,25 @@ export function ApiModelCombobox({
                       aria-selected={isSelected}
                       title={model.id}
                     >
-                      <span className="api-model-combobox-option-name">
-                        {model.id}
+                      <span className="api-model-combobox-option-main">
+                        <span className="api-model-combobox-option-name">
+                          {model.id}
+                        </span>
+                        {known?.alias ? (
+                          <span className="api-model-combobox-option-alias">
+                            {known.alias}
+                          </span>
+                        ) : null}
+                        {known?.preview ? (
+                          <span className="api-model-combobox-badge preview">
+                            {previewBadgeText ?? "Preview"}
+                          </span>
+                        ) : null}
+                        {known?.deprecated ? (
+                          <span className="api-model-combobox-badge deprecated">
+                            {deprecatedBadgeText ?? "Deprecated"}
+                          </span>
+                        ) : null}
                       </span>
                       {isSelected && <Check size={14} />}
                     </button>

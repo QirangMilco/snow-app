@@ -19,6 +19,12 @@ import type {
   ToolAuthorizationDecision,
   ToolCallInfo,
 } from "../utils/conversationTypes";
+import type { BashStreamChunk } from "../../../../../preload";
+import {
+  DEFAULT_IMAGE_GEN_MAX_CONCURRENT,
+  IMAGE_GEN_SETTING_CODE,
+} from "../../../sidebar/imagegenSettings/constants";
+import { readImageGenSettingsJson } from "../../../sidebar/imagegenSettings/utils";
 
 export type ToolExecutionResult = {
   structuredToolResults: { name: string; callId: string; result: string }[];
@@ -80,6 +86,12 @@ export function createToolExecutor(
     toolCalls: ToolCallInfo[],
     authorizationDecisions: ToolAuthorizationDecision[]
   ): Promise<ToolExecutionResult | null> => {
+    // Per-conversation mode snapshot: the Rust write gate must see THIS
+    // session's Plan Mode, never the live global ref (another conversation
+    // toggling its modes must not weaken or strengthen this session's gate).
+    const sessionPlanMode = (key: string): boolean =>
+      ctx.sessionsRefData.current.get(key)?.planMode ??
+      planModeRef.current;
     const structuredToolResults: {
       name: string;
       callId: string;
@@ -90,30 +102,331 @@ export function createToolExecutor(
     let hookAbortMessage = "";
     const pendingHookWarnings: string[] = [];
 
-    // When the model requests multiple sub-agent activations in a single
-    // tool batch they must run concurrently, not queued one after another.
-    // Pre-start every approved sub-agent activation up front and store the
-    // pending promises keyed by tool index; the main loop below simply awaits
-    // the already-running promise when it reaches each sub-agent tool call.
-    const preStartedSubAgents = new Map<number, Promise<string>>();
-    if (effectiveKey !== PENDING_SESSION_KEY) {
-      const subAgentIndices: number[] = [];
-      for (let i = 0; i < toolCalls.length; i++) {
-        if (
-          toolCalls[i].name === "sub-agents-activate" &&
-          authorizationDecisions[i].status !== "rejected" &&
-          !validateToolCall(toolCalls[i])
-        ) {
-          subAgentIndices.push(i);
+    // Shared streaming-chunk handler factory used by both the sequential
+    // path and the parallel pre-start path, so concurrent tool calls
+    // stream into their own card independently: interactive-session /
+    // tool-execution ids, terminal stdout/stderr and imagegen
+    // partial-image previews are routed by matching the tool call.
+    const buildToolChunkHandler =
+      (toolCall: ToolCallInfo) => (chunk: BashStreamChunk): void => {
+        if (!chunk.data) {
+          return;
         }
+        if (
+          chunk.stream === "interactive_session" ||
+          chunk.stream === "tool_execution"
+        ) {
+          ctx.updateSessionMessages(
+            effectiveKey,
+            (currentMessages) =>
+              currentMessages.map((currentMessage) => {
+                if (currentMessage.id !== currentAssistantMessageId) {
+                  return currentMessage;
+                }
+
+                return {
+                  ...currentMessage,
+                  toolCalls: updateFirstMatchingToolCall(
+                    currentMessage.toolCalls,
+                    toolCall,
+                    ["pending", "running"],
+                    (currentToolCall) => ({
+                      ...currentToolCall,
+                      interactiveSessionId:
+                        chunk.stream === "interactive_session"
+                          ? chunk.data
+                          : currentToolCall.interactiveSessionId,
+                      toolExecutionId:
+                        chunk.stream === "tool_execution"
+                          ? chunk.data
+                          : currentToolCall.toolExecutionId,
+                    })
+                  ),
+                };
+              })
+          );
+          return;
+        }
+
+        ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+          currentMessages.map((currentMessage) => {
+            if (currentMessage.id !== currentAssistantMessageId) {
+              return currentMessage;
+            }
+
+            return {
+              ...currentMessage,
+              toolCalls: updateFirstMatchingToolCall(
+                currentMessage.toolCalls,
+                toolCall,
+                ["pending", "running"],
+                (currentToolCall) => {
+                  if (
+                    chunk.stream === "stdout" ||
+                    chunk.stream === "stderr"
+                  ) {
+                    return {
+                      ...currentToolCall,
+                      streamingStdout:
+                        chunk.stream === "stdout"
+                          ? `${currentToolCall.streamingStdout ?? ""}${
+                              chunk.data
+                            }`
+                          : currentToolCall.streamingStdout,
+                      streamingStderr:
+                        chunk.stream === "stderr"
+                          ? `${currentToolCall.streamingStderr ?? ""}${
+                              chunk.data
+                            }`
+                          : currentToolCall.streamingStderr,
+                    };
+                  }
+
+                  // 生图工具的流式预览：chunk.data 为
+                  // {"type":"partial_image","index":N,"mimeType":"...","data":"<base64>"}
+                  if (chunk.stream === "imagegen") {
+                    try {
+                      const parsed: unknown = JSON.parse(chunk.data);
+                      if (
+                        typeof parsed === "object" &&
+                        parsed !== null &&
+                        !Array.isArray(parsed) &&
+                        (parsed as Record<string, unknown>).type ===
+                          "partial_image" &&
+                        typeof (parsed as Record<string, unknown>).data ===
+                          "string" &&
+                        typeof (parsed as Record<string, unknown>).mimeType ===
+                          "string" &&
+                        typeof (parsed as Record<string, unknown>).index ===
+                          "number"
+                      ) {
+                        const record = parsed as Record<
+                          string,
+                          unknown
+                        >;
+                        const incoming = {
+                          index: record.index as number,
+                          mimeType: record.mimeType as string,
+                          data: record.data as string,
+                        };
+                        const existing =
+                          currentToolCall.streamingImages ?? [];
+                        const next = [
+                          ...existing.filter(
+                            (image) => image.index !== incoming.index
+                          ),
+                          incoming,
+                        ].sort((a, b) => a.index - b.index);
+                        return {
+                          ...currentToolCall,
+                          streamingImages: next,
+                        };
+                      }
+                    } catch {
+                      // 忽略无法解析的流式数据
+                    }
+                  }
+
+                  return currentToolCall;
+                }
+              ),
+            };
+          })
+        );
+      };
+
+    // When the model requests multiple parallelizable tool calls in a single
+    // tool batch (sub-agent activations, image generations) they must run
+    // concurrently, not queued one after another. Pre-start every approved
+    // call up front and store the pending promises keyed by tool index; the
+    // main loop below simply awaits the already-running promise when it
+    // reaches each pre-started tool call.
+    //
+    // beforeToolCall hooks are intentionally skipped for parallel sub-agents
+    // — the activation runs its own beforeSubAgentStart / onSubAgentComplete
+    // lifecycle hooks. Image generation keeps the normal hook semantics: its
+    // beforeToolCall hook runs during pre-start (before the request is
+    // fired) and its afterToolCall hook runs in the main loop when the
+    // result is collected. runHook is a cheap no-op when no rules are
+    // configured.
+    const preStartedParallelTools = new Map<
+      number,
+      { promise: Promise<string>; afterHookEligible: boolean }
+    >();
+
+    // 同一批次中生图请求的最大并发数（滑动窗口）：预启动时最多同时
+    // 发起 maxConcurrentImageGen 个请求，其余进入等待队列；每完成一个，
+    // 队列头部的下一个立即启动，任何时刻在飞的生图请求不超过该值。
+    // 生图服务商（OpenAI gpt-image / Gemini Imagen）都有速率限制，且
+    // 每张图的 base64 结果体积很大，无上限并发容易触发限流或造成内存
+    // 压力。子代理激活不受此限制（保持原有行为）。
+    const pendingImageGenQueue: number[] = [];
+    let activeImageGenCount = 0;
+    const preStartCheckpointIds =
+      ctx.sessionsRefData.current.get(effectiveKey)?.checkpointIds ?? [];
+
+    // 启动一个并行工具：置为 running、执行生图 beforeToolCall hook、
+    // 立即发起请求（不 await）。返回是否成功启动（hook 中止返回 false，
+    // 调用方应停止继续启动）。
+    const startParallelTool = async (
+      idx: number
+    ): Promise<boolean> => {
+      const parallelToolCall = toolCalls[idx];
+      const isSubAgent = parallelToolCall.name === "sub-agents-activate";
+
+      // Mark running immediately so each card shows live progress while
+      // the others are still working.
+      ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+        currentMessages.map((currentMessage) => {
+          if (currentMessage.id !== currentAssistantMessageId) {
+            return currentMessage;
+          }
+          return {
+            ...currentMessage,
+            toolCalls: updateFirstMatchingToolCall(
+              currentMessage.toolCalls,
+              parallelToolCall,
+              "pending",
+              (currentToolCall) => ({
+                ...currentToolCall,
+                status: "running" as const,
+                startedAt: Date.now(),
+              })
+            ),
+          };
+        })
+      );
+
+      let afterHookEligible = false;
+      if (!isSubAgent) {
+        // Run the beforeToolCall hook for image generation before the
+        // request is fired; a decision gate or abort prevents the start.
+        try {
+          const beforeHookContext = JSON.stringify({
+            toolName: parallelToolCall.name,
+            args: JSON.parse(parallelToolCall.arguments),
+            cwd: sessionDirPath ?? "",
+          });
+          const beforeHookResult = await runHook(
+            "beforeToolCall",
+            sessionDirId ?? undefined,
+            beforeHookContext
+          );
+          if (beforeHookResult) {
+            const { outcome } = beforeHookResult;
+            if (outcome.kind === "needsDecision") {
+              const approved = await awaitHookDecision(
+                effectiveKey,
+                currentAssistantMessageId,
+                beforeHookResult.record
+              );
+              if (isRunCancelled(effectiveKey)) {
+                return false;
+              }
+              if (!approved) {
+                hookAborted = true;
+                hookAbortMessage = outcome.message;
+              }
+            } else {
+              ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+                appendHookExecutionToMessage(
+                  currentMessages,
+                  beforeHookResult.record,
+                  currentAssistantMessageId
+                )
+              );
+            }
+
+            if (outcome.kind === "abort") {
+              hookAborted = true;
+              hookAbortMessage = outcome.message;
+            }
+            if (outcome.kind === "warn") {
+              pendingHookWarnings.push(outcome.message);
+            }
+          }
+        } catch {
+          // Hook execution failed — continue with the parallel start.
+        }
+
+        if (hookAborted) {
+          const decisionAbortResult = JSON.stringify({
+            success: false,
+            error: "HOOK_DECISION_REJECTED",
+            message: hookAbortMessage,
+          });
+          ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+            currentMessages.map((currentMessage) =>
+              currentMessage.id === currentAssistantMessageId
+                ? {
+                    ...currentMessage,
+                    toolCalls: updateFirstMatchingToolCall(
+                      currentMessage.toolCalls,
+                      parallelToolCall,
+                      ["pending", "running"],
+                      (currentToolCall) => ({
+                        ...currentToolCall,
+                        status: "error" as const,
+                        result: decisionAbortResult,
+                      })
+                    ),
+                  }
+                : currentMessage
+            )
+          );
+          // Store the settled error so the main loop can collect it in
+          // index order; tools after this index are never started and the
+          // sequential path marks them as aborted when it sees the flag.
+          preStartedParallelTools.set(idx, {
+            promise: Promise.resolve(decisionAbortResult),
+            afterHookEligible: false,
+          });
+          return false;
+        }
+        afterHookEligible = true;
       }
 
-      if (subAgentIndices.length > 1) {
-        for (const idx of subAgentIndices) {
-          const parallelToolCall = toolCalls[idx];
+      // Fire without awaiting. The wrapper flips the tool call to
+      // "completed" the instant it settles, so a fast call stops showing
+      // a spinner in its header even while the sequential loop below is
+      // still awaiting an earlier, slower one. When an image generation
+      // settles, its freed concurrency slot immediately starts the next
+      // queued image generation (sliding window).
+      preStartedParallelTools.set(idx, {
+        afterHookEligible,
+        promise: (async () => {
+          let parallelResult: string;
+          try {
+            if (isSubAgent) {
+              parallelResult = await executeSubAgentActivation(
+                parallelToolCall.arguments,
+                effectiveKey,
+                sessionDirId ?? ctx.directoryId ?? "",
+                parallelToolCall.interactionId
+              );
+            } else {
+              parallelResult = await window.snow.callMcpTool(
+                parallelToolCall.name,
+                parallelToolCall.arguments,
+                sessionDirId,
+                preStartCheckpointIds,
+                preStartCheckpointIds.length > 0
+                  ? sessionDirPath
+                  : undefined,
+                undefined,
+                buildToolChunkHandler(parallelToolCall),
+                parallelToolCall.interactionId,
+                undefined,
+                sessionPlanMode(effectiveKey),
+                planApprovedSessionKeysRef.current.has(effectiveKey)
+              );
+            }
+          } catch (err) {
+            parallelResult = JSON.stringify({
+              error: getErrorMessage(err),
+            });
+          }
 
-          // Mark running immediately so each sub-agent card shows live
-          // progress while the others are still working.
           ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
             currentMessages.map((currentMessage) => {
               if (currentMessage.id !== currentAssistantMessageId) {
@@ -124,66 +437,81 @@ export function createToolExecutor(
                 toolCalls: updateFirstMatchingToolCall(
                   currentMessage.toolCalls,
                   parallelToolCall,
-                  "pending",
+                  ["pending", "running"],
                   (currentToolCall) => ({
                     ...currentToolCall,
-                    status: "running" as const,
-                    startedAt: Date.now(),
+                    status: "completed" as const,
+                    result: parallelResult,
                   })
                 ),
               };
             })
           );
 
-          // Fire without awaiting. beforeToolCall hooks are intentionally
-          // skipped for parallel sub-agents — the activation runs its own
-          // beforeSubAgentStart / onSubAgentComplete lifecycle hooks.
-          //
-          // The wrapper flips the tool call to "completed" the instant this
-          // sub-agent settles, so a fast sub-agent stops showing a spinner in
-          // its header even while the sequential loop below is still awaiting
-          // an earlier, slower one.
-          preStartedSubAgents.set(
-            idx,
-            (async () => {
-              let parallelResult: string;
-              try {
-                parallelResult = await executeSubAgentActivation(
-                  parallelToolCall.arguments,
-                  effectiveKey,
-                  sessionDirId ?? ctx.directoryId ?? "",
-                  parallelToolCall.interactionId
-                );
-              } catch (err) {
-                parallelResult = JSON.stringify({
-                  error: getErrorMessage(err),
-                });
+          if (!isSubAgent) {
+            activeImageGenCount--;
+            // 腾出的并发槽位立即补位：启动等待队列中的下一个生图请求。
+            while (pendingImageGenQueue.length > 0) {
+              const nextIdx = pendingImageGenQueue.shift()!;
+              if (!(await startParallelTool(nextIdx))) {
+                // Hook 中止：不再启动剩余队列。
+                break;
               }
+              activeImageGenCount++;
+            }
+          }
 
-              ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
-                currentMessages.map((currentMessage) => {
-                  if (currentMessage.id !== currentAssistantMessageId) {
-                    return currentMessage;
-                  }
-                  return {
-                    ...currentMessage,
-                    toolCalls: updateFirstMatchingToolCall(
-                      currentMessage.toolCalls,
-                      parallelToolCall,
-                      ["pending", "running"],
-                      (currentToolCall) => ({
-                        ...currentToolCall,
-                        status: "completed" as const,
-                        result: parallelResult,
-                      })
-                    ),
-                  };
-                })
-              );
+          return parallelResult;
+        })(),
+      });
 
-              return parallelResult;
-            })()
-          );
+      return true;
+    };
+
+    const parallelIndices: number[] = [];
+    for (let i = 0; i < toolCalls.length; i++) {
+      const name = toolCalls[i].name;
+      const isParallelizable =
+        name === "sub-agents-activate" || name === "imagegen-generate";
+      const skipPendingSubAgent =
+        name === "sub-agents-activate" && effectiveKey === PENDING_SESSION_KEY;
+      if (
+        isParallelizable &&
+        !skipPendingSubAgent &&
+        authorizationDecisions[i].status !== "rejected" &&
+        !validateToolCall(toolCalls[i])
+      ) {
+        parallelIndices.push(i);
+      }
+    }
+
+    if (parallelIndices.length > 1) {
+      // 从生图设置读取用户配置的最大并发生成数（1-8，设置面板可调）；
+      // 读取失败或旧数据缺失时回退默认值。
+      let maxConcurrentImageGen = DEFAULT_IMAGE_GEN_MAX_CONCURRENT;
+      try {
+        const raw = await window.snow.getSystemSettingValue(
+          IMAGE_GEN_SETTING_CODE
+        );
+        maxConcurrentImageGen =
+          readImageGenSettingsJson(raw).maxConcurrentImages;
+      } catch {
+        // 设置读取失败时保持默认值，不阻塞生图流程。
+      }
+
+      // 预启动：子代理全部立即启动（保持原有行为）；生图最多同时
+      // 启动 maxConcurrentImageGen 个，其余排队，完成一个补一个。
+      for (const idx of parallelIndices) {
+        const isSubAgent = toolCalls[idx].name === "sub-agents-activate";
+        if (isSubAgent || activeImageGenCount < maxConcurrentImageGen) {
+          if (!(await startParallelTool(idx))) {
+            break;
+          }
+          if (!isSubAgent) {
+            activeImageGenCount++;
+          }
+        } else {
+          pendingImageGenQueue.push(idx);
         }
       }
     }
@@ -229,13 +557,74 @@ export function createToolExecutor(
         continue;
       }
 
-      // A sub-agent that was pre-started for parallel execution. Its wrapper
-      // already flipped the tool-call status to "completed" the moment it
-      // settled (so the header does not keep spinning while the loop waits on
-      // a slower sibling); here we only collect its result for the model. The
-      // normal sequential path (hooks, validation, callMcpTool) is bypassed.
-      if (preStartedSubAgents.has(toolIndex)) {
-        const parallelResult = await preStartedSubAgents.get(toolIndex)!;
+      // A tool call that was pre-started for parallel execution (sub-agent
+      // activation / image generation). Its wrapper already flipped the
+      // tool-call status to "completed" the moment it settled (so the header
+      // does not keep spinning while the loop waits on a slower sibling);
+      // here we only collect its result for the model. The normal sequential
+      // path (validation, callMcpTool) is bypassed, except that image
+      // generation keeps its afterToolCall hook.
+      if (preStartedParallelTools.has(toolIndex)) {
+        const { promise, afterHookEligible } =
+          preStartedParallelTools.get(toolIndex)!;
+        let parallelResult = await promise;
+
+        if (afterHookEligible && parallelResult !== undefined) {
+          try {
+            const afterHookContext = JSON.stringify({
+              toolName: toolCall.name,
+              args: JSON.parse(toolCall.arguments),
+              result: JSON.parse(parallelResult),
+              cwd: sessionDirPath ?? "",
+            });
+            const afterHookResult = await runHook(
+              "afterToolCall",
+              sessionDirId ?? undefined,
+              afterHookContext
+            );
+            if (afterHookResult) {
+              const { outcome } = afterHookResult;
+
+              if (outcome.kind === "needsDecision") {
+                const approved = await awaitHookDecision(
+                  effectiveKey,
+                  currentAssistantMessageId,
+                  afterHookResult.record
+                );
+                if (isRunCancelled(effectiveKey)) {
+                  return null;
+                }
+                if (!approved) {
+                  hookAborted = true;
+                  hookAbortMessage = outcome.message;
+                  break;
+                }
+              } else {
+                ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+                  appendHookExecutionToMessage(
+                    currentMessages,
+                    afterHookResult.record,
+                    currentAssistantMessageId
+                  )
+                );
+              }
+
+              if (outcome.kind === "abort") {
+                hookAborted = true;
+                hookAbortMessage = outcome.message;
+                break;
+              }
+
+              if (outcome.kind === "warn") {
+                pendingHookWarnings.push(outcome.message);
+              } else if (outcome.kind === "pass" && outcome.context) {
+                parallelResult = `${parallelResult}\n\n[Hook Context]\n${outcome.context}`;
+              }
+            }
+          } catch {
+            // Hook execution failed — keep original result
+          }
+        }
 
         structuredToolResults.push({
           name: toolCall.name,
@@ -500,83 +889,10 @@ export function createToolExecutor(
                   checkpointIds,
                   checkpointIds.length > 0 ? sessionDirPath : undefined,
                   sensitiveAuthorizationToken,
-                  (chunk) => {
-                    if (!chunk.data) {
-                      return;
-                    }
-                    if (
-                      chunk.stream === "interactive_session" ||
-                      chunk.stream === "tool_execution"
-                    ) {
-                      ctx.updateSessionMessages(
-                        effectiveKey,
-                        (currentMessages) =>
-                          currentMessages.map((currentMessage) => {
-                            if (
-                              currentMessage.id !== currentAssistantMessageId
-                            ) {
-                              return currentMessage;
-                            }
-
-                            return {
-                              ...currentMessage,
-                              toolCalls: updateFirstMatchingToolCall(
-                                currentMessage.toolCalls,
-                                toolCall,
-                                ["pending", "running"],
-                                (currentToolCall) => ({
-                                  ...currentToolCall,
-                                  interactiveSessionId:
-                                    chunk.stream === "interactive_session"
-                                      ? chunk.data
-                                      : currentToolCall.interactiveSessionId,
-                                  toolExecutionId:
-                                    chunk.stream === "tool_execution"
-                                      ? chunk.data
-                                      : currentToolCall.toolExecutionId,
-                                })
-                              ),
-                            };
-                          })
-                      );
-                      return;
-                    }
-
-                    ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
-                      currentMessages.map((currentMessage) => {
-                        if (currentMessage.id !== currentAssistantMessageId) {
-                          return currentMessage;
-                        }
-
-                        return {
-                          ...currentMessage,
-                          toolCalls: updateFirstMatchingToolCall(
-                            currentMessage.toolCalls,
-                            toolCall,
-                            ["pending", "running"],
-                            (currentToolCall) => ({
-                              ...currentToolCall,
-                              streamingStdout:
-                                chunk.stream === "stdout"
-                                  ? `${currentToolCall.streamingStdout ?? ""}${
-                                      chunk.data
-                                    }`
-                                  : currentToolCall.streamingStdout,
-                              streamingStderr:
-                                chunk.stream === "stderr"
-                                  ? `${currentToolCall.streamingStderr ?? ""}${
-                                      chunk.data
-                                    }`
-                                  : currentToolCall.streamingStderr,
-                            })
-                          ),
-                        };
-                      })
-                    );
-                  },
+                  buildToolChunkHandler(toolCall),
                   toolCall.interactionId,
                   undefined,
-                  planModeRef.current,
+                  sessionPlanMode(effectiveKey),
                   planApprovedSessionKeysRef.current.has(effectiveKey)
                 );
 
@@ -750,7 +1066,7 @@ export function createToolExecutor(
       // Only the dedicated Plan Mode tool's structured approved=true result
       // can unlock Rust filesystem writes for this conversation's task.
       if (
-        planModeRef.current &&
+        sessionPlanMode(effectiveKey) &&
         !planApprovedSessionKeysRef.current.has(effectiveKey) &&
         isStructuredPlanApproval(toolCall.name, result!)
       ) {

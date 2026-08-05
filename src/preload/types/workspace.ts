@@ -48,3 +48,15 @@ export type FileContentResult = {
   encoding: string;
   size: number;
 };
+
+/**
+ * 从外部拖入编辑区的文件解析结果。
+ *
+ * path 为磁盘绝对路径（由 webUtils.getPathForFile 解析），
+ * isDirectory 标记该路径是否为目录（由主进程 fs.stat 查询）。
+ * 用于在渲染层统一生成文件 chip 或图片 chip。
+ */
+export type DroppedPathEntry = {
+  path: string;
+  isDirectory: boolean;
+};

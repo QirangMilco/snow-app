@@ -338,6 +338,16 @@ fn public_server_names(configs: &[McpServerConfigRecord]) -> HashMap<String, Str
     assign_unique_names(candidates, BUILTIN_SERVER_NAMES)
 }
 
+/// 返回全部 MCP 服务器配置的公开名映射（server_id -> public_name），
+/// 已处理 sanitize 冲突与内置名保留，与 `discover_tools` 的命名一致。
+/// 供 config 服务器静态校验子代理 toolsJson 中的外部工具名前缀
+/// （不实际连接服务器，因此只校验服务器归属与启用状态）。
+pub(crate) fn public_server_name_map(
+    configs: &[McpServerConfigRecord],
+) -> HashMap<String, String> {
+    public_server_names(configs)
+}
+
 fn public_tool_names(tools: &[RemoteMcpTool]) -> HashMap<String, String> {
     let candidates = tools
         .iter()

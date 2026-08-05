@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, Eye, FilePlus2, FilePen } from "lucide-react";
+import { ArrowLeft, Eye, FileMinus2, FilePlus2, FilePen } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import { Modal } from "../../../common/Modal";
 import { getFileTypeIcon } from "../../../../utils/fileIcons";
@@ -17,6 +17,8 @@ import type { FileChangeRecord } from "../../chatMessages/utils/conversationType
 type FileChangesPanelProps = {
   /** Whether the panel is visible. Controlled by the /changes command. */
   open: boolean;
+  /** Final checkpoint-backed changes when available. */
+  changesOverride?: FileChangeRecord[];
   onClose: () => void;
 };
 
@@ -39,6 +41,7 @@ type FileChangesPanelProps = {
  */
 export const FileChangesPanel = ({
   open,
+  changesOverride,
   onClose,
 }: FileChangesPanelProps): React.JSX.Element | null => {
   const { t } = useI18n();
@@ -47,6 +50,9 @@ export const FileChangesPanel = ({
   const [isDiffView, setIsDiffView] = useState(false);
 
   const changes = useMemo(() => {
+    if (changesOverride) {
+      return changesOverride;
+    }
     if (!activeConversationId) {
       return [];
     }
@@ -54,7 +60,7 @@ export const FileChangesPanel = ({
       fileChangeStats,
       activeConversationId
     );
-  }, [activeConversationId, fileChangeStats]);
+  }, [activeConversationId, changesOverride, fileChangeStats]);
 
   const summary = useMemo(() => {
     const mainCount = changes.filter(
@@ -75,7 +81,12 @@ export const FileChangesPanel = ({
         .filter((change) => change.diff?.patch)
         .map((change) => ({
           path: change.filePath,
-          changeType: change.kind === "create" ? "added" : "modified",
+          changeType:
+            change.kind === "create"
+              ? "added"
+              : change.kind === "delete"
+                ? "deleted"
+                : "modified",
           content: change.diff?.patch ?? "",
           isBinary: change.diff?.isBinary ?? false,
         })),
@@ -194,6 +205,8 @@ export const FileChangesPanel = ({
                   <span className="file-changes-row-icon" aria-hidden="true">
                     {change.kind === "create" ? (
                       <FilePlus2 size={13} strokeWidth={2} />
+                    ) : change.kind === "delete" ? (
+                      <FileMinus2 size={13} strokeWidth={2} />
                     ) : (
                       <FilePen size={13} strokeWidth={2} />
                     )}
@@ -210,7 +223,9 @@ export const FileChangesPanel = ({
                   <span className={`file-changes-kind is-${change.kind}`}>
                     {change.kind === "create"
                       ? t("chat.fileChanges.kindCreate")
-                      : t("chat.fileChanges.kindEdit")}
+                      : change.kind === "delete"
+                        ? t("chat.fileChanges.kindDelete")
+                        : t("chat.fileChanges.kindEdit")}
                   </span>
                   <span
                     className={`file-changes-agent${

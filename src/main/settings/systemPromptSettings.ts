@@ -84,6 +84,7 @@ const toNativeInput = (
   content: prompt.content,
   isActive,
   sortOrder,
+  scope: "global",
 });
 
 const persistSystemPromptConfig = async (
@@ -144,6 +145,8 @@ export const normalizeSystemPromptItem = (
   const isActive = toBoolean(source.isActive, false);
   const rawSortOrder = Number(source.sortOrder ?? 0);
   const sortOrder = Number.isInteger(rawSortOrder) ? rawSortOrder : 0;
+  const scope = source.scope === "project" ? "project" : "global";
+  const projectId = toText(source.projectId).trim();
 
   return {
     promptId: promptId || String(Date.now()),
@@ -151,5 +154,7 @@ export const normalizeSystemPromptItem = (
     content,
     isActive,
     sortOrder,
+    scope,
+    ...(scope === "project" && projectId ? { projectId } : {}),
   };
 };

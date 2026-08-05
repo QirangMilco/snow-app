@@ -33,6 +33,7 @@ type RecurringMode = "interval" | "daily";
 
 type ScheduledTasksModalProps = {
   open: boolean;
+  directoryId: string;
   onClose: () => void;
 };
 
@@ -112,6 +113,7 @@ const toLocalDateTimeInput = (ms: number): string => {
 
 export function ScheduledTasksModal({
   open,
+  directoryId,
   onClose,
 }: ScheduledTasksModalProps): React.JSX.Element {
   const { t } = useI18n();
@@ -123,7 +125,7 @@ export function ScheduledTasksModal({
     togglePauseTask,
     runTaskNow,
     isExecutorReady,
-  } = useScheduledTasks();
+  } = useScheduledTasks(directoryId);
 
   // Form state
   const [name, setName] = useState("");
@@ -194,6 +196,10 @@ export function ScheduledTasksModal({
 
   const handleCreate = useCallback(async (): Promise<void> => {
     setFormError(null);
+    if (!directoryId) {
+      setFormError(t("scheduledTask.errorNoProject", { defaultValue: "No active project directory" }));
+      return;
+    }
     const trimmedName = name.trim();
     const trimmedPrompt = prompt.trim();
     if (!trimmedName) {
@@ -235,7 +241,7 @@ export function ScheduledTasksModal({
     } finally {
       setIsCreating(false);
     }
-  }, [name, prompt, buildSchedule, createTask, t]);
+  }, [directoryId, name, prompt, buildSchedule, createTask, t]);
 
   const confirmDelete = useCallback((): void => {
     const target = deleteTarget;
@@ -620,7 +626,7 @@ export function ScheduledTasksModal({
 
             <button
               className="scheduled-tasks-create-btn"
-              disabled={isCreating}
+              disabled={isCreating || !directoryId}
               onClick={() => void handleCreate()}
               type="button"
             >

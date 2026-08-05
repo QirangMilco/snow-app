@@ -1,8 +1,19 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MessageSquare } from "lucide-react";
+import {
+  FileText,
+  GitCommitHorizontal,
+  GitCompare,
+  MessageSquare,
+} from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import type { UserMessageSummary } from "../../../../../preload";
+import {
+  formatLinesStr,
+  parseContentSegments,
+  type ContentSegment,
+} from "../../chatInput/fileTagUtils";
+import { getFileTypeIcon } from "../../../../utils/fileIcons";
 
 type RefValue<T> = { current: T };
 
@@ -36,15 +47,166 @@ type UserMessageRailProps = {
   isUserScrollIntentRef: RefValue<boolean>;
 };
 
-/** Extract a plain-text summary from a user message's content, stripping file
- *  tags and image data so the rail shows only human-readable text. */
-const extractTextSummary = (content: string): string => {
-  const withoutFileTags = content.replace(/@@file:[^@]+@@/g, "");
-  const withoutImages = withoutFileTags.replace(
-    /data:image\/[^;]+;base64,[^\s)]+/g,
-    "[image]"
-  );
-  return withoutImages.trim();
+/** Build a plain-text summary from a user message's content, stripping
+ *  tags and image data so the rail's tooltip and fallback text show only
+ *  human-readable content. Tag chips are rendered separately by
+ *  renderRailSegments. */
+const buildPlainTextSummary = (content: string): string => {
+  const segments = parseContentSegments(content);
+  const parts: string[] = [];
+  for (const segment of segments) {
+    if (segment.type === "text") {
+      const text = segment.content.replace(
+        /data:image\/[^;]+;base64,[^\s)]+/g,
+        "[image]"
+      );
+      const trimmed = text.trim();
+      if (trimmed) {
+        parts.push(trimmed);
+      }
+    } else if (segment.type === "image") {
+      parts.push(`[${segment.tag.name}]`);
+    } else if (segment.type === "commit") {
+      parts.push(segment.tag.shortHash);
+    } else if (segment.type === "change") {
+      const lastSep = Math.max(
+        segment.tag.path.lastIndexOf("/"),
+        segment.tag.path.lastIndexOf("\\")
+      );
+      parts.push(lastSep === -1 ? segment.tag.path : segment.tag.path.slice(lastSep + 1));
+    } else if (segment.type === "text-snippet") {
+      parts.push(segment.tag.summary);
+    } else {
+      const { tag } = segment;
+      const linesStr =
+        !tag.isDirectory && tag.lines && tag.lines.length > 0
+          ? formatLinesStr(tag.lines)
+          : "";
+      parts.push(linesStr ? `${tag.name}:${linesStr}` : tag.name);
+    }
+  }
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+};
+
+/** Render content segments as inline chips inside the rail popover item.
+ *  Mirrors UserMessage/PendingMessages chip rendering but without the
+ *  hover-preview interactions (the popover is already a transient
+ *  surface). Uses the shared user-message-file-chip styles. */
+const renderRailSegments = (content: string): React.ReactNode => {
+  const segments = parseContentSegments(content);
+  return segments.map((segment: ContentSegment, index: number) => {
+    if (segment.type === "text") {
+      return <span key={index}>{segment.content}</span>;
+    }
+
+    if (segment.type === "image") {
+      const imgIndex = segment.tag.index ?? 0;
+      const imgDisplayName =
+        imgIndex > 0 ? `${segment.tag.name} #${imgIndex}` : segment.tag.name;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip image-chip"
+          title={segment.tag.name}
+        >
+          {getFileTypeIcon(segment.tag.name, false, false, {
+            size: 12,
+            className: "user-message-file-chip-icon",
+          })}
+          <span className="user-message-file-chip-name">{imgDisplayName}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "commit") {
+      const chipTitle = `${segment.tag.shortHash} ${segment.tag.message} (${segment.tag.author}, ${segment.tag.date})`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip commit-chip"
+          title={chipTitle}
+        >
+          <GitCommitHorizontal
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#f05032" }}
+          />
+          <span className="user-message-file-chip-name">
+            {segment.tag.shortHash}
+          </span>
+        </span>
+      );
+    }
+
+    if (segment.type === "change") {
+      const lastSep = Math.max(
+        segment.tag.path.lastIndexOf("/"),
+        segment.tag.path.lastIndexOf("\\")
+      );
+      const changeName =
+        lastSep === -1
+          ? segment.tag.path
+          : segment.tag.path.slice(lastSep + 1);
+      const chipTitle = `${
+        segment.tag.section === "staged" ? "Staged" : "Unstaged"
+      } ${segment.tag.status} ${segment.tag.path}`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip change-chip"
+          title={chipTitle}
+        >
+          <GitCompare
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#f59e0b" }}
+          />
+          <span className="user-message-file-chip-name">{changeName}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "text-snippet") {
+      const snippetTitle = `${segment.tag.summary} (${segment.tag.charCount} chars)`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip text-snippet-chip"
+          title={snippetTitle}
+        >
+          <FileText
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#6c757d" }}
+          />
+          <span className="user-message-file-chip-name">
+            {segment.tag.summary}
+          </span>
+        </span>
+      );
+    }
+
+    const { tag } = segment;
+    const linesStr =
+      !tag.isDirectory && tag.lines && tag.lines.length > 0
+        ? formatLinesStr(tag.lines)
+        : "";
+    const fileDisplayName = linesStr ? `${tag.name}:${linesStr}` : tag.name;
+    const fileChipTitle = linesStr ? `${tag.path}:${linesStr}` : tag.path;
+    return (
+      <span
+        key={index}
+        className="user-message-file-chip"
+        title={fileChipTitle}
+      >
+        {getFileTypeIcon(tag.name, tag.isDirectory, false, {
+          size: 12,
+          className: "user-message-file-chip-icon",
+        })}
+        <span className="user-message-file-chip-name">{fileDisplayName}</span>
+      </span>
+    );
+  });
 };
 
 /** Find the DOM element for a given message id. The VirtualizedMessage
@@ -435,13 +597,14 @@ export const UserMessageRail = memo(
               </div>
               <div className="user-message-rail-popover-list">
                 {userMessages.map((msg, index) => {
-                  const summary = extractTextSummary(msg.content);
-                  const display =
-                    summary.length > 0
-                      ? summary.length > 64
-                        ? `${summary.slice(0, 64)}...`
-                        : summary
-                      : `#${index + 1}`;
+                  const summary = buildPlainTextSummary(msg.content);
+                  const hasChips =
+                    msg.content.includes("@@file:") ||
+                    msg.content.includes("@@dir:") ||
+                    msg.content.includes("@@image:") ||
+                    msg.content.includes("@@commit:") ||
+                    msg.content.includes("@@change:") ||
+                    msg.content.includes("@@text-snippet:");
                   const isVisible = visibleUserIndices.has(index);
                   return (
                     <button
@@ -455,7 +618,13 @@ export const UserMessageRail = memo(
                         {index + 1}
                       </span>
                       <span className="user-message-rail-popover-item-text">
-                        {display}
+                        {hasChips
+                          ? renderRailSegments(msg.content)
+                          : summary.length > 0
+                            ? summary.length > 64
+                              ? `${summary.slice(0, 64)}...`
+                              : summary
+                            : `#${index + 1}`}
                       </span>
                     </button>
                   );

@@ -11,6 +11,10 @@ pub struct ChatImage {
     pub media_type: String,
     pub data: String,
     pub data_url: String,
+    /// 磁盘相对路径（相对数据库文件所在目录），例如 `upload/2026-07-25/hash.png`。
+    /// 消息持久化时内联 base64 会被写入 upload 目录、标签改为相对路径；
+    /// 仍以内联 data URL 形式存在（未持久化）的图片此字段为 None。
+    pub source: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -102,6 +106,7 @@ fn parse_image_tag_value(value: &str, database_path: &Path) -> Result<Option<Cha
         media_type,
         data,
         data_url,
+        source: Some(relative_path.to_string()),
     }))
 }
 
@@ -126,6 +131,7 @@ fn parse_base64_image_data_url(data_url: &str) -> Option<ChatImage> {
         media_type: media_type.to_string(),
         data: data.to_string(),
         data_url: value.to_string(),
+        source: None,
     })
 }
 

@@ -200,7 +200,7 @@ export const ProjectSkillsPanel = ({
                     </small>
                   </div>
                   <label
-                    className="project-sensitive-command-switch"
+                    className="toggle-switch"
                     title={
                       skill.enabled
                         ? t("projectSkills.disableForProject")
@@ -215,12 +215,13 @@ export const ProjectSkillsPanel = ({
                       }
                       checked={skill.enabled}
                       disabled={pendingSkillIds.has(skill.id)}
+                      hidden
                       onChange={(event) =>
                         void toggleSkill(skill, event.target.checked)
                       }
                       type="checkbox"
                     />
-                    <span aria-hidden="true" />
+                    <span className="toggle-slider" />
                   </label>
                 </article>
               ))}

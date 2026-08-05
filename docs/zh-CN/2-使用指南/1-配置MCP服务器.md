@@ -107,8 +107,23 @@ HTTP 服务器示例（value 中服务器对象）：
 > - 每次写入前自动备份原文件到 `~/.snow/.config-backups/`（保留最近 10 份），
 >   写入采用原子替换，配置损坏可随时恢复。
 >
-> **Windows 路径注意**：JSON 中的反斜杠必须写成 `\\`，否则 `\f`、`\n`、
-> `\v` 会被当作转义序列，导致服务器启动失败。
+> **Windows 路径注意**：JSON 中的反斜杠必须写成 `\\\\`，否则 `\\f`、`\\n`、
+> `\\v` 会被当作转义序列，导致服务器启动失败。
+
+### 项目级 MCP 服务器
+
+给 `config-set settings mcpServers` 传 `projectId` 可**全量替换**该项目级
+MCP 服务器（`projectId` 即项目工作区目录的 `directoryId`，可在
+`~/.snow/projects/index.json` 按项目路径 `knownPaths` 查询）：
+
+```jsonc
+config-set scope=settings key=mcpServers projectId=<projectId> value={
+  "dbx": { "type": "stdio", "command": "npx", "args": ["-y", "@dbx-app/mcp-server"], "env": {}, "enabled": true }
+}
+```
+
+`config-get` / `config-delete` 传 `projectId` 读取/清空项目级服务器；项目级
+与全局服务器独立并存、叠加生效（写入应用数据库，**立即生效**）。
 
 ## 4. 方式三：编辑 settings.json（批量/离线）
 

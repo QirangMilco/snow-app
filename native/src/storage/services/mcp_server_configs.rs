@@ -20,14 +20,22 @@ pub fn upsert_mcp_server_config(database_path: &Path, item: &McpServerConfigInpu
 
 pub fn delete_mcp_server_config(database_path: &Path, server_id: &str) -> Result<()> {
     database::open_connection(database_path)
-        .and_then(|connection| {
-            connection.execute("DELETE FROM mcp_server_configs WHERE server_id = ?1", [server_id])?;
+        .and_then(|mut connection| {
+            let transaction = connection.transaction()?;
+            transaction.execute("DELETE FROM mcp_server_configs WHERE server_id = ?1", [server_id])?;
+            super::import_resources::delete_mcp_tracking_for_target(
+                &transaction,
+                "global",
+                None,
+                server_id,
+            )?;
+            transaction.commit()?;
             Ok(())
         })
         .map_err(|error| database::database_error(database_path, "delete MCP server config", error))
 }
 
-fn query_mcp_server_configs(
+pub(crate) fn query_mcp_server_configs(
     connection: &Connection,
 ) -> rusqlite::Result<Vec<McpServerConfigRecord>> {
     let mut statement = connection.prepare(
@@ -73,7 +81,7 @@ fn query_mcp_server_configs(
     rows.collect()
 }
 
-fn upsert_mcp_server_config_with_connection(
+pub(crate) fn upsert_mcp_server_config_with_connection(
     connection: &Connection,
     item: &McpServerConfigInput,
 ) -> rusqlite::Result<()> {

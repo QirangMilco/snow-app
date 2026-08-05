@@ -1,7 +1,9 @@
+import { Copy, Eye, EyeOff, Hash, MessageSquareText } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { GitCommitFile, GitLogEntry } from "../../../../preload";
 import { useI18n } from "../../../i18n";
+import { ContextMenu, type ContextMenuItem } from "../../common/ContextMenu";
 
 type GitGraphProps = {
   repoPath: string;
@@ -442,6 +444,12 @@ export const GitGraph = ({
   // different commit triggers a render.
   const [hoveredCommit, setHoveredCommit] = useState<GitLogEntry | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  // 提交行右键菜单：复制哈希 / 提交信息，以及展开收起提交详情。
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    commit: GitLogEntry;
+  } | null>(null);
 
   const positionTooltip = useCallback((clientX: number, clientY: number) => {
     const node = tooltipRef.current;
@@ -477,6 +485,69 @@ export const GitGraph = ({
   const hideTooltip = useCallback(() => {
     setHoveredCommit(null);
   }, []);
+
+  /** 提交行右键菜单：复制哈希 / 提交信息，以及展开收起提交详情。 */
+  const buildCommitMenuItems = (commit: GitLogEntry): ContextMenuItem[] => {
+    const isExpanded = selectedHash === commit.hash;
+    return [
+      {
+        id: "copy-full-hash",
+        label: t("git.copyFullHash", { defaultValue: "Copy Full Hash" }),
+        icon: <Hash size={13} strokeWidth={1.8} />,
+        onClick: () => {
+          setContextMenu(null);
+          void window.snow.writeClipboardText(commit.hash).catch(() => {
+            // 剪贴板写入失败时静默忽略。
+          });
+        },
+      },
+      {
+        id: "copy-short-hash",
+        label: t("git.copyShortHash", { defaultValue: "Copy Short Hash" }),
+        icon: <Copy size={13} strokeWidth={1.8} />,
+        onClick: () => {
+          setContextMenu(null);
+          void window.snow.writeClipboardText(commit.shortHash).catch(() => {
+            // 剪贴板写入失败时静默忽略。
+          });
+        },
+      },
+      {
+        id: "copy-message",
+        separator: true,
+        label: t("git.copyCommitMessage", {
+          defaultValue: "Copy Commit Message",
+        }),
+        icon: <MessageSquareText size={13} strokeWidth={1.8} />,
+        onClick: () => {
+          setContextMenu(null);
+          void window.snow.writeClipboardText(commit.message).catch(() => {
+            // 剪贴板写入失败时静默忽略。
+          });
+        },
+      },
+      {
+        id: "toggle-detail",
+        separator: true,
+        label: isExpanded
+          ? t("git.hideCommitDetails", {
+              defaultValue: "Hide Commit Details",
+            })
+          : t("git.viewCommitDetails", {
+              defaultValue: "View Commit Details",
+            }),
+        icon: isExpanded ? (
+          <EyeOff size={13} strokeWidth={1.8} />
+        ) : (
+          <Eye size={13} strokeWidth={1.8} />
+        ),
+        onClick: () => {
+          setContextMenu(null);
+          handleRowClick(commit.hash);
+        },
+      },
+    ];
+  };
 
   if (isLoading) {
     return (
@@ -522,6 +593,15 @@ export const GitGraph = ({
             <div
               className={`git-graph-row${isSelected ? " selected" : ""}`}
               onClick={() => handleRowClick(row.commit.hash)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                hideTooltip();
+                setContextMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  commit: row.commit,
+                });
+              }}
               draggable
               onDragStart={(event) => handleRowDragStart(event, row.commit)}
               onMouseEnter={(event) =>
@@ -721,6 +801,14 @@ export const GitGraph = ({
           </div>
         ) : null,
         document.body
+      )}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildCommitMenuItems(contextMenu.commit)}
+          onClose={() => setContextMenu(null)}
+        />
       )}
     </div>
   );

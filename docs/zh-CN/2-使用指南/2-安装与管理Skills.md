@@ -74,10 +74,11 @@ allowed_tools:
 - **开关**：设置 → Skills 设置 → 列表中的开关；
 - **卸载 GitHub 安装的技能**：Skills 设置 → 卸载按钮；
 - **手动卸载**：删除对应技能目录。
-- **Agent 管理**：Agent 也可用 `skills-config` 内置服务完成上述操作——
-  `skills-config-list` 查看现状、`skills-config-setEnabled` 切换开关（全局
-  改写 frontmatter / 项目级写应用数据库）、`skills-config-installGithub` 与
-  `skills-config-uninstall` 安装与卸载（卸载仅限 GitHub 来源）。详见
+- **Agent 管理**：Agent 也可用 `config` 内置服务完成上述操作——
+  `config-list scope=skills` 查看现状、`config-set scope=skills value={enabled}`
+  切换开关（全局改写 frontmatter / 项目级写应用数据库）、
+  `config-set scope=skills value={url, location}` 与 `config-delete scope=skills`
+  安装与卸载（卸载仅限 GitHub 来源）。详见
   《3-参考手册/2-内置工具参考.md》。
 
 ## 5. 内置技能

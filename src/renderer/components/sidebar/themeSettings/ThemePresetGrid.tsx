@@ -23,7 +23,10 @@ export function ThemePresetGrid({
           <button
             key={preset.id}
             type="button"
-            className={`theme-preset-card ${isActive ? "active" : ""}`}
+            className={`theme-preset-card theme-preset-card-${preset.id}${
+              isActive ? " active" : ""
+            }`}
+            data-theme-preset-id={preset.id}
             onClick={() => onSelect(preset.id)}
             disabled={disabled}
             title={t(preset.nameKey, { defaultValue: preset.defaultName })}
@@ -54,6 +57,14 @@ export function ThemePresetGrid({
                 style={{ background: preset.dark.accentBlue }}
               />
             </div>
+            {preset.id === "google" ? (
+              <span className="theme-preset-brand-stripe" aria-hidden="true">
+                <span className="google-blue" />
+                <span className="google-red" />
+                <span className="google-yellow" />
+                <span className="google-green" />
+              </span>
+            ) : null}
             <span className="theme-preset-name">
               {t(preset.nameKey, { defaultValue: preset.defaultName })}
             </span>

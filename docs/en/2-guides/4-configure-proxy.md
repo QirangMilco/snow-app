@@ -42,7 +42,21 @@ The debug port is used for the built-in browser panel connection; if the port is
 - **Web search**: the `websearch` tool;
 - **Built-in browser panel**: embedded browser instances.
 
-## 6. FAQ
+## 6. AI / CLI Configuration (config tool)
+
+Use the `config` tool to read/write the `proxy` scope (`~/.snow/proxy-config.json`, same source as the UI):
+
+| Tool | Example |
+| --- | --- |
+| `config-get scope=proxy` | View the current proxy / search engine / browser config |
+| `config-set scope=proxy value={enabled: true, host: "127.0.0.1", port: 7890}` | Enable the proxy |
+| `config-set scope=proxy key=searchEngine value="duckduckgo"` | Switch the search engine |
+| `config-set scope=proxy key=browserPath value="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"` | Set the browser path (Windows backslashes must be escaped as `\\` in JSON) |
+
+> File-backed config: changes take effect after an app restart or a UI re-save;
+> `config-list scope=proxy` lists all keys and current values.
+
+## 7. FAQ
 
 | Symptom | Cause & fix |
 | --- | --- |

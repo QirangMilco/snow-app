@@ -1,4 +1,4 @@
-import { Loader2, Plus, RefreshCw, X } from "lucide-react";
+import { Folder, Globe2, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApiConfigRecord, SubAgentConfigRecord } from "../../../preload";
 import { AutoDismissNotice } from "../AutoDismissNotice";
@@ -35,8 +35,14 @@ export function SubAgentSettingsPanel({
   const [toolCatalogError, setToolCatalogError] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [activeScope, setActiveScope] = useState<"global" | "project">(
+    "global"
+  );
   const toolCatalogGenerationRef = useRef(0);
   const projectId = activeDirectory?.directoryId;
+  const isGlobalScope = activeScope === "global";
+  /** 当前作用域对应的 projectId：全局 Tab 为 undefined，项目 Tab 为当前项目。 */
+  const scopeProjectId = isGlobalScope ? undefined : projectId;
   const isBusy = isLoading || isSaving;
 
   const load = useCallback(async () => {
@@ -44,10 +50,15 @@ export function SubAgentSettingsPanel({
     setError("");
     try {
       const [nextAgents, nextApiConfigs] = await Promise.all([
-        window.snow.listSubAgentConfigs(),
+        window.snow.listSubAgentConfigs(scopeProjectId),
         window.snow.listApiConfigs(),
       ]);
-      setAgents(nextAgents);
+      // 全局 Tab 只显示全局子代理（projectId 为空）；项目 Tab 由后端按项目过滤。
+      setAgents(
+        isGlobalScope
+          ? nextAgents.filter((agent) => !agent.projectId)
+          : nextAgents
+      );
       setApiConfigs(nextApiConfigs);
     } catch (loadError) {
       setError(
@@ -60,7 +71,7 @@ export function SubAgentSettingsPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [t, scopeProjectId, isGlobalScope]);
 
   const loadProjectTools = useCallback(async () => {
     const generation = toolCatalogGenerationRef.current + 1;
@@ -121,6 +132,14 @@ export function SubAgentSettingsPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // 活动项目变为空时（切换到无项目），项目 Tab 失去作用域上下文，
+  // 强制回到全局 Tab，避免以 undefined projectId 误加载全部子代理。
+  useEffect(() => {
+    if (!activeDirectory) {
+      setActiveScope("global");
+    }
+  }, [activeDirectory]);
 
   useEffect(() => {
     void loadProjectTools();
@@ -213,10 +232,14 @@ export function SubAgentSettingsPanel({
     try {
       const isExisting = Boolean(draft.agentId);
       const nextAgents = await window.snow.upsertSubAgentConfig(
-        projectId,
+        scopeProjectId,
         toSubAgentInput(draft)
       );
-      setAgents(nextAgents);
+      setAgents(
+        isGlobalScope
+          ? nextAgents.filter((agent) => !agent.projectId)
+          : nextAgents
+      );
       setDraft(null);
       setStatus(
         isExisting
@@ -246,7 +269,15 @@ export function SubAgentSettingsPanel({
     setError("");
     setStatus("");
     try {
-      setAgents(await window.snow.deleteSubAgentConfig(agent.agentId));
+      const nextAgents = await window.snow.deleteSubAgentConfig(
+        agent.agentId,
+        agent.projectId || undefined
+      );
+      setAgents(
+        isGlobalScope
+          ? nextAgents.filter((item) => !item.projectId)
+          : nextAgents
+      );
       setStatus(
         t("settings.subAgentDeleteSuccess", {
           defaultValue: "Deleted sub-agent configuration.",
@@ -302,6 +333,43 @@ export function SubAgentSettingsPanel({
         availableToolCount={toolOptions.length}
       />
 
+      <div
+        className="skills-settings-tabs"
+        role="tablist"
+        aria-label={t("settings.subAgentScopeTabs", {
+          defaultValue: "Sub-agent scope",
+        })}
+      >
+        <button
+          className={`skills-settings-tab ${isGlobalScope ? "active" : ""}`}
+          type="button"
+          role="tab"
+          aria-selected={isGlobalScope}
+          onClick={() => {
+            setActiveScope("global");
+            setDraft(null);
+          }}
+        >
+          <Globe2 size={14} strokeWidth={1.8} />
+          <span>
+            {t("settings.subAgentTabGlobal", { defaultValue: "Global" })}
+          </span>
+        </button>
+        <button
+          className={`skills-settings-tab ${!isGlobalScope ? "active" : ""}`}
+          type="button"
+          role="tab"
+          aria-selected={!isGlobalScope}
+          onClick={() => setActiveScope("project")}
+          disabled={!activeDirectory}
+        >
+          <Folder size={14} strokeWidth={1.8} />
+          <span>
+            {t("settings.subAgentTabProject", { defaultValue: "Project" })}
+          </span>
+        </button>
+      </div>
+
       <div className="api-settings-actions">
         <button
           className="api-settings-action-btn primary"
@@ -346,10 +414,16 @@ export function SubAgentSettingsPanel({
             })}
           </strong>
           <span>
-            {t("settings.subAgentManageInfo", {
-              defaultValue:
-                "Sub-agent configurations are stored in the local database.",
-            })}
+            {isGlobalScope
+              ? t("settings.subAgentGlobalTabInfo", {
+                  defaultValue:
+                    "Manage sub-agents shared by all projects. Sub-agent configurations are stored in the local database.",
+                })
+              : t("settings.subAgentProjectTabInfo", {
+                  defaultValue:
+                    "Manage sub-agents for {{name}}. Project sub-agents override global ones with the same id.",
+                  values: { name: activeDirectory?.name ?? "" },
+                })}
           </span>
         </div>
         <div className="api-settings-form-body">

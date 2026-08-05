@@ -3,6 +3,7 @@ import {
   GitFork,
   Loader2,
   MessageSquareMore,
+  Check,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -18,11 +19,16 @@ type ChatItemProps = {
   isCompleted?: boolean;
   subAgentConversations?: ChatConversationRecord[];
   isSubAgentExpanded?: boolean;
+  isMultiSelectMode?: boolean;
+  isSelected?: boolean;
   onPin: () => void;
   onRename: (newTitle: string) => Promise<void>;
   onSetEmoji: (emoji: string) => Promise<void>;
-  onDelete: () => void;
+  /** 确认删除；deleteImages=true 表示同时级联删除图库图片 */
+  onDelete: (deleteImages: boolean) => void;
   onExport: (format: ExportFormat) => void;
+  onEnterMultiSelect?: () => void;
+  onToggleSelect?: () => void;
   onSelect?: () => void;
   onToggleSubAgentPanel?: () => void;
 };
@@ -34,11 +40,15 @@ export function ChatItem({
   isCompleted = false,
   subAgentConversations = [],
   isSubAgentExpanded = false,
+  isMultiSelectMode = false,
+  isSelected = false,
   onPin,
   onRename,
   onSetEmoji,
   onDelete,
   onExport,
+  onEnterMultiSelect,
+  onToggleSelect,
   onSelect,
   onToggleSubAgentPanel,
 }: ChatItemProps): React.JSX.Element {
@@ -46,6 +56,10 @@ export function ChatItem({
   const [isEditing, setIsEditing] = useState(false);
   const [editingValue, setEditingValue] = useState("");
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [contextMenuAnchor, setContextMenuAnchor] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
   const isSubmittingRef = useRef(false);
   const cancelledRef = useRef(false);
@@ -137,7 +151,21 @@ export function ChatItem({
     if (isEditing) {
       return;
     }
+    if (isMultiSelectMode) {
+      onToggleSelect?.();
+      return;
+    }
     onSelect?.();
+  };
+
+  // 右键 == 三点按钮菜单：在光标位置弹出同一份操作菜单
+  const handleContextMenu = (event: React.MouseEvent): void => {
+    // 编辑/多选模式下不拦截右键，保留系统菜单（输入框复制粘贴等）
+    if (isEditing || isMultiSelectMode) {
+      return;
+    }
+    event.preventDefault();
+    setContextMenuAnchor({ x: event.clientX, y: event.clientY });
   };
 
   const handleToggleExpand = (event: React.MouseEvent): void => {
@@ -153,44 +181,65 @@ export function ChatItem({
     <div
       className={`chat-item${isMenuOpen ? " menu-open" : ""}${
         isActive ? " active" : ""
+      }${isMultiSelectMode ? " multi-select" : ""}${
+        isSelected ? " selected" : ""
       }`}
       key={conversation.conversationId}
       onClick={handleSelectClick}
+      onContextMenu={handleContextMenu}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
-        if (
-          !isEditing &&
-          (event.key === "Enter" || event.key === " ") &&
-          onSelect
-        ) {
+        if (isEditing) {
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          onSelect();
+          if (isMultiSelectMode) {
+            onToggleSelect?.();
+          } else if (onSelect) {
+            onSelect();
+          }
         }
       }}
     >
-      <span
-        className={`chat-item-icon${isStreaming ? " streaming" : ""}${
-          isCompleted && !isStreaming ? " completed" : ""
-        }${isForked ? " forked" : ""}${hasSubAgents ? " has-sub-agents" : ""}${
-          hasEmoji ? " has-emoji" : ""
-        }`}
-        onClick={(event) => {
-          // 图标不再承载交互，点击仅阻止选中会话；修改入口在右键菜单中
-          event.stopPropagation();
-        }}
-      >
-        {isStreaming ? (
-          <Loader2 size={11} className="spin" />
-        ) : hasEmoji ? (
-          <span className="chat-item-emoji">{conversation.emoji}</span>
-        ) : isForked ? (
-          <GitFork size={11} />
-        ) : (
-          <MessageSquareMore size={11} />
-        )}
-        {isCompleted && !isStreaming && <span className="chat-item-badge" />}
-      </span>
+      {isMultiSelectMode ? (
+        <span
+          className={`chat-item-checkbox${isSelected ? " checked" : ""}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleSelect?.();
+          }}
+          role="checkbox"
+          aria-checked={isSelected}
+          tabIndex={-1}
+        >
+          {isSelected ? <Check size={12} strokeWidth={3} /> : null}
+        </span>
+      ) : (
+        <span
+          className={`chat-item-icon${isStreaming ? " streaming" : ""}${
+            isCompleted && !isStreaming ? " completed" : ""
+          }${isForked ? " forked" : ""}${
+            hasSubAgents ? " has-sub-agents" : ""
+          }${hasEmoji ? " has-emoji" : ""}`}
+          onClick={(event) => {
+            // 图标不再承载交互，点击仅阻止选中会话；修改入口在右键菜单中
+            event.stopPropagation();
+          }}
+        >
+          {isStreaming ? (
+            <Loader2 size={11} className="spin" />
+          ) : hasEmoji ? (
+            <span className="chat-item-emoji">{conversation.emoji}</span>
+          ) : isForked ? (
+            <GitFork size={11} />
+          ) : (
+            <MessageSquareMore size={11} />
+          )}
+          {isCompleted && !isStreaming && <span className="chat-item-badge" />}
+        </span>
+      )}
       <div className="chat-item-content">
         {isEditing ? (
           <input
@@ -240,13 +289,14 @@ export function ChatItem({
           </>
         )}
       </div>
-      {!isEditing && (
+      {!isEditing && !isMultiSelectMode && (
         <span
           className="chat-item-menu-wrapper"
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
           <ChatItemMenu
+            conversationId={conversation.conversationId}
             isPinned={isPinned}
             emoji={conversation.emoji}
             onPin={onPin}
@@ -254,7 +304,10 @@ export function ChatItem({
             onSetEmoji={onSetEmoji}
             onDelete={onDelete}
             onExport={onExport}
+            onEnterMultiSelect={onEnterMultiSelect}
             onOpenChange={setIsMenuOpen}
+            contextMenuAnchor={contextMenuAnchor}
+            onContextMenuClose={() => setContextMenuAnchor(null)}
           />
         </span>
       )}

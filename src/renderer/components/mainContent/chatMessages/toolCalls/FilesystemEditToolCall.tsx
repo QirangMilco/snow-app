@@ -171,6 +171,7 @@ export const FilesystemEditToolCall = ({
         </>
       }
       displayNameTitle={filePath}
+      displayNameDataPath={filePath}
       status={effectiveStatus}
       meta={
         stats ? (
@@ -183,7 +184,9 @@ export const FilesystemEditToolCall = ({
       className="tool-call-filesystem-edit"
     >
       <div className="tool-call-body">
-        <div className="tool-call-file-path">{filePath}</div>
+        <div className="tool-call-file-path" data-path={filePath}>
+          {filePath}
+        </div>
         {hasError ? (
           <div className="tool-call-error">
             <span>{parsedResult.message}</span>

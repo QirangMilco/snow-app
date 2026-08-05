@@ -10,6 +10,7 @@ import {
   ENABLED_STATUS_LABEL,
   REQUEST_METHODS,
 } from "./apiSettingsConstants";
+import { THINKING_OPTIONS_BY_METHOD } from "../../mainContent/chatInput/constants";
 import {
   AUTO_COMPRESS_THRESHOLD_MAX_PERCENT,
   AUTO_COMPRESS_THRESHOLD_MIN_PERCENT,
@@ -17,6 +18,7 @@ import {
   calculateAutoCompressThresholdTokens,
   normalizeAutoCompressThresholdPercent,
 } from "./autoCompressThreshold";
+import { resolveThinkingValue } from "./apiSettingsUtils";
 import type {
   Model,
   SystemPromptItemRecord,
@@ -73,6 +75,19 @@ export function ApiSettingsFormFields({
   useEffect(() => {
     void loadBindingOptions();
   }, [loadBindingOptions]);
+
+  // When the request method changes, the set of valid thinking-strength options
+  // changes with it. If the current value is not among the new method's options,
+  // reset it to the default so the dropdown never shows an invalid selection.
+  useEffect(() => {
+    const resolved = resolveThinkingValue(
+      data.thinkingValue,
+      data.requestMethod
+    );
+    if (resolved !== data.thinkingValue) {
+      onChange("thinkingValue", resolved);
+    }
+  }, [data.requestMethod, data.thinkingValue, onChange]);
 
   const loadModelOptions = useCallback(
     async (force = false) => {
@@ -275,6 +290,27 @@ export function ApiSettingsFormFields({
                 label: method,
               }))}
               onChange={(value) => onChange("requestMethod", value)}
+              disabled={disabled}
+            />
+          </label>
+          <label className="api-settings-field">
+            <span>
+              {t("chat.thinkingStrength", {
+                defaultValue: "Thinking strength",
+              })}
+            </span>
+            <CustomSelect
+              value={data.thinkingValue}
+              options={(
+                THINKING_OPTIONS_BY_METHOD[
+                  (data.requestMethod ||
+                    "chat") as keyof typeof THINKING_OPTIONS_BY_METHOD
+                ] || THINKING_OPTIONS_BY_METHOD.chat
+              ).map((option) => ({
+                value: option.value,
+                label: option.label,
+              }))}
+              onChange={(value) => onChange("thinkingValue", value)}
               disabled={disabled}
             />
           </label>

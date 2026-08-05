@@ -1,0 +1,614 @@
+/* ===== Theme Settings Panel ===== */
+
+.theme-mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.theme-mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.theme-mode-option:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.theme-mode-option.active {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  border-color: var(--text-primary);
+  color: var(--text-primary);
+}
+
+.theme-mode-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.theme-preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.theme-preset-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  text-align: left;
+  transition: transform 0.15s ease, box-shadow 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.theme-preset-card:hover:not(:disabled) {
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  border-color: var(--border-subtle);
+}
+.theme-preset-card.active {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--text-primary);
+}
+
+.theme-preset-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.theme-preset-swatches {
+  display: flex;
+  gap: 4px;
+  height: 28px;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.theme-preset-swatch {
+  flex: 1;
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.theme-preset-swatch:last-child {
+  border-right: none;
+}
+
+.theme-preset-swatch.dark {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.theme-preset-name {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-preset-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--on-solid);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.theme-custom-edit-action {
+  margin-top: 10px;
+  justify-content: flex-start;
+}
+
+.theme-custom-editor {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.theme-custom-editor-tabs {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg-secondary);
+}
+
+.theme-color-editor {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.theme-color-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.theme-color-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.theme-color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.theme-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-color-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.theme-color-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-color-swatch {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.theme-color-swatch.invalid {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bg-tertiary),
+    var(--bg-tertiary) 4px,
+    var(--bg-hover) 4px,
+    var(--bg-hover) 8px
+  );
+}
+
+.theme-color-swatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.theme-color-text {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.theme-color-text:focus {
+  outline: none;
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.theme-background-preview {
+  width: 120px;
+  height: 72px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.theme-background-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.theme-background-placeholder {
+  color: var(--text-muted);
+}
+
+.theme-background-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.theme-slider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.theme-slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.theme-slider-value {
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+}
+.theme-slider-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--text-primary);
+}
+
+.theme-preview {
+  margin-top: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.theme-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.theme-preview-body {
+  display: flex;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.theme-preview-sidebar {
+  width: 130px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-preview-item {
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.theme-preview-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.theme-preview-bubble {
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+}
+
+.theme-preview-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.theme-preview-btn {
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+
+.theme-preview-btn.secondary {
+  border-color: var(--border-color);
+}
+
+/* ===== Theme Background Layer =====
+   当用户启用背景图时，useTheme 在 :root 上设置 --theme-bg-image 等变量
+   并添加 data-theme-bg="on" 属性。
+
+   采用顶层覆盖方案：.app-shell::after 伪元素作为背景图层，z-index 设为
+   远高于所有 UI 元素的值，覆盖在所有内容之上。通过 opacity 控制背景图
+   浓淡，实现全局统一的透明度效果。pointer-events: none 确保不拦截交互。 */
+
+.app-shell::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-image: var(--theme-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: var(--theme-bg-opacity, 0);
+  filter: blur(var(--theme-bg-blur, 0px));
+  pointer-events: none;
+}
+:root:not([data-theme-bg="on"]) .app-shell::after {
+  display: none;
+}
+
+/* ===== AI Color Palette Modal ===== */
+.theme-ai-color-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.theme-ai-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.theme-ai-color-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.theme-ai-color-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.theme-ai-color-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-red);
+  border-radius: var(--radius-md);
+  background: var(--accent-red-bg);
+  color: var(--accent-red-text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+/* Fixed-height streaming JSON preview with stable scrollbar gutter so the
+   layout does not shift when content grows past the scroll threshold. */
+.theme-ai-color-preview {
+  height: 280px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 10px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+}
+
+.theme-ai-color-markdown {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ===== Theme Font Section ===== */
+.theme-font-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+}
+
+.theme-font-input-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.theme-font-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--app-font-family, var(--font-sans));
+}
+
+.theme-font-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.theme-font-input::placeholder {
+  color: var(--text-muted);
+}
+
+.theme-font-quick-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.theme-font-quick-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.theme-font-quick-btn:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.theme-font-quick-btn.selected {
+  border-color: var(--text-primary);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.theme-font-quick-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== Theme Stream Cursor Section ===== */
+.theme-stream-cursor-type-select {
+  margin-top: 8px;
+  max-width: 240px;
+}
+
+.theme-stream-cursor-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.theme-stream-cursor-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+
+.theme-stream-cursor-icon-btn:hover:not(:disabled) {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.theme-stream-cursor-icon-btn.selected {
+  border-color: var(--text-primary);
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.theme-stream-cursor-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.theme-stream-cursor-preview {
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.theme-stream-cursor-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 4px;
+}
+
+/* 实时预览区：模拟聊天消息中的流式光标效果 */
+.theme-stream-cursor-live-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  overflow: hidden;
+}
+
+/* 流式光标 - lucide 图标旋转动画 */
+.stream-cursor-lucide-icon {
+  color: var(--text-tertiary);
+  animation: stream-cursor-spin 1.4s linear infinite;
+}
+
+/* 流式光标 - 自定义 SVG 图标 */
+.stream-cursor-custom-icon {
+  display: inline-block;
+  width: var(--stream-cursor-size, 14px);
+  height: var(--stream-cursor-size, 14px);
+  background-image: var(--stream-cursor-svg);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  animation: stream-cursor-pulse 1s ease-in-out infinite;
+}
+
+@keyframes stream-cursor-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes stream-cursor-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}

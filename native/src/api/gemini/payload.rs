@@ -13,7 +13,7 @@ use crate::storage::services::chat_conversations::ChatContextMessage;
 use crate::api::responses::ResponsesApiRequest;
 use crate::storage::ApiConfigRecord;
 
-pub(super) fn resolve_gemini_endpoint(
+pub(crate) fn resolve_gemini_endpoint(
     api_config: &ApiConfigRecord,
     model: &str,
     api_key: &str,
@@ -240,8 +240,6 @@ pub(super) fn build_gemini_payload(
 
     let mut generation_config = json!({});
 
-    generation_config["temperature"] = json!(0.7);
-
     if let Some(max_tokens) = api_config.max_tokens {
         if max_tokens > 0 {
             generation_config["maxOutputTokens"] = json!(max_tokens);
@@ -272,7 +270,7 @@ fn normalize_gemini_role(role: &str) -> &str {
     }
 }
 
-fn build_gemini_thinking_config(config_json: &str) -> Option<Value> {
+pub(crate) fn build_gemini_thinking_config(config_json: &str) -> Option<Value> {
     let parsed = serde_json::from_str::<Value>(config_json).ok()?;
     let gemini_thinking = parsed
         .get("snowcfg")?

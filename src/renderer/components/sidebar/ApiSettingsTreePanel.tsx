@@ -5,15 +5,20 @@ import { Modal } from "../common/Modal";
 import { useI18n } from "../../i18n";
 import type { ApiConfigRecord } from "../../../preload";
 import { ApiSettingsActions } from "./apiSettings/ApiSettingsActions";
-import { ApiSettingsFormActions, ApiSettingsFormPanel } from "./apiSettings/ApiSettingsFormPanel";
+import {
+  ApiSettingsFormActions,
+  ApiSettingsFormPanel,
+} from "./apiSettings/ApiSettingsFormPanel";
 import { ApiSettingsSummary } from "./apiSettings/ApiSettingsSummary";
 import { ApiSettingsTable } from "./apiSettings/ApiSettingsTable";
+import { buildDuplicateName } from "./duplicateName";
 import {
   DEFAULT_API_BASE_URL,
   DEFAULT_REQUEST_METHOD,
 } from "./apiSettings/apiSettingsConstants";
 import {
   emptyApiConfigForm,
+  extractThinkingValueFromConfigJson,
   toApiConfigPayload,
 } from "./apiSettings/apiSettingsUtils";
 import { calculateAutoCompressThresholdPercent } from "./apiSettings/autoCompressThreshold";
@@ -240,6 +245,10 @@ export function ApiSettingsTreePanel({
         config.retryBaseDelayMs != null ? String(config.retryBaseDelayMs) : "",
       systemPromptIdsJson: config.systemPromptIdsJson ?? "",
       customHeaderSchemeId: config.customHeaderSchemeId ?? "",
+      thinkingValue: extractThinkingValueFromConfigJson(
+        config.configJson,
+        config.requestMethod || DEFAULT_REQUEST_METHOD
+      ),
     });
   };
 
@@ -278,6 +287,70 @@ export function ApiSettingsTreePanel({
   const handleCancelEdit = () => {
     setEditingProfileName(null);
     setEditForm(null);
+  };
+
+  const handleDuplicate = async (config: ApiConfigRecord) => {
+    setError("");
+    setStatus("");
+
+    // 命名规则：*-Copy-n（n 为递增数字，避免与既有 profileName/displayName 冲突）。
+    const profileName = buildDuplicateName(
+      config.profileName,
+      configs.map((item) => item.profileName)
+    );
+    const displayName = buildDuplicateName(
+      config.displayName || config.profileName,
+      configs.map((item) => item.displayName)
+    );
+
+    setIsSaving(true);
+    try {
+      const list = await window.snow.upsertApiConfig({
+        profileName,
+        displayName,
+        // 复制后默认未启用（同时仅允许一个 active，避免覆盖当前启用项）。
+        isActive: false,
+        baseUrl: config.baseUrl,
+        baseUrlMode: config.baseUrlMode,
+        apiKey: config.apiKey,
+        requestMethod: config.requestMethod,
+        advancedModel: config.advancedModel,
+        basicModel: config.basicModel,
+        supportsVision: config.supportsVision,
+        visionBaseUrl: config.visionBaseUrl,
+        visionBaseUrlMode: config.visionBaseUrlMode || "auto",
+        visionApiKey: config.visionApiKey,
+        visionRequestMethod: config.visionRequestMethod,
+        visionModel: config.visionModel,
+        maxContextTokens: config.maxContextTokens,
+        maxTokens: config.maxTokens,
+        streamIdleTimeoutSec: config.streamIdleTimeoutSec,
+        enableAutoCompress: config.enableAutoCompress,
+        autoCompressThreshold: config.autoCompressThreshold,
+        maxRetries: config.maxRetries,
+        retryBaseDelayMs: config.retryBaseDelayMs,
+        systemPromptIdsJson: config.systemPromptIdsJson ?? "",
+        customHeaderSchemeId: config.customHeaderSchemeId ?? "",
+        configJson: config.configJson,
+        source: config.source,
+      });
+      setConfigs(list);
+      setStatus(
+        t("settings.apiDuplicateSuccess", {
+          defaultValue: "Duplicated API profile {name}.",
+        }).replace("{name}", displayName)
+      );
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : t("settings.apiDuplicateError", {
+              defaultValue: "Failed to duplicate API config",
+            })
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleToggleActive = async (config: ApiConfigRecord) => {
@@ -383,6 +456,7 @@ export function ApiSettingsTreePanel({
       <ApiSettingsTable
         configs={configs}
         isLoading={isLoading}
+        onDuplicate={(config) => void handleDuplicate(config)}
         onEdit={handleStartEdit}
         onDelete={(profileName, displayName) =>
           void handleDelete(profileName, displayName)
