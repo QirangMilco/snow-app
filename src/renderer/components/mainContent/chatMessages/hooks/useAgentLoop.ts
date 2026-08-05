@@ -39,6 +39,13 @@ import {
 } from "../../../sidebar/apiSettings/autoCompressThreshold";
 
 /**
+ * 与 Rust 端 context.rs 的 DEFAULT_CONTEXT_TOKENS 对齐：API 配置未填写
+ * maxContextTokens 时，Rust 预算截断按此窗口计算。前端自动压缩必须
+ * 使用同一窗口推导阈值，否则压缩永远不会触发、历史只会被静默截断。
+ */
+const DEFAULT_CONTEXT_TOKENS = 128_000;
+
+/**
  * 解析自动压缩的有效触发阈值（token），供 in-loop 与 pre-send 两处决策点
  * 复用，保证同一配置下行为一致：
  * - 优先使用配置保存时解析出的 autoCompressThreshold（token 值）。它是
@@ -46,11 +53,12 @@ import {
  *   calculateAutoCompressThresholdTokens 处理——那函数期望百分比输入，
  *   会把 token 值钳制到上下文的 100%；
  * - 缺失/无效时（如导入的 profile 无 maxContextTokens）按默认 80% 从
- *   上下文窗口推导，自动压缩不会静默失效；
+ *   上下文窗口推导；窗口缺失时用 DEFAULT_CONTEXT_TOKENS（128k）兜底，
+ *   与 Rust 端预算截断保持一致——保证自动压缩在截断之前触发
+ *   （压缩保留历史摘要，截断直接丢弃历史）；
  * - 输出预算纳入：有效阈值不能超过"上下文窗口 - 输出预留"，否则压缩后
  *   模型没有足够空间输出交接文档。输出预留取 maxTokens，未配置时按
  *   窗口的 20% 估算（下限 4096）。
- * 返回 null 表示无法确定阈值（不触发自动压缩）。
  */
 const resolveEffectiveAutoCompressThreshold = (
   apiConfig: ApiConfigRecord | null | undefined
@@ -59,30 +67,27 @@ const resolveEffectiveAutoCompressThreshold = (
     return null;
   }
   let thresholdTokens = apiConfig.autoCompressThreshold;
-  const maxContextTokens = apiConfig.maxContextTokens ?? null;
+  const maxContextTokens =
+    apiConfig.maxContextTokens != null && apiConfig.maxContextTokens > 0
+      ? apiConfig.maxContextTokens
+      : DEFAULT_CONTEXT_TOKENS;
   if (thresholdTokens == null || thresholdTokens <= 0) {
-    thresholdTokens =
-      maxContextTokens != null && maxContextTokens > 0
-        ? calculateAutoCompressThresholdTokens(
-            maxContextTokens,
-            DEFAULT_AUTO_COMPRESS_THRESHOLD_PERCENT
-          )
-        : null;
+    thresholdTokens = calculateAutoCompressThresholdTokens(
+      maxContextTokens,
+      DEFAULT_AUTO_COMPRESS_THRESHOLD_PERCENT
+    );
   }
   if (thresholdTokens == null || thresholdTokens <= 0) {
     return null;
   }
-  if (maxContextTokens != null && maxContextTokens > 0) {
-    const outputReserve =
-      apiConfig.maxTokens != null && apiConfig.maxTokens > 0
-        ? apiConfig.maxTokens
-        : Math.max(4096, Math.round(maxContextTokens * 0.2));
-    return Math.min(
-      thresholdTokens,
-      Math.max(1, maxContextTokens - outputReserve)
-    );
-  }
-  return thresholdTokens;
+  const outputReserve =
+    apiConfig.maxTokens != null && apiConfig.maxTokens > 0
+      ? apiConfig.maxTokens
+      : Math.max(4096, Math.round(maxContextTokens * 0.2));
+  return Math.min(
+    thresholdTokens,
+    Math.max(1, maxContextTokens - outputReserve)
+  );
 };
 
 export type UseAgentLoopParams = {
