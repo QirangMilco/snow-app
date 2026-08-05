@@ -103,7 +103,8 @@ pub async fn textify_images_in_messages(
                     if result.contains("@@image:") {
                         let parsed = parse_chat_message_content(&result, database_path)?;
                         if !parsed.images.is_empty() {
-                            // 工具结果（如截图）不是用户上传的参考图，不附加引用块。
+                            // 工具结果（如截图）不是用户上传的参考图，不附加引用块；
+                            // 但同样经视觉模型文本化，并应用用户配置的提示词模板。
                             let textified = textify_parsed_content(
                                 &parsed,
                                 &client,
