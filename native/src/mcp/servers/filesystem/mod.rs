@@ -26,6 +26,16 @@ const FUZZY_MATCH_THRESHOLD: f64 = 0.85;
 /// 编辑成功后，在响应中返回编辑区域前后各多少行上下文供 AI 复核。
 const EDIT_REVIEW_CONTEXT_LINES: usize = 5;
 
+/// 无显式 startLine/endLine 时，文本文件读取的字节上限。超过上限的文件
+/// 只读取前 MAX_READ_BYTES 字节并在内容末尾附加截断标记，防止超大文件
+/// 一次性注入上下文窗口。显式分页读取（startLine/endLine）不受此限制。
+const MAX_READ_BYTES: usize = 256 * 1024;
+
+/// 解码后文本的字符上限（约合 3 万 tokens，按 4 字符/token 估算）。
+/// 超过上限的文本（含 Office 文档提取文本）在字符边界截断并附加截断
+/// 标记，与 MAX_READ_BYTES 双重兜底。
+const MAX_READ_CHARS: usize = 120_000;
+
 /// 当 searchContent 不含行号前缀但文件内容含行号前缀（或反之）时，
 /// 逐行剥离前缀后重试匹配。
 const LINE_PREFIX_REGEX: &str = r"^\s*\d+[\s\|:]*";
@@ -50,7 +60,7 @@ impl McpService for FilesystemService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "read".to_string(),
-                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Text file encoding is auto-detected (UTF-8, UTF-16/32 with BOM, GBK/GB18030, Big5, Shift_JIS, EUC-KR, windows-1252, etc.) and decoded to UTF-8. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once.".to_string(),
+                description: "Read file content with line numbers. Supports text files, images, Office documents (pdf, docx, xlsx, xls, xlsb, xlsm, ods, csv, pptx), and directories. Text file encoding is auto-detected (UTF-8, UTF-16/32 with BOM, GBK/GB18030, Big5, Shift_JIS, EUC-KR, windows-1252, etc.) and decoded to UTF-8. Office documents are extracted to plain text and can be very long - ALWAYS read them in chunks via startLine/endLine (e.g. read the first 100 lines first, then decide the next range based on the returned totalLines) instead of loading the whole document at once. Files larger than 256 KB are truncated to the first 256 KB / 120K characters with a [content truncated] marker when no startLine/endLine is given - pass startLine/endLine to page through the remaining lines.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -955,17 +965,37 @@ fn read_path(
         }));
     }
 
-    let content = if let Some(kind) = office_document_kind(path) {
-        extract_office_document_text(path, kind)?
+    let (content, truncated) = if let Some(kind) = office_document_kind(path) {
+        let text = extract_office_document_text(path, kind)?;
+        // 显式分页（startLine/endLine）不做任何截断：字符截断会把
+        // 分页读取截回前 MAX_READ_CHARS 字符，使 AI 永远读不到
+        // 截断点之后的内容。只有无范围读取才施加截断。
+        if start_line.is_none() && end_line.is_none() {
+            truncate_text_chars(text, MAX_READ_CHARS)
+        } else {
+            (text, false)
+        }
     } else {
         // 字节读取 + 自动编码检测（BOM/chardetng），统一解码为 UTF-8。
-        let bytes = fs::read(path).map_err(|error| {
-            Error::new(
-                Status::GenericFailure,
-                format!("Failed to read file: {} (path: {})", error, file_path),
+        // 无显式行范围时受 MAX_READ_BYTES 限制，避免超大文件一次性
+        // 注入上下文；显式分页读取（startLine/endLine）不做字节截断。
+        let (bytes, byte_truncated) = if start_line.is_none() && end_line.is_none() {
+            read_bytes_with_cap(path, MAX_READ_BYTES)?
+        } else {
+            (
+                fs::read(path).map_err(|error| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!(
+                            "Failed to read file: {} (path: {})",
+                            error, file_path
+                        ),
+                    )
+                })?,
+                false,
             )
-        })?;
-        decode_text_bytes(&bytes)
+        };
+        let text = decode_text_bytes(&bytes)
             .map_err(|error| {
                 Error::new(
                     Status::GenericFailure,
@@ -975,10 +1005,74 @@ fn read_path(
                     ),
                 )
             })?
-            .text
+            .text;
+        if start_line.is_none() && end_line.is_none() {
+            let (text, char_truncated) = truncate_text_chars(text, MAX_READ_CHARS);
+            (text, byte_truncated || char_truncated)
+        } else {
+            (text, false)
+        }
     };
 
-    Ok(format_numbered_lines(&content, start_line, end_line))
+    Ok(format_numbered_lines(&content, start_line, end_line, truncated))
+}
+
+/// 读取文件字节；文件超过 max_bytes 时只读取前 max_bytes 字节并返回
+/// 是否发生截断。截断可能切断多字节字符尾部，由解码器以替换字符兜底
+/// （不影响整体解码，也不会触发二进制判定）。
+fn read_bytes_with_cap(path: &Path, max_bytes: usize) -> napi::Result<(Vec<u8>, bool)> {
+    use std::io::Read;
+
+    let mut file = fs::File::open(path).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!(
+                "Failed to read file: {} (path: {})",
+                error,
+                path.display()
+            ),
+        )
+    })?;
+    let size = file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+
+    if size <= max_bytes {
+        let mut bytes = Vec::with_capacity(size);
+        file.read_to_end(&mut bytes).map_err(|error| {
+            Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Failed to read file: {} (path: {})",
+                    error,
+                    path.display()
+                ),
+            )
+        })?;
+        return Ok((bytes, false));
+    }
+
+    let mut bytes = Vec::with_capacity(max_bytes);
+    file.take(max_bytes as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            Error::new(
+                Status::GenericFailure,
+                format!(
+                    "Failed to read file: {} (path: {})",
+                    error,
+                    path.display()
+                ),
+            )
+        })?;
+    Ok((bytes, true))
+}
+
+/// 将文本截断到 max_chars 个字符（在字符边界截断），返回截断后的文本
+/// 与是否发生截断。
+fn truncate_text_chars(text: String, max_chars: usize) -> (String, bool) {
+    if text.chars().count() <= max_chars {
+        return (text, false);
+    }
+    (text.chars().take(max_chars).collect(), true)
 }
 
 fn is_image_file(path: &Path) -> bool {
@@ -1033,11 +1127,13 @@ fn read_image_as_data_url(path: &Path) -> napi::Result<String> {
 }
 
 /// 将文本内容按行号范围分页，返回带行号前缀的内容。
-/// 文本文件与 Office 文档提取出的文本共用该逻辑。
+/// `truncated` 为 true 时（读取时超过大小上限被截断），在内容末尾附加
+/// 截断标记，并在返回 JSON 中携带 `"truncated": true` 供 AI 识别。
 fn format_numbered_lines(
     content: &str,
     start_line: Option<u64>,
     end_line: Option<u64>,
+    truncated: bool,
 ) -> Value {
     let lines: Vec<&str> = content.lines().collect();
     let total_lines = lines.len();
@@ -1059,9 +1155,22 @@ fn format_numbered_lines(
         .min(total_lines);
 
     if start >= total_lines {
+        // 截断场景下 AI 按标记尝试从截断点之后继续分页时，start 会
+        // 越过已读行数：返回引导信息而非空内容，让分页可以继续。
+        let content = if truncated {
+            format!(
+                "File content was truncated at line {}. The file has more lines; \
+                 use startLine={} to continue reading the next chunk.",
+                total_lines,
+                total_lines + 1
+            )
+        } else {
+            String::new()
+        };
         return json!({
-            "content": "",
-            "totalLines": total_lines
+            "content": content,
+            "totalLines": total_lines,
+            "truncated": truncated
         });
     }
 
@@ -1071,10 +1180,23 @@ fn format_numbered_lines(
         .map(|(index, line)| format!("{:>6}: {}", start + index + 1, line))
         .collect();
 
+    let mut content = selected.join("\n");
+    if truncated {
+        // 截断标记：提示 AI 文件超出单次读取上限，并给出可执行的
+        // 分页起点（截断行号 + 1），totalLines 为本次已读行数。
+        content.push_str(&format!(
+            "\n\n[content truncated at line {}: file has more lines; \
+             use startLine={} to continue reading the remaining content]",
+            total_lines,
+            total_lines + 1
+        ));
+    }
+
     json!({
-        "content": selected.join("\n"),
+        "content": content,
         "totalLines": total_lines,
         "startLine": start + 1,
-        "endLine": end
+        "endLine": end,
+        "truncated": truncated
     })
 }

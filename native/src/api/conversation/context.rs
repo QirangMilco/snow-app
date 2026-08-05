@@ -25,6 +25,13 @@ file paths, line numbers, function signatures, or facts that are not present \
 in the context. If the information is not available in the context, say so \
 explicitly.";
 
+/// 上下文预算中预留给模型输出的比例：输入（system + 历史 + 当前消息）
+/// 最多占用上下文窗口的 80%，确保模型压缩/回答仍有足够的输出空间。
+const OUTPUT_RESERVE_RATIO: f64 = 0.2;
+
+/// 每条消息的固定 token 开销（角色标记、消息分隔符等）。
+const MESSAGE_OVERHEAD_TOKENS: usize = 8;
+
 pub struct PreparedConversationRequest {
     pub conversation_id: String,
     pub messages: Vec<ChatContextMessage>,
@@ -162,6 +169,11 @@ pub fn prepare_context_request(
         );
     }
 
+    // 按 max_context_tokens 预算截断历史：system prompt 与当前请求消息
+    // 必须完整保留，只从最旧的历史消息开始丢弃，并预留 20% 输出空间，
+    // 防止输入超出模型上下文窗口导致请求被拒。
+    apply_context_budget(&mut messages, &current_messages, request.max_context_tokens);
+
     messages.extend(current_messages.iter().cloned());
 
     // BTW 旁路问答（skip_persist = true）：临时问答不落库、不带工具。
@@ -246,6 +258,112 @@ fn normalize_messages(messages: &[ChatContextMessage]) -> Vec<ChatContextMessage
             })
         })
         .collect()
+}
+
+/// 按 max_context_tokens 预算截断历史消息：保留第一条（system prompt 或
+/// 最早的消息）与最新消息，从最旧的历史开始丢弃，并预留 20% 输出空间。
+/// 当前请求消息（`current_messages`）不参与截断，必须完整保留。
+fn apply_context_budget(
+    messages: &mut Vec<ChatContextMessage>,
+    current_messages: &[ChatContextMessage],
+    max_context_tokens: Option<i32>,
+) {
+    let Some(limit) = max_context_tokens.filter(|limit| *limit > 0) else {
+        return;
+    };
+
+    // 输入预算 = 上下文窗口 - 输出预留。当前请求消息优先占满预算，
+    // 剩余部分才分配给历史。
+    let input_budget = ((limit as f64) * (1.0 - OUTPUT_RESERVE_RATIO)) as usize;
+    let current_cost: usize = current_messages.iter().map(estimate_message_tokens).sum();
+    let history_budget = input_budget.saturating_sub(current_cost);
+
+    // 第一条消息（注入的 system prompt 或最早的消息）始终保留；
+    // 没有历史可裁剪时直接返回。
+    if messages.len() <= 1 {
+        return;
+    }
+
+    // 从最新的历史消息向前累计 token 占用，确定可保留的起始下标：
+    // 预算越小，保留的越是靠近当前的消息（滑动窗口语义）。
+    let mut keep_start = messages.len();
+    let mut cost = 0usize;
+    for index in (1..messages.len()).rev() {
+        cost += estimate_message_tokens(&messages[index]);
+        if cost > history_budget {
+            break;
+        }
+        keep_start = index;
+    }
+
+    if keep_start == messages.len() {
+        // 预算连一条历史消息都放不下：仅保留第一条（system）与最新一条
+        // 历史消息（messages 按旧→新排列，最后一条即最新；孤立的工具
+        // 消息由 ensure_tool_pairing 兜底修复）。
+        let last = messages.pop();
+        messages.truncate(1);
+        if let Some(last) = last {
+            messages.push(last);
+        }
+    } else if keep_start > 1 {
+        // 丢弃 [1..keep_start) 之间的最旧历史。
+        messages.drain(1..keep_start);
+    }
+}
+
+/// 粗略估算一条消息的 token 数：content / thinking / thinking_blocks /
+/// 工具调用与结果各按文本估算，另加固定的消息开销。
+fn estimate_message_tokens(message: &ChatContextMessage) -> usize {
+    estimate_text_tokens(&message.content)
+        + message
+            .thinking
+            .as_deref()
+            .map(estimate_text_tokens)
+            .unwrap_or(0)
+        + message
+            .thinking_blocks_json
+            .as_deref()
+            .map(estimate_text_tokens)
+            .unwrap_or(0)
+        + message
+            .tool_calls_json
+            .as_deref()
+            .map(estimate_text_tokens)
+            .unwrap_or(0)
+        + message
+            .tool_results_json
+            .as_deref()
+            .map(estimate_text_tokens)
+            .unwrap_or(0)
+        + MESSAGE_OVERHEAD_TOKENS
+}
+
+/// 粗略估算文本 token 数：CJK 字符按 1 token、其余按 4 字符/token
+/// （中英混排的常用近似），下限 1。
+fn estimate_text_tokens(text: &str) -> usize {
+    let mut cjk = 0usize;
+    let mut other = 0usize;
+    for ch in text.chars() {
+        if is_cjk_char(ch) {
+            cjk += 1;
+        } else {
+            other += 1;
+        }
+    }
+    cjk + other / 4 + 1
+}
+
+/// 是否为 CJK 字符（含全角符号、假名、部首），用于 token 估算。
+fn is_cjk_char(ch: char) -> bool {
+    matches!(ch as u32,
+        0x2E80..=0x2EFF   // 部首补充
+        | 0x3000..=0x303F // CJK 标点
+        | 0x3040..=0x30FF // 日文假名
+        | 0x3400..=0x4DBF // 扩展 A
+        | 0x4E00..=0x9FFF // 统一表意
+        | 0xF900..=0xFAFF // 兼容表意
+        | 0xFF00..=0xFFEF // 全角形式
+    )
 }
 
 /// Read the user's configured default shell type from the terminal settings

@@ -30,6 +30,58 @@ import {
 } from "./agentLoopHelpers";
 import { createSubAgentActivation } from "./subAgentActivation";
 import { createToolExecutor } from "./toolExecution";
+import type { ApiConfigRecord } from "../../../../../preload";
+import {
+  DEFAULT_AUTO_COMPRESS_THRESHOLD_PERCENT,
+  calculateAutoCompressThresholdTokens,
+} from "../../../sidebar/apiSettings/autoCompressThreshold";
+
+/**
+ * 解析自动压缩的有效触发阈值（token），供 in-loop 与 pre-send 两处决策点
+ * 复用，保证同一配置下行为一致：
+ * - 优先使用配置保存时解析出的 autoCompressThreshold（token 值）。它是
+ *   从百分比按 maxContextTokens 算出的，不要再用
+ *   calculateAutoCompressThresholdTokens 处理——那函数期望百分比输入，
+ *   会把 token 值钳制到上下文的 100%；
+ * - 缺失/无效时（如导入的 profile 无 maxContextTokens）按默认 80% 从
+ *   上下文窗口推导，自动压缩不会静默失效；
+ * - 输出预算纳入：有效阈值不能超过"上下文窗口 - 输出预留"，否则压缩后
+ *   模型没有足够空间输出交接文档。输出预留取 maxTokens，未配置时按
+ *   窗口的 20% 估算（下限 4096）。
+ * 返回 null 表示无法确定阈值（不触发自动压缩）。
+ */
+const resolveEffectiveAutoCompressThreshold = (
+  apiConfig: ApiConfigRecord | null | undefined
+): number | null => {
+  if (!apiConfig) {
+    return null;
+  }
+  let thresholdTokens = apiConfig.autoCompressThreshold;
+  const maxContextTokens = apiConfig.maxContextTokens ?? null;
+  if (thresholdTokens == null || thresholdTokens <= 0) {
+    thresholdTokens =
+      maxContextTokens != null && maxContextTokens > 0
+        ? calculateAutoCompressThresholdTokens(
+            maxContextTokens,
+            DEFAULT_AUTO_COMPRESS_THRESHOLD_PERCENT
+          )
+        : null;
+  }
+  if (thresholdTokens == null || thresholdTokens <= 0) {
+    return null;
+  }
+  if (maxContextTokens != null && maxContextTokens > 0) {
+    const outputReserve =
+      apiConfig.maxTokens != null && apiConfig.maxTokens > 0
+        ? apiConfig.maxTokens
+        : Math.max(4096, Math.round(maxContextTokens * 0.2));
+    return Math.min(
+      thresholdTokens,
+      Math.max(1, maxContextTokens - outputReserve)
+    );
+  }
+  return thresholdTokens;
+};
 
 export type UseAgentLoopParams = {
   ctx: ConversationContextValue;
@@ -501,17 +553,15 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           // actually runs on — never the global active profile.
           const apiConfig = await ctx.getActiveApiConfig(options.apiProfile);
           if (apiConfig?.enableAutoCompress) {
-            // autoCompressThreshold is stored in TOKENS (resolved from the
-            // configured percent against maxContextTokens when the config is
-            // saved). Compare the live token total against it directly — do NOT
-            // run it through calculateAutoCompressThresholdTokens, which expects
-            // a percent and would clamp a token value to 100% of the context.
-            const thresholdTokens = apiConfig.autoCompressThreshold;
-            if (thresholdTokens != null && thresholdTokens > 0) {
+            // Threshold resolution shared with the pre-send path: fallback
+            // derivation from maxContextTokens plus output-budget clipping.
+            const effectiveThreshold =
+              resolveEffectiveAutoCompressThreshold(apiConfig);
+            if (effectiveThreshold != null && effectiveThreshold > 0) {
               const totalTokens =
                 response.tokenUsage.inputTokens +
                 response.tokenUsage.outputTokens;
-              if (totalTokens >= thresholdTokens) {
+              if (totalTokens >= effectiveThreshold) {
                 // Finalize the assistant message that crossed the threshold so
                 // it does not linger in "sending" state (the normal finalize
                 // step below is skipped when we divert into compaction). Any
@@ -878,18 +928,18 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           // actually runs on — never the global active profile.
           const apiConfig = await ctx.getActiveApiConfig(options.apiProfile);
           if (apiConfig?.enableAutoCompress) {
-            // autoCompressThreshold is stored in TOKENS — compare directly (see
-            // the in-loop check for why calculateAutoCompressThresholdTokens is
-            // intentionally not used here).
-            const thresholdTokens = apiConfig.autoCompressThreshold;
-            if (thresholdTokens != null && thresholdTokens > 0) {
+            // Threshold resolution shared with the in-loop path: fallback
+            // derivation from maxContextTokens plus output-budget clipping.
+            const effectiveThreshold =
+              resolveEffectiveAutoCompressThreshold(apiConfig);
+            if (effectiveThreshold != null && effectiveThreshold > 0) {
               const currentTokenUsage =
                 ctx.sessionsRef.current?.[sessionKey]?.tokenUsage ?? null;
               if (currentTokenUsage) {
                 const totalTokens =
                   currentTokenUsage.inputTokens +
                   currentTokenUsage.outputTokens;
-                if (totalTokens >= thresholdTokens) {
+                if (totalTokens >= effectiveThreshold) {
                   await ctx.performCompactionRef.current(
                     sessionKey,
                     options.model,
