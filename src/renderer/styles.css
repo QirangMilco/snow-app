@@ -1301,6 +1301,9 @@ input {
   color: #fff;
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.chat-item-checkbox {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1337,6 +1340,9 @@ input {
 
 .chat-item.selected:hover {
   background: color-mix(in srgb, var(--accent, #3b82f6) 20%, transparent);
+}
+
+.chat-item.selected:hover {
   background: color-mix(in srgb, var(--accent-color) 16%, transparent);
 }
 
@@ -3389,6 +3395,9 @@ input {
   color: var(--text-tertiary);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.plugins-marketplace-load-error {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--accent-red-text) 32%, transparent);
   color: var(--accent-red-text);
@@ -3628,6 +3637,9 @@ input {
   flex-shrink: 0;
   color: var(--accent-green-text);
   font-size: 11px;
+}
+
+.plugins-marketplace-unsupported {
   color: var(--accent-amber-text);
 }
 
@@ -3841,6 +3853,9 @@ input {
   color: var(--accent-green-text);
   font-size: 11px;
   font-weight: 650;
+}
+
+.import-settings-missing {
   color: var(--accent-amber-text);
 }
 
@@ -4583,6 +4598,9 @@ input {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.api-model-combobox-error {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -4664,6 +4682,9 @@ input {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.api-settings-form-actions {
   justify-content: flex-end;
 }
 
@@ -6238,6 +6259,9 @@ input {
   .user-message-rail-popover-item-index {
   background: var(--accent-primary, var(--text-tertiary));
   color: var(--on-solid);
+}
+
+.user-message-rail-popover-item-index {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6473,6 +6497,9 @@ input {
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
   animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.chat-history-skeleton-line {
   width: 72px;
   height: 8px;
 }
@@ -7711,7 +7738,6 @@ input {
 .context-compaction-message-body .context-compaction-markdown h3,
 .context-compaction-message-body .context-compaction-markdown h4 {
   margin: 16px 0 8px;
-  font-size: 14px;
 }
 
 .context-compaction-message-body .context-compaction-markdown h1 {
@@ -7723,6 +7749,9 @@ input {
 }
 
 .context-compaction-message-body .context-compaction-markdown h3,
+.context-compaction-message-body .context-compaction-markdown h4 {
+  font-size: 14px;
+}
 
 .context-compaction-stream,
 .context-compaction-error {
@@ -7731,12 +7760,6 @@ input {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--surface-island);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 12px;
-  color: var(--accent-red-text);
-  font-size: 12px;
 }
 
 .context-compaction-stream {
@@ -7746,6 +7769,15 @@ input {
   flex-direction: column;
   overflow: hidden;
   box-shadow: var(--island-shadow);
+}
+
+.context-compaction-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  color: var(--accent-red-text);
+  font-size: 12px;
 }
 
 .context-compaction-stream-title {
@@ -7810,7 +7842,6 @@ input {
   color: var(--text-primary);
   font-weight: 720;
   line-height: 1.35;
-  font-size: 15px;
 }
 
 .context-compaction-markdown h1:first-child,
@@ -7831,6 +7862,9 @@ input {
 }
 
 .context-compaction-markdown h3,
+.context-compaction-markdown h4 {
+  font-size: 15px;
+}
 
 .context-compaction-markdown p {
   margin: 0 0 12px;
@@ -7922,9 +7956,6 @@ input {
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  width: 26px;
-  height: 26px;
-  padding: 0;
 }
 
 .context-compaction-markdown .code-block-lang {
@@ -7933,6 +7964,12 @@ input {
   margin-left: -6px;
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.context-compaction-markdown .code-block-copy {
+  width: 26px;
+  height: 26px;
+  padding: 0;
 }
 
 .context-compaction-markdown .code-block-lang:hover,
@@ -8293,8 +8330,6 @@ input {
   color: var(--text-tertiary);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
-  color: var(--text-primary);
-  background: var(--bg-hover);
 }
 
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
@@ -8320,13 +8355,15 @@ input {
   .mermaid-btn-code,
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-block[data-mermaid-view="diagram"]
+  .mermaid-btn-diagram {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
 
 /* Code view: visible by default (during streaming and when view=code). */
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-view-code {
   display: block;
-  display: block;
-  display: none;
 }
 
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
@@ -8356,28 +8393,37 @@ input {
   padding: 16px;
   overflow: auto;
   text-align: center;
-  display: none;
+}
+
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .mermaid-block[data-mermaid-view="code"]
+  .mermaid-view-code {
   display: block;
 }
 
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-block[data-mermaid-view="code"]
-
-:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
-  .mermaid-block[data-mermaid-view="code"]
-
-:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
-  .mermaid-block[data-mermaid-view="diagram"]
+  .mermaid-view-diagram {
+  display: none;
+}
 
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-block[data-mermaid-view="diagram"]
+  .mermaid-view-code {
+  display: none;
+}
+
+:is(.ai-message, .file-viewer-code, .context-compaction-markdown)
+  .mermaid-block[data-mermaid-view="diagram"]
+  .mermaid-view-diagram {
+  display: block;
+}
 
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-view-diagram
   svg {
   max-width: 100%;
   height: auto;
-  cursor: zoom-in;
 }
 
 /* Export dropdown menu (created dynamically by mermaidRenderer.openExportMenu).
@@ -8419,6 +8465,9 @@ input {
 :is(.ai-message, .file-viewer-code, .context-compaction-markdown)
   .mermaid-block[data-mermaid-view="diagram"]
   .mermaid-view-diagram
+  svg {
+  cursor: zoom-in;
+}
 
 /* Mermaid image viewer (lightbox) — created dynamically by
    mermaidRenderer.openMermaidImageViewer. Rendered in document.body, so it is
@@ -8651,7 +8700,6 @@ input {
   user-select: none;
   white-space: nowrap;
   transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
-  margin-top: 6px;
 }
 
 .thinking-block-expand-btn:hover,
@@ -8662,6 +8710,9 @@ input {
 }
 
 /* Collapse button is placed below the expanded content */
+.thinking-block-collapse-btn {
+  margin-top: 6px;
+}
 
 /* Tool Message */
 .chat-message-tool {
@@ -13454,6 +13505,9 @@ input {
 .search-result-item:hover,
 .search-result-item.active {
   background: var(--bg-hover);
+}
+
+.search-result-item.active {
   background: var(--bg-active);
 }
 
@@ -16446,15 +16500,18 @@ input {
   top: 100%;
   border-style: solid;
   border-color: transparent;
-  right: 11px;
-  border-width: 5px;
-  border-top-color: var(--bg-secondary);
 }
 
 .token-usage-tooltip::before {
   right: 10px;
   border-width: 6px;
   border-top-color: var(--border-light);
+}
+
+.token-usage-tooltip::after {
+  right: 11px;
+  border-width: 5px;
+  border-top-color: var(--bg-secondary);
 }
 
 @keyframes token-usage-tooltip-in {
@@ -18495,6 +18552,9 @@ input {
   text-align: center;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.git-control-error {
   color: var(--accent-red);
 }
 
@@ -19137,6 +19197,9 @@ input {
   color: var(--text-secondary);
   font-size: 11.5px;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.project-sensitive-command-save {
   border-color: var(--text-primary);
   background: var(--text-primary);
   color: var(--on-solid);
@@ -19147,6 +19210,9 @@ input {
   border-color: var(--text-muted);
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.project-sensitive-command-save:hover:not(:disabled) {
   background: var(--text-secondary);
   color: var(--on-solid);
 }
@@ -19297,6 +19363,9 @@ input {
   color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
+}
+
+.project-sensitive-command-override {
   background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-tertiary));
   color: var(--text-secondary);
 }
@@ -25381,6 +25450,11 @@ body.ctrl-held [data-path] {
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.personalization-section:hover {
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .personalization-section-header {
