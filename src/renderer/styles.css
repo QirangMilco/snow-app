@@ -26434,12 +26434,15 @@ body.ctrl-held [data-path] {
 
 .btw-popup {
   position: absolute;
-  right: 0;
+  left: 0;
   bottom: calc(100% + 8px);
-  z-index: 60;
+  z-index: 100;
   display: flex;
   width: 340px;
   max-width: calc(100vw - 48px);
+  /* 短窗口兜底：内容超高时内部滚动，避免被窗口顶边/overflow 容器裁剪 */
+  max-height: calc(100vh - 160px);
+  overflow-y: auto;
   flex-direction: column;
   gap: 8px;
   padding: 12px;

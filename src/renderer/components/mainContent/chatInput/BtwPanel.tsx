@@ -1,6 +1,6 @@
 import {
-  HelpCircle,
   Loader2,
+  MessageCircleQuestion,
   MessageSquarePlus,
   RefreshCw,
   Square,
@@ -228,7 +228,7 @@ export function BtwPanel({
         title={t("btw.trigger", { defaultValue: "Ask by the way" })}
         onClick={() => (isOpen ? close() : open())}
       >
-        <HelpCircle size={15} />
+        <MessageCircleQuestion size={15} />
       </button>
 
       {isOpen ? (
