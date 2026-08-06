@@ -3,19 +3,19 @@
 // 用法：node scripts/generate-latest-json.cjs <tag> [releaseDir]
 //   例如：node scripts/generate-latest-json.cjs v0.1.12
 //
-// 在 release 目录中查找 Snow-App-<version>-<arch>.zip（arm64 / x64），
-// 计算每个包的 SHA-256 与大小，输出 latest-mac.json：
+// 在 release 目录中查找 Snow-App-<version>-arm64.zip，
+// 计算包的 SHA-256 与大小，输出 latest-mac.json：
 //
 // {
 //   "version": "0.1.12",
 //   "publishedAt": "2026-08-01T06:00:00.000Z",
 //   "files": {
-//     "arm64": { "url": ".../Snow-App-0.1.12-arm64.zip", "sha256": "...", "size": 12345 },
-//     "x64":   { "url": ".../Snow-App-0.1.12-x64.zip",   "sha256": "...", "size": 12345 }
+//     "arm64": { "url": ".../Snow-App-0.1.12-arm64.zip", "sha256": "...", "size": 12345 }
 //   }
 // }
 //
 // 应用主进程请求该清单比对版本、下载 zip 并校验 SHA-256 后静默替换。
+// 注：macOS x64 平台已放弃，仅生成 arm64 条目。
 
 const { createHash } = require("node:crypto");
 const { existsSync, readFileSync, writeFileSync } = require("node:fs");
@@ -37,7 +37,7 @@ const version = tag.replace(/^v/i, "");
 
 const files = {};
 
-for (const arch of ["arm64", "x64"]) {
+for (const arch of ["arm64"]) {
   const zipName = `Snow-App-${version}-${arch}.zip`;
   const zipPath = join(releaseDir, zipName);
 

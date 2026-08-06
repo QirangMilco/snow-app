@@ -286,56 +286,6 @@ jobs:
             release/*.zip
             release/latest-mac-arm64.yml
 
-  build-macos-x64:
-    name: 构建 macOS x64
-    runs-on: macos-15-intel
-    needs: prepare-release
-    env:
-      VERSION: ${{ needs.prepare-release.outputs.version }}
-      NATIVE_BUILD_ARCH: x64
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      CARGO_NET_RETRY: 5
-      CARGO_HTTP_TIMEOUT: 120
-
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare-release.outputs.ref }}
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: 安装 Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - name: 安装依赖
-        run: npm ci
-
-      - name: 构建（Rust native + TypeScript + Vite）
-        run: npm run build
-
-      - name: 打包 dmg + zip
-        run: |
-          npx electron-builder --mac dmg zip --x64 --publish never \
-            --config.extraMetadata.version=${{ env.VERSION }}
-          ls -la release/
-
-      - name: 上传产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-macos-x64
-          if-no-files-found: error
-          path: |
-            release/*.dmg
-            release/*.zip
-            release/latest-mac.yml
-
   build-linux-amd64:
     name: 构建 Linux amd64
     runs-on: ubuntu-latest
@@ -446,7 +396,6 @@ jobs:
     needs:
       - prepare-release
       - build-macos-arm64
-      - build-macos-x64
       - build-linux-amd64
       - build-windows-amd64
     env:
@@ -484,7 +433,7 @@ jobs:
           echo "Release notes:"
           cat /tmp/release-notes.md
 
-      - name: 合并 macOS 更新清单（arm64 + x64）
+      - name: 合并 macOS 更新清单（arm64）
         shell: bash
         run: node scripts/merge-mac-yml.cjs
 

@@ -16,8 +16,6 @@
     "build:win": "npm run build && electron-builder --win nsis portable",
     "build:mac": "npm run build && electron-builder --mac dmg zip",
     "build:mac:arm64": "npm run build && electron-builder --mac dmg zip --arm64",
-    "build:mac:x64": "npm run build && electron-builder --mac dmg zip --x64",
-    "build:mac:universal": "npm run build && electron-builder --mac dmg zip --universal",
     "update:manifest": "node scripts/generate-latest-json.cjs",
     "build:linux": "npm run build && electron-builder --linux AppImage deb",
     "build:all": "npm run build && electron-builder -mwl",
