@@ -17,6 +17,11 @@ import { useI18n } from "../../../i18n";
 import { getFileTypeIcon } from "../../../utils/fileIcons";
 import { ContextMenu, type ContextMenuItem } from "../../common/ContextMenu";
 
+// 渲染数量上限：文件数超过该值时只渲染前 N 行，防止大量变更（几百/几千个文件）
+// 时整屏 DOM 节点爆炸（每行约 8-10 个节点，3000 个文件即约 3 万个节点），
+// 导致 React 重渲染与浏览器布局/绘制卡顿整个应用。
+const RENDER_LIMIT = 200;
+
 type GitFileListProps = {
   repoPath: string;
   files: GitFileStatus[];
@@ -308,6 +313,13 @@ export const GitFileList = ({
     });
   };
 
+  // 超过 RENDER_LIMIT 时只渲染前 RENDER_LIMIT 行，底部提供"显示全部"开关。
+  // hiddenCount 不依赖 visibleFiles：showAll=true 时也应保持 > 0，
+  // 这样"收起文件列表"按钮始终可达。
+  const [showAll, setShowAll] = useState(false);
+  const visibleFiles = showAll ? files : files.slice(0, RENDER_LIMIT);
+  const hiddenCount = Math.max(0, files.length - RENDER_LIMIT);
+
   const handleFileDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>, file: GitFileStatus) => {
       const tag = {
@@ -388,7 +400,7 @@ export const GitFileList = ({
           </div>
         ) : (
           <div className="git-file-list-items">
-            {files.map((file) => {
+            {visibleFiles.map((file) => {
               const isSelected = selectedPaths.has(`${section}:${file.path}`);
               const lastSep = Math.max(
                 file.path.lastIndexOf("/"),
@@ -485,6 +497,24 @@ export const GitFileList = ({
                 </div>
               );
             })}
+            {hiddenCount > 0 && (
+              <div className="git-file-list-more">
+                <button
+                  type="button"
+                  className="git-file-list-more-btn"
+                  onClick={() => setShowAll((v) => !v)}
+                >
+                  {showAll
+                    ? t("git.collapseFiles", {
+                        defaultValue: "Collapse",
+                      })
+                    : t("git.showAllFiles", {
+                        values: { count: hiddenCount },
+                        defaultValue: "Show all {{count}} more files",
+                      })}
+                </button>
+              </div>
+            )}
           </div>
         ))}
       {contextMenu && (

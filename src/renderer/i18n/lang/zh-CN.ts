@@ -2541,6 +2541,8 @@ export const zhCN = {
   "git.graphTag": "标签",
   "git.collapseSection": "收起",
   "git.expandSection": "展开",
+  "git.showAllFiles": "显示全部 {{count}} 个文件",
+  "git.collapseFiles": "收起文件列表",
   "git.pushFailed": "推送失败",
   "git.pullFailed": "拉取失败",
   "git.errorDismiss": "确定",

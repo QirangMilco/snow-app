@@ -8757,6 +8757,13 @@ input {
 .ai-message p,
 .ai-message ol {
   margin-top: 0;
+}
+
+/* 有序列表单独保留 flex column 排版（列表项垂直排列 + 间距）。
+   注意：flex 布局绝不能应用到 p/h2/h3——那会把段落内的行内元素
+   （strong/em/code/a）全部 blockify 成 flex item，导致行内格式
+   被渲染成独立成行（"行内变行间"问题）。 */
+.ai-message ol {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -20603,6 +20610,29 @@ input {
 .git-file-list-items {
   display: flex;
   flex-direction: column;
+}
+
+.git-file-list-more {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.15));
+}
+
+.git-file-list-more-btn {
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.1s, color 0.1s;
+}
+
+.git-file-list-more-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .git-file-item {

@@ -12,7 +12,7 @@ import {
   Square,
   Terminal as TerminalIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "../../common/ConfirmDialog";
 import { ContextMenu, type ContextMenuItem } from "../../common/ContextMenu";
 import type {
@@ -87,6 +87,27 @@ export const GitControl = ({
   const lastClickedSectionRef = useRef<"staged" | "unstaged" | null>(null);
   const prevStatusRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // 大量变更（几千个文件）时避免每次渲染重复 filter 全量数组。
+  // 注意：必须放在所有 early return 之前（hooks 顺序规则），
+  // status 为空时返回空数组，由下游渲染分支处理。
+  const { stagedFiles, unstagedFiles } = useMemo(() => {
+    if (!status || !status.isRepo) {
+      return {
+        stagedFiles: [] as GitFileStatus[],
+        unstagedFiles: [] as GitFileStatus[],
+      };
+    }
+    const staged = status.files.filter(
+      (f) =>
+        f.indexStatus !== " " && f.indexStatus !== "?" && f.indexStatus !== ""
+    );
+    const unstaged = status.files.filter(
+      (f) =>
+        f.workdirStatus === "?" ||
+        (f.workdirStatus !== " " && f.workdirStatus !== "")
+    );
+    return { stagedFiles: staged, unstagedFiles: unstaged };
+  }, [status]);
   // Set to true after a commit succeeds; the effect below resets scroll
   // to top once the refreshed status has been applied to the DOM.
   const commitPendingRef = useRef(false);
@@ -649,16 +670,6 @@ export const GitControl = ({
       </div>
     );
   }
-
-  const stagedFiles = status.files.filter(
-    (f) =>
-      f.indexStatus !== " " && f.indexStatus !== "?" && f.indexStatus !== ""
-  );
-  const unstagedFiles = status.files.filter(
-    (f) =>
-      f.workdirStatus === "?" ||
-      (f.workdirStatus !== " " && f.workdirStatus !== "")
-  );
 
   return (
     <div className="git-control">

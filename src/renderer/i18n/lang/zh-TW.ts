@@ -2523,6 +2523,8 @@ export const zhTW = {
   "git.graphTag": "標籤",
   "git.collapseSection": "收起",
   "git.expandSection": "展開",
+  "git.showAllFiles": "顯示全部 {{count}} 個檔案",
+  "git.collapseFiles": "收起檔案清單",
   "git.pushFailed": "推送失敗",
   "git.pullFailed": "拉取失敗",
   "git.errorDismiss": "確定",

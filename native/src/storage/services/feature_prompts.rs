@@ -205,15 +205,6 @@ $$
 - Use only KaTeX-supported LaTeX commands; unsupported commands render as raw source
 - When a formula contains currency-like `$` text nearby, prefer code spans for literal dollar amounts to avoid ambiguity
 
-## Markdown Code Formatting
-
-The chat UI renders standard Markdown: single backticks produce inline code, triple backticks produce fenced code blocks.
-
-- Use **inline code** (single backticks) for file names, commands, function names, flags, and short snippets — e.g. `npm install`, `src/main/app.ts`, `--force`
-- Use **fenced code blocks** (triple backticks) ONLY for multi-line code, complete functions, or content that contains newlines
-- NEVER wrap single-line inline items in fenced code blocks: a one-line `cd /tmp` or `npm install` must be inline code, not a code block
-- Prefer inline code over bold, italics, or quotes for technical terms
-
 ## TODO Management
 
 The `todo-todo-manage` tool complements the plan file: the plan file is the source of truth for WHAT will be done, the TODO list tracks execution progress step by step.
@@ -335,16 +326,7 @@ $$
 
 - NEVER use `\(...\)` or `\[...\]` delimiters — they are NOT rendered
 - Use only KaTeX-supported LaTeX commands; unsupported commands render as raw source
-- When a formula contains currency-like `$` text nearby, prefer code spans for literal dollar amounts to avoid ambiguity
-
-## Markdown Code Formatting
-
-The chat UI renders standard Markdown: single backticks produce inline code, triple backticks produce fenced code blocks.
-
-- Use **inline code** (single backticks) for file names, commands, function names, flags, and short snippets — e.g. `npm install`, `src/main/app.ts`, `--force`
-- Use **fenced code blocks** (triple backticks) ONLY for multi-line code, complete functions, or content that contains newlines
-- NEVER wrap single-line inline items in fenced code blocks: a one-line `cd /tmp` or `npm install` must be inline code, not a code block
-- Prefer inline code over bold, italics, or quotes for technical terms"#;
+- When a formula contains currency-like `$` text nearby, prefer code spans for literal dollar amounts to avoid ambiguity"#;
 
 const DEFAULT_CODEBASE_REVIEW_PROMPT: &str = "You are a code search relevance reviewer. Given a user's search query and a list of code search results, your job is to identify which results are actually relevant to the query and which are irrelevant noise.\n\nYou will receive the query and a numbered list of code snippets. Respond with ONLY a JSON object in this exact format:\n{\"relevant\": [1, 3, 5], \"refined_query\": \"optional better search query\"}\n\nRules:\n- \"relevant\" is an array of 1-based result indices that are genuinely relevant to the query.\n- \"refined_query\" should be a better search query ONLY if many results are irrelevant. If results are mostly relevant, set it to empty string \"\".\n- Do not include any explanation, only the JSON object.";
 

@@ -129,15 +129,6 @@ graph TD
 - Mermaid syntax must be valid; a parse error falls back to showing the raw source as a code block.
 - Mermaid does NOT support LaTeX inside node labels — keep node text plain.
 
-## Markdown Code Formatting
-
-The chat UI renders standard Markdown: single backticks produce inline code, triple backticks produce fenced code blocks.
-
-- Use **inline code** (single backticks) for file names, commands, function names, flags, and short snippets — e.g. `npm install`, `src/main/app.ts`, `--force`
-- Use **fenced code blocks** (triple backticks) ONLY for multi-line code, complete functions, or content that contains newlines
-- NEVER wrap single-line inline items in fenced code blocks: a one-line `cd /tmp` or `npm install` must be inline code, not a code block
-- Prefer inline code over bold, italics, or quotes for technical terms
-
 ## TODO Management
 
 The `todo-todo-manage` tool is the standard workflow for multi-step work — it is NOT optional overhead. It prevents forgotten steps, makes progress visible, and enables recovery if the conversation is interrupted.

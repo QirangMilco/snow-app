@@ -2681,6 +2681,8 @@ export const en = {
   "git.graphTag": "Tag",
   "git.collapseSection": "Collapse section",
   "git.expandSection": "Expand section",
+  "git.showAllFiles": "Show all {{count}} more files",
+  "git.collapseFiles": "Collapse file list",
   "git.pushFailed": "Push Failed",
   "git.pullFailed": "Pull Failed",
   "git.errorDismiss": "OK",
