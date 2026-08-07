@@ -4,6 +4,7 @@ import {
   FileText,
   GitCommitHorizontal,
   GitCompare,
+  ScanSearch,
   Trash2,
 } from "lucide-react";
 import { useI18n } from "../../../i18n";
@@ -109,6 +110,25 @@ const renderSegments = (content: string): React.ReactNode => {
             size={12}
             className="user-message-file-chip-icon"
             style={{ color: "#6c757d" }}
+          />
+          <span className="user-message-file-chip-name">{tag.summary}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "review") {
+      const { tag } = segment;
+      const reviewTitle = `${tag.summary} (${tag.charCount} chars)`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip review-chip"
+          title={reviewTitle}
+        >
+          <ScanSearch
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#2ea043" }}
           />
           <span className="user-message-file-chip-name">{tag.summary}</span>
         </span>

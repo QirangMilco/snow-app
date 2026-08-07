@@ -19,7 +19,12 @@ export type TerminalTabInfo = {
 };
 
 export type TerminalMcpTabCallbacks = {
-  openTab: (cwd: string, tabId?: string, shellPath?: string) => string;
+  openTab: (
+    cwd: string,
+    tabId?: string,
+    shellPath?: string,
+    sessionId?: string
+  ) => string;
   closeTab: (tabId: string) => boolean;
   focusTab: (tabId: string) => boolean;
   listTabs: () => TerminalTabInfo[];
@@ -58,13 +63,17 @@ export const useTerminalMcpCommandBridge = (
               typeof args.shellPath === "string"
                 ? args.shellPath.trim() || undefined
                 : undefined;
+            const sessionId =
+              typeof args.sessionId === "string"
+                ? args.sessionId.trim() || undefined
+                : undefined;
             const activeDir = activeDirRef.current;
             const cwd =
               requestedCwd ||
               activeDir?.path ||
               "";
             const tabId = createTerminalTabId();
-            cb.openTab(cwd, tabId, shellPath);
+            cb.openTab(cwd, tabId, shellPath, sessionId);
             await waitForTerminalTab(tabId);
             return JSON.stringify({
               tabId,

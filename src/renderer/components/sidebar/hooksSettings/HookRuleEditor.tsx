@@ -76,7 +76,13 @@ export function HookRuleEditor({
       <div className="api-settings-form-grid">
         <label className="api-settings-field">
           <span>{t("settings.hookType", { defaultValue: "Hook type" })}</span>
-          <input value={draft.hookType} disabled />
+          <input
+            value={t(`hookTypes.${draft.hookType}`, {
+              defaultValue: draft.hookType,
+            })}
+            title={draft.hookType}
+            disabled
+          />
         </label>
         <label className="api-settings-field">
           <span>{t("settings.hookScope", { defaultValue: "Scope" })}</span>

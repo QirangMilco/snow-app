@@ -123,6 +123,12 @@ export const useChatInputController = ({
       noModelsFound: t("chat.noModelsFound", {
         defaultValue: "No models found",
       }),
+      searchModels: t("chat.searchModels", {
+        defaultValue: "Search models",
+      }),
+      noMatchingModels: t("chat.noMatchingModels", {
+        defaultValue: "No matching models",
+      }),
       cancel: t("common.cancel", { defaultValue: "Cancel" }),
       confirm: t("common.confirm", { defaultValue: "Confirm" }),
       retry: t("common.retry", { defaultValue: "Retry" }),

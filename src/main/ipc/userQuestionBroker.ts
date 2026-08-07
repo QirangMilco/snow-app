@@ -5,6 +5,7 @@ import type {
   UserQuestionRequest,
   UserQuestionResponse,
 } from "../native/types";
+import { safeSend } from "../utils/safeSend";
 
 const USER_QUESTION_CHANNEL = "user-question:request";
 const USER_QUESTION_RESPONSE_CHANNEL = "user-question:response";
@@ -69,7 +70,7 @@ export const dispatchUserQuestion = async (
     });
 
     try {
-      source.send(USER_QUESTION_CHANNEL, request);
+      safeSend(source, USER_QUESTION_CHANNEL, request);
     } catch (error) {
       pendingQuestions.delete(questionId);
       reject(error instanceof Error ? error : new Error(String(error)));

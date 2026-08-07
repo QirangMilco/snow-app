@@ -651,7 +651,11 @@ export function HooksSettingsPanel({
           defaultValue:
             'Delete configuration for hook "{{hookType}}" in {{scope}} scope?',
           values: {
-            hookType: hookPendingDeletion?.hookType ?? "",
+            hookType: hookPendingDeletion
+              ? t(`hookTypes.${hookPendingDeletion.hookType}`, {
+                  defaultValue: hookPendingDeletion.hookType,
+                })
+              : "",
             scope:
               hookPendingDeletion?.scope === "global"
                 ? t("settings.hooksTabGlobal", { defaultValue: "global" })

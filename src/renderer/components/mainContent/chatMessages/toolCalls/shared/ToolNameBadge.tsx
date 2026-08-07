@@ -1,19 +1,18 @@
 import {
-  FileText,
+  Bot,
   FilePen,
   FilePlus,
-  Wrench,
+  FileText,
+  GitBranch,
+  Globe,
+  Image as ImageIcon,
+  ListChecks,
+  ListTree,
+  MessageCircleQuestion,
+  ScanSearch,
   Search,
   Terminal,
-  Globe,
-  GitBranch,
-  ListTree,
-  ListChecks,
-  MessageCircleQuestion,
-  Bot,
-  Hammer,
-  ScanSearch,
-  Image as ImageIcon,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,7 +32,7 @@ export type ToolCategory =
   | "image"
   | "generic";
 
-export const TOOL_ICON_MAP: Record<ToolCategory, LucideIcon> = {
+const CATEGORY_ICONS: Record<ToolCategory, LucideIcon> = {
   read: FileText,
   edit: FilePen,
   create: FilePlus,
@@ -49,6 +48,10 @@ export const TOOL_ICON_MAP: Record<ToolCategory, LucideIcon> = {
   image: ImageIcon,
   generic: Wrench,
 };
+
+/** Resolve a fixed icon for every tool category. */
+const getToolIcon = (category: ToolCategory): LucideIcon =>
+  CATEGORY_ICONS[category];
 
 /**
  * Map a raw MCP tool name to a display category for icon selection.
@@ -92,7 +95,7 @@ export const getToolCategory = (toolName: string): ToolCategory => {
   if (lower.includes("imagegen") || lower.includes("generate-image"))
     return "image";
   if (lower.includes("git")) return "git";
-  if (lower.includes("codelens") || lower.includes("diagnose")) {
+  if (lower.includes("codelens")) {
     return "lens";
   }
   if (
@@ -111,16 +114,15 @@ export const getToolCategory = (toolName: string): ToolCategory => {
 type ToolNameBadgeProps = {
   /** The display name shown in the badge, e.g. "read", "edit", "create". */
   name: string;
-  /** Explicit category override; if omitted it is inferred from `name`. */
+  /** Category used to select the tool's fixed icon. */
   category?: ToolCategory;
 };
 
 export const ToolNameBadge = ({
   name,
-  category,
+  category = "generic",
 }: ToolNameBadgeProps): React.JSX.Element => {
-  const cat = category ?? getToolCategory(name);
-  const Icon = TOOL_ICON_MAP[cat] ?? Hammer;
+  const Icon = getToolIcon(category);
 
   return (
     <span className="tool-call-tool-name">

@@ -1,14 +1,10 @@
 import { useMemo } from "react";
 import {
   AlertCircle,
-  AlertTriangle,
   ArrowDownToLine,
-  CheckCircle,
   Crosshair,
   FileCode,
   Hash,
-  Info,
-  Lightbulb,
   Link2,
   ListTree,
   Loader2,
@@ -25,17 +21,15 @@ type CodeLensToolCallProps = {
 };
 
 type CodelensOperation =
-  | "diagnose"
   | "find_definition"
   | "find_references"
   | "file_outline";
 
 // ---- Args types ----
 
-type DiagnoseArgs = { filePath: string };
 type PositionArgs = { filePath: string; line: number; column: number };
 type OutlineArgs = { filePath: string };
-type ParsedArgs = DiagnoseArgs | PositionArgs | OutlineArgs | null;
+type ParsedArgs = PositionArgs | OutlineArgs | null;
 
 // ---- Result types ----
 
@@ -45,17 +39,6 @@ type SymbolLocation = {
   column: number;
   endLine: number;
   endColumn: number;
-};
-
-type DiagnosticItem = {
-  severity: string;
-  message: string;
-  startLine: number;
-  endLine: number;
-  startColumn: number;
-  endColumn: number;
-  source: string;
-  code: string | null;
 };
 
 type ReferenceItem = {
@@ -75,14 +58,6 @@ type OutlineEntry = {
 };
 
 type ParsedResult =
-  | {
-      type: "diagnose";
-      filePath: string;
-      diagnostics: DiagnosticItem[];
-      totalDiagnostics: number;
-      errorCount: number;
-      warningCount: number;
-    }
   | {
       type: "definition";
       found: boolean;
@@ -115,7 +90,6 @@ type ParsedResult =
   | { type: "empty" };
 
 const BADGE_KEYS: Record<CodelensOperation, string> = {
-  diagnose: "toolCall.codelens.op.diagnose",
   find_definition: "toolCall.codelens.op.find_definition",
   find_references: "toolCall.codelens.op.find_references",
   file_outline: "toolCall.codelens.op.file_outline",
@@ -129,8 +103,6 @@ const isPositionArgs = (args: ParsedArgs): args is PositionArgs =>
 
 const getOperation = (toolName: string): CodelensOperation | null => {
   switch (toolName) {
-    case "codelens-diagnose":
-      return "diagnose";
     case "codelens-find_definition":
       return "find_definition";
     case "codelens-find_references":
@@ -189,7 +161,7 @@ const parseArgs = (
     const filePath = parseString(parsed, "filePath");
     if (!filePath) return null;
 
-    if (operation === "diagnose" || operation === "file_outline") {
+    if (operation === "file_outline") {
       return { filePath };
     }
 
@@ -216,31 +188,6 @@ const parseResult = (
     // napi errors are wrapped as { "error": "..." }
     const errorStr = parseString(parsed, "error");
     if (errorStr) return { type: "error", message: errorStr };
-
-    if (operation === "diagnose" && Array.isArray(parsed.diagnostics)) {
-      const diagnostics: DiagnosticItem[] = parsed.diagnostics
-        .filter(isRecord)
-        .map((d) => ({
-          severity: parseString(d, "severity") ?? "info",
-          message: parseString(d, "message") ?? "",
-          startLine: parseNumber(d, "startLine") ?? 0,
-          endLine: parseNumber(d, "endLine") ?? 0,
-          startColumn: parseNumber(d, "startColumn") ?? 0,
-          endColumn: parseNumber(d, "endColumn") ?? 0,
-          source: parseString(d, "source") ?? "",
-          code: parseString(d, "code") ?? null,
-        }));
-
-      return {
-        type: "diagnose",
-        filePath: parseString(parsed, "filePath") ?? "",
-        diagnostics,
-        totalDiagnostics:
-          parseNumber(parsed, "totalDiagnostics") ?? diagnostics.length,
-        errorCount: parseNumber(parsed, "errorCount") ?? 0,
-        warningCount: parseNumber(parsed, "warningCount") ?? 0,
-      };
-    }
 
     if (
       operation === "find_definition" &&
@@ -342,28 +289,6 @@ const parseResult = (
   }
 };
 
-type SeverityMeta = {
-  Icon: typeof AlertCircle;
-  className: string;
-};
-
-const getSeverityMeta = (severity: string): SeverityMeta => {
-  switch (severity) {
-    case "error":
-      return { Icon: AlertCircle, className: "tool-call-codelens-sev-error" };
-    case "warning":
-      return {
-        Icon: AlertTriangle,
-        className: "tool-call-codelens-sev-warning",
-      };
-    case "hint":
-      return { Icon: Lightbulb, className: "tool-call-codelens-sev-hint" };
-    case "info":
-    default:
-      return { Icon: Info, className: "tool-call-codelens-sev-info" };
-  }
-};
-
 export const CodeLensToolCall = ({
   toolCall,
 }: CodeLensToolCallProps): React.JSX.Element => {
@@ -417,23 +342,6 @@ export const CodeLensToolCall = ({
 
   // Meta badge rendered inline in the header.
   const meta = useMemo(() => {
-    if (parsedResult.type === "diagnose") {
-      const count = parsedResult.totalDiagnostics;
-      const hasErrors = parsedResult.errorCount > 0;
-      return (
-        <span
-          className={`tool-call-codelens-count ${
-            count === 0
-              ? "tool-call-codelens-count-ok"
-              : hasErrors
-              ? "tool-call-codelens-count-error"
-              : "tool-call-codelens-count-warn"
-          }`}
-        >
-          {t("toolCall.codelens.diagnosticCount", { values: { count } })}
-        </span>
-      );
-    }
     if (parsedResult.type === "definition") {
       return (
         <span
@@ -529,75 +437,6 @@ export const CodeLensToolCall = ({
             <AlertCircle size={12} aria-hidden="true" />
             <span>{parsedResult.message}</span>
           </div>
-        ) : null}
-
-        {/* Diagnose view */}
-        {parsedResult.type === "diagnose" ? (
-          <>
-            {parsedResult.errorCount > 0 || parsedResult.warningCount > 0 ? (
-              <div className="tool-call-codelens-summary">
-                {parsedResult.errorCount > 0 ? (
-                  <span className="tool-call-codelens-summary-badge tool-call-codelens-sev-error">
-                    <AlertCircle size={11} aria-hidden="true" />
-                    {t("toolCall.codelens.errorCount", {
-                      values: { count: parsedResult.errorCount },
-                    })}
-                  </span>
-                ) : null}
-                {parsedResult.warningCount > 0 ? (
-                  <span className="tool-call-codelens-summary-badge tool-call-codelens-sev-warning">
-                    <AlertTriangle size={11} aria-hidden="true" />
-                    {t("toolCall.codelens.warningCount", {
-                      values: { count: parsedResult.warningCount },
-                    })}
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-
-            {parsedResult.diagnostics.length > 0 ? (
-              <div className="tool-call-codelens-diagnostics">
-                {parsedResult.diagnostics.map((diag, idx) => {
-                  const sev = getSeverityMeta(diag.severity);
-                  return (
-                    <div
-                      key={idx}
-                      className="tool-call-codelens-diagnostic"
-                    >
-                      <div className="tool-call-codelens-diag-header">
-                        <span
-                          className={`tool-call-codelens-sev-badge ${sev.className}`}
-                        >
-                          <sev.Icon size={10} aria-hidden="true" />
-                          {t(`toolCall.codelens.severity.${diag.severity}`)}
-                        </span>
-                        <span className="tool-call-codelens-diag-loc">
-                          <Hash size={9} aria-hidden="true" />
-                          {diag.startLine === diag.endLine
-                            ? `${diag.startLine}:${diag.startColumn}`
-                            : `${diag.startLine}:${diag.startColumn}-${diag.endLine}:${diag.endColumn}`}
-                        </span>
-                        {diag.source ? (
-                          <span className="tool-call-codelens-diag-source">
-                            {diag.source}
-                            {diag.code ? ` [${diag.code}]` : ""}
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="tool-call-codelens-diag-message">
-                        {diag.message}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="tool-call-codelens-no-results">
-                <CheckCircle size={14} aria-hidden="true" />
-                <span>{t("toolCall.codelens.noDiagnostics")}</span>
-              </div>
-            )}
-          </>
         ) : null}
 
         {/* Definition view */}

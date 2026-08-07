@@ -44,7 +44,7 @@ export const THINKING_OPTIONS_BY_METHOD: Record<
     { value: "medium", label: "Medium", icon: Activity },
     { value: "high", label: "High", icon: BrainCircuit },
     { value: "xhigh", label: "Extra High", icon: ChevronsUp },
-    { value: "ultra", label: "Ultra", icon: Rocket },
+    { value: "max", label: "Max", icon: Rocket },
   ],
   chat: [
     { value: "none", label: "None", icon: CircleOff },

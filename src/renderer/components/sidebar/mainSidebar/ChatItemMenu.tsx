@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../../i18n";
+import { ConfirmDialog } from "../../common/ConfirmDialog";
 import { useMenuPosition } from "./useMenuPosition";
 import { EmojiPicker } from "./EmojiPicker";
 
@@ -211,6 +212,8 @@ export function ChatItemMenu({
   };
 
   const handleDeleteClick = (): void => {
+    setIsButtonOpen(false);
+    onContextMenuCloseRef.current?.();
     setShowConfirm(true);
     setShowExport(false);
     setShowEmoji(false);
@@ -284,7 +287,8 @@ export function ChatItemMenu({
   };
 
   return (
-    <span className="chat-item-actions-wrapper" ref={containerRef}>
+    <>
+      <span className="chat-item-actions-wrapper" ref={containerRef}>
       <span
         ref={triggerRef}
         className="chat-item-actions"
@@ -523,6 +527,40 @@ export function ChatItemMenu({
           focusOutKeepRef={menuRef}
         />
       )}
-    </span>
+      </span>
+      <ConfirmDialog
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        confirmLabel={t("sidebar.chatActionDelete", {
+          defaultValue: "Delete",
+        })}
+        message={t("sidebar.chatDeleteConfirm", {
+          defaultValue: "Are you sure you want to delete this conversation?",
+        })}
+        onCancel={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        open={showConfirm}
+        title={t("sidebar.chatDeleteConfirmTitle", {
+          defaultValue: "Confirm deletion",
+        })}
+        variant="danger"
+      >
+        {imagesCount !== null && imagesCount > 0 ? (
+          <label className="chat-item-menu-delete-images">
+            <input
+              checked={deleteImages}
+              onChange={(event) => setDeleteImages(event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              {t("sidebar.chatDeleteImagesOption", {
+                defaultValue:
+                  "Also delete the {{count}} image(s) generated in this conversation",
+                values: { count: imagesCount },
+              })}
+            </span>
+          </label>
+        ) : null}
+      </ConfirmDialog>
+    </>
   );
 }

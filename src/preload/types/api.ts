@@ -66,6 +66,13 @@ export type ResponsesApiRequest = {
   directoryId?: string | null;
   checkpointId?: string | null;
   contextCompaction?: boolean | null;
+  /**
+   * Internal auto-compaction resume mode: the compaction handoff is already
+   * persisted as the latest `context_compaction` boundary, so `messages` is a
+   * placeholder that must not be re-injected into the payload nor persisted
+   * as normal user messages.
+   */
+  resumeAfterCompaction?: boolean | null;
   subAgentToolsJson?: string | null;
   subAgentConfigProfile?: string | null;
   skipContext?: boolean | null;

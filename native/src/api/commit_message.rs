@@ -74,6 +74,7 @@ fn build_request(staged_diff: &str, system_prompt: &str) -> ResponsesApiRequest 
         directory_id: None,
         checkpoint_id: None,
         context_compaction: None,
+        resume_after_compaction: None,
         sub_agent_tools_json: None,
         sub_agent_config_profile: None,
         skip_context: Some(true),

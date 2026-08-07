@@ -109,7 +109,25 @@ export const TokenUsageRing = ({
     return null;
   }
 
-  const formatTokens = (value: number): string => value.toLocaleString(locale);
+  // tooltip 中的 token 数值用 K / M / B 紧凑单位显示，便于快速阅读
+  const formatTokens = (value: number): string => {
+    if (value < 1000) {
+      return value.toLocaleString(locale);
+    }
+    const units: Array<[number, string]> = [
+      [1_000_000_000, "B"],
+      [1_000_000, "M"],
+      [1_000, "K"],
+    ];
+    for (const [threshold, suffix] of units) {
+      if (value >= threshold) {
+        const scaled = value / threshold;
+        const decimals = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+        return `${scaled.toFixed(decimals)}${suffix}`;
+      }
+    }
+    return value.toLocaleString(locale);
+  };
   const percent = Math.round(segments.ratio * 100);
   const tooltipContent = (
     <div className="token-usage-tooltip">

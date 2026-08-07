@@ -13,6 +13,7 @@ import {
 import { appendHookExecutionToMessage, runHook } from "./hookOutcome";
 import { extractFileChangeFromTool } from "./fileChangeTracking";
 import { PENDING_SESSION_KEY } from "../utils/conversationTypes";
+import { injectSessionIdIntoToolArgs } from "../utils/toolSessionMetadata";
 import type {
   ConversationContextValue,
   HookExecutionRecord,
@@ -707,22 +708,13 @@ export function createToolExecutor(
               }
             }
 
-            // Inject the current session id for bash-terminal-execute so child
-            // processes receive SNOW_SESSION_ID / TRELLIS_CONTEXT_ID — the
-            // Snow platform contract Trellis scripts rely on to track the
-            // active task per session.
-            if (toolCall.name === "bash-terminal-execute") {
-              try {
-                const parsedArgs = JSON.parse(toolArgs) as Record<
-                  string,
-                  unknown
-                >;
-                parsedArgs.sessionId = effectiveKey;
-                toolArgs = JSON.stringify(parsedArgs);
-              } catch {
-                // If args are not valid JSON, let the tool fail naturally.
-              }
-            }
+            // Attach Snow-owned session metadata to command and persistent
+            // terminal tools. Pending conversations do not yet have a stable ID.
+            toolArgs = injectSessionIdIntoToolArgs(
+              toolCall.name,
+              toolArgs,
+              effectiveKey === PENDING_SESSION_KEY ? undefined : effectiveKey
+            );
 
             let sensitiveAuthorizationToken: string | undefined;
             if (

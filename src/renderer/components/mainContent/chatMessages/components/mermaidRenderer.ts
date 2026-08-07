@@ -183,8 +183,18 @@ export const renderMermaidBlocks = async (root: ParentNode): Promise<void> => {
 
   if (pending.length === 0) return;
 
-  const mermaid = await getMermaid();
-  await ensureTheme(mermaid);
+  let mermaid: typeof import("mermaid").default;
+  try {
+    mermaid = await getMermaid();
+    await ensureTheme(mermaid);
+  } catch {
+    // Mermaid import or initialization failed. Reset the cached promise so
+    // the next render batch can retry from scratch instead of being stuck
+    // with a permanently rejected promise (cache poisoning).
+    mermaidPromise = null;
+    initializedTheme = null;
+    return;
+  }
 
   for (const { block, source } of pending) {
     // Abort if a newer render batch started.
@@ -280,7 +290,9 @@ const serializeSvg = (svg: SVGSVGElement): string => {
   if (!clone.getAttribute("xmlns")) {
     clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   }
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(clone)}`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${new XMLSerializer().serializeToString(
+    clone
+  )}`;
 };
 
 /** Trigger a browser download for a Blob with the given filename. */
@@ -402,7 +414,9 @@ const rasterizeSvg = (
   // Use a data: URL instead of a blob: URL — the app's CSP allows img-src
   // data: but not blob:. Encoding the SVG as base64 keeps it CSP-compliant.
   const svgString = serializeSvgForRaster(svg);
-  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+    svgString
+  )}`;
 
   return new Promise<HTMLCanvasElement>((resolve, reject) => {
     const img = new Image();
@@ -464,7 +478,9 @@ export const openExportMenu = (
   block: HTMLElement
 ): void => {
   // Remove any existing export menu first.
-  document.querySelectorAll(".mermaid-export-menu").forEach((el) => el.remove());
+  document
+    .querySelectorAll(".mermaid-export-menu")
+    .forEach((el) => el.remove());
 
   const menu = document.createElement("div");
   menu.className = "mermaid-export-menu";
@@ -648,11 +664,7 @@ export const openMermaidImageViewer = (block: HTMLElement): void => {
     apply();
   };
 
-  const zoomBy = (
-    factor: number,
-    originX?: number,
-    originY?: number
-  ): void => {
+  const zoomBy = (factor: number, originX?: number, originY?: number): void => {
     const prev = scale;
     scale = Math.max(MIN_SCALE, Math.min(scale * factor, MAX_SCALE));
     if (originX !== undefined && originY !== undefined) {
@@ -679,10 +691,7 @@ export const openMermaidImageViewer = (block: HTMLElement): void => {
   };
 
   // --- Toolbar buttons (lucide icon paths) --------------------------------
-  const makeBtn = (
-    title: string,
-    innerSvg: string
-  ): HTMLButtonElement => {
+  const makeBtn = (title: string, innerSvg: string): HTMLButtonElement => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mermaid-image-viewer-btn";

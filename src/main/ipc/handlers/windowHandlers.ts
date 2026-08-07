@@ -7,16 +7,164 @@ import {
   screen,
   session,
   shell,
+  type WebContents,
 } from "electron";
 import type { NativeBridge } from "../../native/types";
+import {
+  APP_FAVICON_32_PATH,
+  APP_WINDOW_ICON_PATH,
+  isMacOS,
+} from "../../app/constants";
 import { markCloseConfirmed } from "../../app/mainWindow";
 import { refreshTrayStats } from "../../app/tray";
 import { clearWindowState } from "../../app/windowState";
 import {
+  clearBrowserRouteRules,
+  clearNetworkRecords,
+  ensureNetworkRecording,
+  ensureWebContentsDebugger,
+  getBrowserWebContents,
+  getNetworkRecord,
   listPendingDialogs,
+  queryNetworkDetails,
   queryNetworkRecords,
   respondPendingDialog,
+  setBrowserNetworkState,
+  setBrowserRouteRules,
 } from "./browserNetworkRecorder";
+import {
+  deleteBrowserCookie,
+  listBrowserCookies,
+  restoreBrowserStorageState,
+  saveBrowserStorageState,
+} from "./browserStorageState";
+import { runBrowserTrace } from "./browserTrace";
+
+const browserDevToolsWindows = new Map<number, BrowserWindow>();
+
+const buildDevToolsTitle = (contents: WebContents): string => {
+  const url = contents.getURL();
+  return url ? `Developer Tools - ${url}` : "Developer Tools";
+};
+
+/**
+ * 使用应用自有 BrowserWindow 承载内置浏览器的 DevTools。
+ * Electron 默认 DevTools 使用内部 native view，无法可靠修改标题栏图标；显式提供
+ * devToolsWebContents 后即可通过 BrowserWindow 的 icon 使用 Snow App 图标。
+ */
+export const openBrowserDevTools = (contents: WebContents): void => {
+  if (contents.isDestroyed()) {
+    throw new Error("Browser webContents is destroyed");
+  }
+
+  if (isMacOS) {
+    contents.openDevTools({ mode: "detach", activate: true });
+    return;
+  }
+
+  const contentsId = contents.id;
+  const existingWindow = browserDevToolsWindows.get(contentsId);
+  if (existingWindow && !existingWindow.isDestroyed()) {
+    if (!existingWindow.isVisible()) {
+      existingWindow.show();
+    }
+    existingWindow.focus();
+    return;
+  }
+  browserDevToolsWindows.delete(contentsId);
+
+  // 若此前通过其他入口打开了 Electron 默认 DevTools，先关闭后改用可设置图标的窗口。
+  if (contents.isDevToolsOpened()) {
+    contents.closeDevTools();
+  }
+
+  const devToolsWindow = new BrowserWindow({
+    width: 1000,
+    height: 700,
+    minWidth: 600,
+    minHeight: 400,
+    title: buildDevToolsTitle(contents),
+    icon: APP_WINDOW_ICON_PATH,
+    autoHideMenuBar: true,
+    show: false,
+  });
+  devToolsWindow.setMenu(null);
+  devToolsWindow.setMenuBarVisibility(false);
+  browserDevToolsWindows.set(contentsId, devToolsWindow);
+
+  // Windows 标题栏同时受原生窗口 HICON 和 DevTools 页面 favicon 影响。
+  // 仅调用 BrowserWindow.setIcon 只能改变 WM_GETICON；Chromium 仍会绘制 Electron
+  // favicon。因此两层都覆盖为 Snow 图标。
+  const snowFaviconDataUrl = nativeImage
+    .createFromPath(APP_FAVICON_32_PATH)
+    .toDataURL();
+  const applyDevToolsBranding = (): void => {
+    if (devToolsWindow.isDestroyed()) {
+      return;
+    }
+    const icon = nativeImage.createFromPath(APP_WINDOW_ICON_PATH);
+    if (!icon.isEmpty()) {
+      devToolsWindow.setIcon(icon);
+    }
+    if (!snowFaviconDataUrl || devToolsWindow.webContents.isDestroyed()) {
+      return;
+    }
+    void devToolsWindow.webContents
+      .executeJavaScript(`
+        (() => {
+          const marker = "data-snow-devtools-favicon";
+          let link = document.head?.querySelector(
+            'link[' + marker + '="true"]'
+          );
+          if (!link) {
+            link = document.createElement("link");
+            link.setAttribute(marker, "true");
+            link.setAttribute("rel", "icon");
+            link.setAttribute("type", "image/png");
+            document.head?.appendChild(link);
+          }
+          for (const existing of document.querySelectorAll('link[rel~="icon"]')) {
+            if (existing !== link) {
+              existing.remove();
+            }
+          }
+          link.setAttribute("href", ${JSON.stringify(snowFaviconDataUrl)});
+        })();
+      `)
+      .catch(() => {
+        // DevTools 正在关闭时执行脚本可能失败，无需影响窗口生命周期。
+      });
+  };
+  devToolsWindow.webContents.on("did-finish-load", applyDevToolsBranding);
+  devToolsWindow.webContents.on("page-favicon-updated", (_event, favicons) => {
+    if (!favicons.includes(snowFaviconDataUrl)) {
+      setTimeout(applyDevToolsBranding, 0);
+    }
+  });
+
+  const closeDevToolsWindow = (): void => {
+    if (!devToolsWindow.isDestroyed()) {
+      devToolsWindow.close();
+    }
+  };
+  contents.once("destroyed", closeDevToolsWindow);
+  devToolsWindow.once("closed", () => {
+    contents.removeListener("destroyed", closeDevToolsWindow);
+    if (browserDevToolsWindows.get(contentsId) === devToolsWindow) {
+      browserDevToolsWindows.delete(contentsId);
+    }
+  });
+  devToolsWindow.once("ready-to-show", () => {
+    if (!devToolsWindow.isDestroyed()) {
+      applyDevToolsBranding();
+      devToolsWindow.show();
+    }
+  });
+
+  contents.setDevToolsWebContents(devToolsWindow.webContents);
+  contents.openDevTools({ mode: "detach", activate: true });
+  applyDevToolsBranding();
+};
 
 export const registerWindowHandlers = (_native: NativeBridge): void => {
   // ===== Window Controls (Windows custom titlebar) =====
@@ -167,21 +315,182 @@ export const registerWindowHandlers = (_native: NativeBridge): void => {
     await session.defaultSession.clearStorageData({ storages: ["cookies"] });
   });
 
+  ipcMain.handle("browser:open-devtools", (_event, webContentsId: unknown) => {
+    if (typeof webContentsId !== "number") {
+      throw new Error("webContentsId must be a number");
+    }
+    openBrowserDevTools(getBrowserWebContents(webContentsId));
+  });
+
+  // CDP 命令桥（白名单）：供渲染进程执行无障碍快照（getFullAXTree）与
+  // 元素回指（resolveNode + callFunctionOn）。只放行最小必要命令集。
+  const CDP_METHOD_WHITELIST = new Set([
+    "Accessibility.getFullAXTree",
+    "DOM.resolveNode",
+    "Runtime.callFunctionOn",
+    "DOM.getDocument",
+    "DOM.querySelector",
+    "DOM.setFileInputFiles",
+  ]);
+  ipcMain.handle(
+    "browser:cdp-command",
+    async (
+      _event,
+      webContentsId: unknown,
+      method: unknown,
+      params: unknown
+    ) => {
+      if (typeof webContentsId !== "number") {
+        throw new Error("webContentsId must be a number");
+      }
+      if (typeof method !== "string" || !CDP_METHOD_WHITELIST.has(method)) {
+        throw new Error(`CDP method not allowed: ${String(method)}`);
+      }
+      const contents = getBrowserWebContents(webContentsId);
+      await ensureWebContentsDebugger(contents);
+      if (!contents.debugger.isAttached()) {
+        throw new Error(
+          "Browser debugger is unavailable; close the page DevTools and retry"
+        );
+      }
+      return contents.debugger.sendCommand(
+        method,
+        params !== null && typeof params === "object" ? params : {}
+      );
+    }
+  );
+  // 性能 trace：录制 durationMs 毫秒并返回精简统计（Tracing 域，主进程处理）。
+  ipcMain.handle(
+    "browser:trace",
+    (_event, webContentsId: number, durationMs: number) =>
+      runBrowserTrace(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof durationMs === "number" ? durationMs : 3000
+      )
+  );
+
   // 浏览器调试数据：网络请求记录与 JavaScript 弹窗（供 browser-devtools 查询/响应）
+  // 网络记录按需启用：查询前才开启该实例的 Network.enable，未调试过的
+  // webview（含手动新建的 tab）不产生网络 CDP 事件流。
   ipcMain.handle(
     "browser:network-requests",
-    (
+    async (
       _event,
       webContentsId: number,
       filter?: string,
-      limit?: number
-    ) =>
-      queryNetworkRecords(
-        typeof webContentsId === "number" ? webContentsId : -1,
+      limit?: number,
+      includeStatic?: boolean
+    ) => {
+      const id = typeof webContentsId === "number" ? webContentsId : -1;
+      if (id >= 0) {
+        await ensureNetworkRecording(getBrowserWebContents(id));
+      }
+      return queryNetworkRecords(
+        id,
         typeof filter === "string" ? filter : undefined,
-        typeof limit === "number" ? limit : 50
+        typeof limit === "number" ? limit : 50,
+        includeStatic === true
+      );
+    }
+  );
+  // 网络请求详情：请求/响应头 + 请求体 + 响应体（基于 CDP 记录中的 requestId）。
+  ipcMain.handle(
+    "browser:network-details",
+    (
+      _event,
+      webContentsId: number,
+      requestId: string,
+      maxBodyBytes?: number
+    ) =>
+      queryNetworkDetails(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof requestId === "string" ? requestId : "",
+        typeof maxBodyBytes === "number" ? maxBodyBytes : undefined
       )
   );
+  // 网络状态模拟：offline=true 离线，false 恢复在线。
+  ipcMain.handle(
+    "browser:network-state",
+    (_event, webContentsId: number, offline: boolean) =>
+      setBrowserNetworkState(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        offline === true
+      )
+  );
+  // 路由 mock：设置拦截规则（全量替换；空数组 = 恢复真实网络）。
+  ipcMain.handle(
+    "browser:route-set",
+    (_event, webContentsId: number, rules: unknown) =>
+      setBrowserRouteRules(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        Array.isArray(rules) ? (rules as Parameters<typeof setBrowserRouteRules>[1]) : []
+      )
+  );
+  ipcMain.handle("browser:route-clear", (_event, webContentsId: number) =>
+    clearBrowserRouteRules(
+      typeof webContentsId === "number" ? webContentsId : -1
+    )
+  );
+  // 登录态保存：cookie + localStorage → safeStorage 加密落盘（~/.snow/browser-state/）。
+  ipcMain.handle(
+    "browser:storage-save",
+    (_event, webContentsId: number, fileName?: string) =>
+      saveBrowserStorageState(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof fileName === "string" ? fileName : undefined
+      )
+  );
+  // 登录态恢复：解密 → cookies.set + localStorage 注入（origin 校验）；恢复前自动加密备份。
+  ipcMain.handle(
+    "browser:storage-restore",
+    (_event, webContentsId: number, fileName: string) =>
+      restoreBrowserStorageState(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof fileName === "string" ? fileName : ""
+      )
+  );
+  // 列出当前会话 cookie（默认脱敏值，showValues=true 返回明文）。
+  ipcMain.handle(
+    "browser:cookies-list",
+    (
+      _event,
+      webContentsId: number,
+      domain?: string,
+      showValues?: boolean
+    ) =>
+      listBrowserCookies(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof domain === "string" ? domain : undefined,
+        showValues === true
+      )
+  );
+  // 删除指定 cookie（name + domain 精确定位）。
+  ipcMain.handle(
+    "browser:cookie-delete",
+    (
+      _event,
+      webContentsId: number,
+      name: string,
+      domain: string
+    ) =>
+      deleteBrowserCookie(
+        typeof webContentsId === "number" ? webContentsId : -1,
+        typeof name === "string" ? name : "",
+        typeof domain === "string" ? domain : ""
+      )
+  );
+  ipcMain.handle("browser:network-request", (_event, recordId: number) => {
+    const record = getNetworkRecord(
+      typeof recordId === "number" ? recordId : -1
+    );
+    return record ?? null;
+  });
+  ipcMain.handle("browser:network-clear", (_event, webContentsId: number) => {
+    const cleared = clearNetworkRecords(
+      typeof webContentsId === "number" ? webContentsId : -1
+    );
+    return { cleared };
+  });
   ipcMain.handle("browser:dialogs-list", (_event, webContentsId: number) =>
     listPendingDialogs(
       typeof webContentsId === "number" ? webContentsId : -1

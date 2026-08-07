@@ -28,7 +28,9 @@ Snow App 按以下目录自动加载技能（优先级从高到低）：
 
 1. 打开 **设置 → Skills 设置**；
 2. 在"从 GitHub 安装"输入框粘贴仓库地址；
-3. 支持完整 URL、`owner/repo` 简写，可指定分支和子目录；
+3. 支持完整 URL、`owner/repo` 简写，可指定分支和子目录。URL 格式示例：
+   - `https://github.com/owner/repo` 或 `owner/repo`——使用默认分支，自动发现仓库根目录或 `skills/` 子目录下的技能；
+   - `https://github.com/owner/repo/tree/<branch>/<subdir>`——指定分支与子目录，例如安装 cli/cli 仓库 `trunk` 分支 `skills/gh` 子目录的技能：`https://github.com/cli/cli/tree/trunk/skills/gh`；
 4. 点击安装，完成后技能出现在列表中，可立即开关。
 
 ### 手动方式（Agent 可直接执行）

@@ -96,15 +96,16 @@ export type ProviderImportContexts = {
 // them, so callers can reuse the same contexts for the resolve phase of a
 // commit instead of re-scanning every provider directory twice.
 export const discoverAllImportContexts = async (
-  native: NativeBridge
+  native: NativeBridge,
+  activeDirectoryId?: string
 ): Promise<{
   discovery: ImportDiscovery;
   contexts: ProviderImportContexts;
 }> => {
   const [codex, claudeCode, openCode] = await Promise.all([
-    buildCodexContext(native),
-    buildClaudeCodeContext(native),
-    buildOpenCodeContext(native),
+    buildCodexContext(native, activeDirectoryId),
+    buildClaudeCodeContext(native, activeDirectoryId),
+    buildOpenCodeContext(native, activeDirectoryId),
   ]);
   const discoveries = [
     await discoverCodexImportFromContext(codex),
@@ -149,6 +150,7 @@ export const discoverAllImportContexts = async (
 };
 
 export const discoverAllImportCandidates = async (
-  native: NativeBridge
+  native: NativeBridge,
+  activeDirectoryId?: string
 ): Promise<ImportDiscovery> =>
-  (await discoverAllImportContexts(native)).discovery;
+  (await discoverAllImportContexts(native, activeDirectoryId)).discovery;

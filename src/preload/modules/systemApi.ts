@@ -711,6 +711,7 @@ export const ptyApi = {
     cols: number;
     rows: number;
     shellPath?: string;
+    sessionId?: string;
   }): Promise<string> => ipcRenderer.invoke("pty:create", options),
   ptyWrite: (id: string, data: string): Promise<void> =>
     ipcRenderer.invoke("pty:write", id, data),
@@ -781,17 +782,126 @@ export const windowApi = {
     ipcRenderer.invoke("browser:clear-cache"),
   clearBrowserCookies: (): Promise<void> =>
     ipcRenderer.invoke("browser:clear-cookies"),
+  openBrowserDevTools: (webContentsId: number): Promise<void> =>
+    ipcRenderer.invoke("browser:open-devtools", webContentsId),
   browserNetworkRequests: (
     webContentsId: number,
     filter?: string,
-    limit?: number
+    limit?: number,
+    includeStatic?: boolean
   ): Promise<unknown[]> =>
     ipcRenderer.invoke(
       "browser:network-requests",
       webContentsId,
       filter,
-      limit
+      limit,
+      includeStatic
     ),
+  /** 查询单条网络请求的完整详情（请求/响应头 + 请求/响应体）。 */
+  browserNetworkDetails: (
+    webContentsId: number,
+    requestId: string,
+    maxBodyBytes?: number
+  ): Promise<unknown> =>
+    ipcRenderer.invoke(
+      "browser:network-details",
+      webContentsId,
+      requestId,
+      maxBodyBytes
+    ),
+  /** 模拟网络状态：offline=true 离线，false 恢复在线。 */
+  browserNetworkState: (
+    webContentsId: number,
+    offline: boolean
+  ): Promise<{ state: "online" | "offline" }> =>
+    ipcRenderer.invoke("browser:network-state", webContentsId, offline),
+  /** 设置路由 mock 规则（全量替换；空数组 = 恢复真实网络）。 */
+  browserRouteSet: (
+    webContentsId: number,
+    rules: {
+      pattern: string;
+      status?: number;
+      body?: string;
+      contentType?: string;
+      headers?: Record<string, string>;
+    }[]
+  ): Promise<{ active: number }> =>
+    ipcRenderer.invoke("browser:route-set", webContentsId, rules),
+  /** 清除全部路由 mock 规则。 */
+  browserRouteClear: (webContentsId: number): Promise<{ active: number }> =>
+    ipcRenderer.invoke("browser:route-clear", webContentsId),
+  /** 保存登录态（cookie + localStorage）为加密文件；返回文件路径与统计，不回显内容。 */
+  browserStorageSave: (
+    webContentsId: number,
+    fileName?: string
+  ): Promise<{
+    ok: boolean;
+    file: string;
+    cookieCount: number;
+    originCount: number;
+    capturedUrl: string;
+    capturedAt: string;
+    error?: string;
+  }> => ipcRenderer.invoke("browser:storage-save", webContentsId, fileName),
+  /** 从加密文件恢复登录态（恢复前自动加密备份当前状态）。 */
+  browserStorageRestore: (
+    webContentsId: number,
+    fileName: string
+  ): Promise<{
+    ok: boolean;
+    restoredCookies: number;
+    cookieFailures: number;
+    restoredOrigins: number;
+    originFailures: number;
+    backupFile: string | null;
+    warnings: string[];
+    error?: string;
+  }> => ipcRenderer.invoke("browser:storage-restore", webContentsId, fileName),
+  /** 列出当前会话 cookie（默认脱敏值，showValues=true 返回明文）。 */
+  browserCookies: (
+    webContentsId: number,
+    domain?: string,
+    showValues?: boolean
+  ): Promise<unknown[]> =>
+    ipcRenderer.invoke(
+      "browser:cookies-list",
+      webContentsId,
+      domain,
+      showValues
+    ),
+  /** 删除指定 cookie（name + domain）。 */
+  browserCookieDelete: (
+    webContentsId: number,
+    name: string,
+    domain: string
+  ): Promise<{ deleted: boolean }> =>
+    ipcRenderer.invoke("browser:cookie-delete", webContentsId, name, domain),
+  /** 执行白名单内的 CDP 命令（Accessibility.getFullAXTree / DOM.resolveNode / Runtime.callFunctionOn）。 */
+  browserCdpCommand: (
+    webContentsId: number,
+    method: string,
+    params?: Record<string, unknown>
+  ): Promise<unknown> =>
+    ipcRenderer.invoke("browser:cdp-command", webContentsId, method, params),
+  /** 录制页面性能 trace（durationMs 毫秒）并返回精简统计。 */
+  browserTrace: (
+    webContentsId: number,
+    durationMs: number
+  ): Promise<{
+    ok: boolean;
+    durationMs: number;
+    eventCount: number;
+    longTasks: { count: number; totalMs: number; longestMs: number };
+    topEventTypes: { name: string; count: number }[];
+    error?: string;
+    note?: string;
+  }> => ipcRenderer.invoke("browser:trace", webContentsId, durationMs),
+  browserNetworkRequest: (recordId: number): Promise<unknown | null> =>
+    ipcRenderer.invoke("browser:network-request", recordId),
+  browserNetworkClear: (
+    webContentsId: number
+  ): Promise<{ cleared: number }> =>
+    ipcRenderer.invoke("browser:network-clear", webContentsId),
   browserDialogs: (webContentsId: number): Promise<unknown[]> =>
     ipcRenderer.invoke("browser:dialogs-list", webContentsId),
   browserDialogRespond: (

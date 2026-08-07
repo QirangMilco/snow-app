@@ -11,8 +11,10 @@ import type {
 } from "../types/importConfig";
 
 export const importConfigApi = {
-  discoverImportCandidates: (): Promise<ImportDiscovery> =>
-    ipcRenderer.invoke("import-config:discover"),
+  discoverImportCandidates: (
+    activeDirectoryId?: string
+  ): Promise<ImportDiscovery> =>
+    ipcRenderer.invoke("import-config:discover", activeDirectoryId),
   commitImportSelection: (selection: ImportSelection): Promise<ImportCommitResult> =>
     ipcRenderer.invoke("import-config:commit", selection),
   listManagedImportResources: (): Promise<ImportResourceRecord[]> =>

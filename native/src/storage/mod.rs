@@ -599,6 +599,7 @@ pub struct MemoCountSummary {
 }
 
 static INTERRUPT_MARK_INIT: Once = Once::new();
+static MIGRATION_RECOVER_INIT: Once = Once::new();
 
 pub fn initialize_app_storage() -> Result<AppStorageInfo> {
     let database_path = ensure_database_file()?;
@@ -616,6 +617,14 @@ pub fn initialize_app_storage() -> Result<AppStorageInfo> {
             services::codebase_embed_sessions::mark_interrupted_sessions(&database_path)
         {
             eprintln!("Failed to mark interrupted codebase sessions: {error}");
+        }
+    });
+
+    // Recover an image library migration that was interrupted by a crash:
+    // roll back uncommitted copies or finish cleanup of a committed one.
+    MIGRATION_RECOVER_INIT.call_once(|| {
+        if let Err(error) = services::image_library::recover_interrupted_migration() {
+            eprintln!("Failed to recover interrupted image library migration: {error}");
         }
     });
 
@@ -679,36 +688,6 @@ pub fn get_yolo_mode() -> Result<bool> {
 pub fn set_yolo_mode(enabled: bool) -> Result<()> {
     let database_path = ensure_database_file()?;
     services::yolo_settings::set_yolo_mode(&database_path, enabled)
-}
-
-pub fn get_plan_mode() -> Result<bool> {
-    let database_path = ensure_database_file()?;
-    services::plan_settings::get_plan_mode(&database_path)
-}
-
-pub fn set_plan_mode(enabled: bool) -> Result<()> {
-    let database_path = ensure_database_file()?;
-    services::plan_settings::set_plan_mode(&database_path, enabled)
-}
-
-pub fn get_goal_mode() -> Result<bool> {
-    let database_path = ensure_database_file()?;
-    services::goal_settings::get_goal_mode(&database_path)
-}
-
-pub fn set_goal_mode(enabled: bool) -> Result<()> {
-    let database_path = ensure_database_file()?;
-    services::goal_settings::set_goal_mode(&database_path, enabled)
-}
-
-pub fn get_goal_mode_token_budget() -> Result<i64> {
-    let database_path = ensure_database_file()?;
-    services::goal_settings::get_goal_mode_token_budget(&database_path)
-}
-
-pub fn set_goal_mode_token_budget(budget: i64) -> Result<()> {
-    let database_path = ensure_database_file()?;
-    services::goal_settings::set_goal_mode_token_budget(&database_path, budget)
 }
 
 pub fn get_conversation_modes(
@@ -2040,4 +2019,39 @@ pub fn count_conversation_images(conversation_ids: Vec<String>) -> Result<i64> {
 pub fn delete_conversation_images(conversation_ids: Vec<String>) -> Result<i64> {
     let database_path = ensure_database_file()?;
     services::image_library::delete_conversation_images(&database_path, &conversation_ids)
+}
+
+/// 图库目录迁移进度。
+#[napi(object)]
+pub struct MigrationProgress {
+    pub copied: u32,
+    pub total: u32,
+    pub done: bool,
+}
+
+/// 准备图库迁移：校验目标目录并写入迁移日志；返回待迁移图片数量（0 表示无需迁移）。
+pub fn prepare_image_library_migration(target_dir: String) -> Result<u32> {
+    let database_path = ensure_database_file()?;
+    services::image_library::prepare_migration(&database_path, &target_dir).map(|count| count as u32)
+}
+
+/// 复制下一批图库文件并返回迁移进度（每批最多 16 个，逐文件写入日志保证崩溃可恢复）。
+pub fn migrate_image_library_chunk() -> Result<MigrationProgress> {
+    let (copied, total, done) = services::image_library::migrate_chunk(16)?;
+    Ok(MigrationProgress {
+        copied: copied as u32,
+        total: total as u32,
+        done,
+    })
+}
+
+/// 提交迁移：写入新目录设置（提交点）并清理旧根目录文件。
+pub fn commit_image_library_migration() -> Result<()> {
+    let database_path = ensure_database_file()?;
+    services::image_library::commit_migration(&database_path)
+}
+
+/// 回滚迁移：删除已复制到新目录的文件并移除日志（幂等；无进行中的迁移时直接成功）。
+pub fn rollback_image_library_migration() -> Result<()> {
+    services::image_library::rollback_migration()
 }

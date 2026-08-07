@@ -281,7 +281,12 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           toolResultsJson?: string;
         }[],
         currentConversationId: string | undefined,
-        checkpointId?: string
+        checkpointId?: string,
+        // Internal auto-compaction resume: the compaction handoff is already
+        // persisted as the latest context_compaction boundary, so the Rust
+        // backend builds the request context from the database and treats
+        // requestMessages as a placeholder (never sent nor persisted).
+        resumeAfterCompaction?: boolean
       ): Promise<void> => {
         const iterSessionKey = currentConversationId ?? PENDING_SESSION_KEY;
         let effectiveKey = iterSessionKey;
@@ -326,6 +331,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             conversationId: currentConversationId,
             directoryId: sessionDirId,
             checkpointId,
+            resumeAfterCompaction,
             planMode: iterRef?.planMode ?? ctx.planModeRef.current,
             goalMode: iterRef?.goalMode ?? ctx.goalModeRef.current,
           },
@@ -552,16 +558,36 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           );
         }
 
+        // Parse tool calls early: the auto-compaction gate below must know
+        // whether the agent loop will actually continue before compacting.
+        // (Marking the first call as running happens later in the tool
+        // executor; parsing itself is side-effect free.)
+        const toolCalls = parseToolCalls(response.toolCallsJson);
+        const visibleToolCalls = toolCalls;
+
         // Auto-compaction check: when the active API config has
         // enableAutoCompress=true and the total token usage exceeds the
         // configured threshold, compact the context so the AI loop can
         // continue without hitting the context window limit.
         //
+        // The check ONLY runs while the loop is still alive — i.e. the
+        // response carries tool calls to process, or user messages are queued
+        // and about to be injected. When the loop is finishing naturally (no
+        // tool calls, no pending user messages), compaction must NOT fire even
+        // if the threshold is crossed: it would spawn a fresh runAgentLoop
+        // iteration and wake the AI back up right after it completed. The
+        // over-threshold context is handled instead the next time the user
+        // sends a message, by the pre-send compaction in initCheckpointAndRun.
+        //
         // The compaction summary is appended as a new user message in the
         // database (handled by performCompaction). We then start a fresh
         // runAgentLoop iteration with the compacted context so the AI
         // picks up from the summary and continues working.
+        const loopWillContinue =
+          toolCalls.length > 0 ||
+          (ctx.pendingQueueRef.current.get(effectiveKey)?.length ?? 0) > 0;
         if (
+          loopWillContinue &&
           response.tokenUsage &&
           response.status !== "error" &&
           effectiveKey !== PENDING_SESSION_KEY
@@ -638,6 +664,11 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
                   // context. The Rust backend uses conversationId to
                   // reconstruct context from the database, so the
                   // compaction summary message is automatically included.
+                  // resumeAfterCompaction tells Rust to treat the summary
+                  // passed below as a placeholder: the handoff is already
+                  // persisted as the context_compaction boundary, so it is
+                  // neither sent twice nor re-persisted as a normal user
+                  // message.
                   const postCompactionAssistantId =
                     createMessageId("assistant");
                   const postCompactionAssistant: ChatConversationMessage = {
@@ -655,7 +686,9 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
                   await runAgentLoop(
                     postCompactionAssistantId,
                     [{ role: "user", content: compactionSummary }],
-                    response.conversationId
+                    response.conversationId,
+                    undefined,
+                    true
                   );
                   return;
                 }
@@ -667,12 +700,6 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         if (isRunCancelled(effectiveKey)) {
           return;
         }
-
-        // Parse tool calls from response. Mark the first call as running immediately
-        // so expensive commands are visible before execution begins; later calls stay
-        // pending until the sequential executor reaches them.
-        const toolCalls = parseToolCalls(response.toolCallsJson);
-        const visibleToolCalls = toolCalls;
 
         // Update assistant message with the persisted result. Failed responses
         // still migrate the session, but remain visible locally as an error.

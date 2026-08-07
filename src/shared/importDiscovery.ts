@@ -24,11 +24,19 @@ export type ImportOwnership = {
   management: "reference" | "snapshot" | "user-adopted";
 };
 
+/**
+ * Where an import source lives: the local machine, a WSL distribution on this
+ * Windows host, or a remote host reached over SSH.
+ */
+export type ImportEnvironmentKind = "local" | "wsl" | "ssh";
+
 export type ImportCandidateOrigin = {
   provider: ImportProvider;
   scope: ImportScope;
   originPath: string;
   projectId?: string;
+  environmentId?: string;
+  environmentLabel?: string;
 };
 
 export type ImportCandidate = {
@@ -44,6 +52,8 @@ export type ImportCandidate = {
   ownership: ImportOwnership;
   sources: ImportCandidateOrigin[];
   unsupportedReason?: string;
+  environmentId?: string;
+  environmentLabel?: string;
 };
 
 export type ImportCandidateResultStatus =
@@ -67,6 +77,22 @@ export type ImportConfigPath = {
   found: boolean;
 };
 
+/**
+ * One scanned environment of a provider: the local machine, a WSL
+ * distribution, or an SSH remote host. `home` is the provider home directory
+ * in environment-native form (e.g. `/home/user/.codex` for WSL/SSH).
+ */
+export type ImportSourceEnvironment = {
+  environmentId: string;
+  label: string;
+  kind: ImportEnvironmentKind;
+  home: string;
+  found: boolean;
+  configPaths: ImportConfigPath[];
+  instructionPaths: ImportConfigPath[];
+  projectConfigCount: number;
+};
+
 export type ImportSource = {
   provider: ImportProvider;
   sourceHome: string;
@@ -75,6 +101,8 @@ export type ImportSource = {
   instructionPaths: ImportConfigPath[];
   projectConfigCount: number;
   warnings: string[];
+  /** Per-environment details, local entry first when present. */
+  environments: ImportSourceEnvironment[];
 };
 
 export type ImportDiscovery = {
@@ -90,6 +118,9 @@ export type ReadonlyImportResult = ImportDiscovery & {
 
 export type ImportSelection = {
   candidateIds: string[];
+  /** Directory ID of the currently active project, when the user is importing
+   *  from the project-scoped view. Omitted for the global settings view. */
+  activeDirectoryId?: string;
 };
 
 export type ImportCommitItemStatus =

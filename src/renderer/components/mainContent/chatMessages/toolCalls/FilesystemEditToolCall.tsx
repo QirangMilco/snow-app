@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { ToolCallInfo } from "../utils/conversationTypes";
 import { ToolCallNode } from "./shared/ToolCallNode";
-import { getFileName, getToolDisplayName } from "./shared/formatters";
+import { getFileName } from "./shared/formatters";
 import { MiniDiffViewer } from "./shared/MiniDiffViewer";
 import { getCompareDiffStats } from "../../../../utils/generateComparePatch";
 import { getFileTypeIcon } from "../../../../utils/fileIcons";
@@ -126,7 +126,6 @@ export const FilesystemEditToolCall = ({
     );
   }, [showDiff, parsedArgs]);
 
-  const toolName = getToolDisplayName("edit");
   const filePath = parsedArgs?.filePath ?? "edit";
   const fileName = getFileName(filePath);
 
@@ -159,7 +158,6 @@ export const FilesystemEditToolCall = ({
   return (
     <ToolCallNode
       toolName={toolCall.name}
-      badgeName={toolName}
       category="edit"
       displayName={
         <>

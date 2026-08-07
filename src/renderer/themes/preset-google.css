@@ -523,10 +523,6 @@
   background: var(--surface-island-strong);
 }
 
-:root[data-theme-preset="google"] .sidebar {
-  padding: 0 4px 6px;
-}
-
 :root[data-theme-preset="google"] .sidebar-top {
   padding: 12px 8px 6px;
 }
@@ -738,7 +734,6 @@
     select, textarea, .custom-select-trigger, .model-manual-field,
     .search-modal-input, .browser-address-input, .browser-find-input,
     .git-commit-input, .file-viewer-search-input, .branch-create-input) {
-  min-height: 36px;
   border: 1px solid var(--google-outline);
   border-radius: var(--radius-md);
   background: var(--google-surface-0);

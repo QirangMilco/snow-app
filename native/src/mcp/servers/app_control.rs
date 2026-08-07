@@ -139,7 +139,7 @@ impl McpService for AppControlService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: TOOL_OPEN_SETTINGS.to_string(),
-                description: "Open a specific settings page in the Snow App UI. Available pages: api-settings, proxy-browser-settings, codebase-settings, system-prompt-settings, personalization-settings, custom-headers-settings, mcp-settings, import-settings, skills-settings, sub-agent-settings, sensitive-command-settings, hooks-settings, theme-settings, terminal-settings, keyboard-shortcuts-settings, privacy-settings, usage-settings, system-logs.".to_string(),
+                description: "Open a specific settings page in the Snow App UI. Available pages: api-settings, imagegen-settings, image-library, proxy-browser-settings, codebase-settings, system-prompt-settings, personalization-settings, custom-headers-settings, mcp-settings, import-settings, skills-settings, sub-agent-settings, sensitive-command-settings, hooks-settings, theme-settings, terminal-settings, keyboard-shortcuts-settings, privacy-settings, usage-settings, system-logs.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -147,6 +147,8 @@ impl McpService for AppControlService {
                             "type": "string",
                             "enum": [
                                 "api-settings",
+                                "imagegen-settings",
+                                "image-library",
                                 "proxy-browser-settings",
                                 "codebase-settings",
                                 "system-prompt-settings",
@@ -409,6 +411,8 @@ fn validate_set_mode_args(args: &Value) -> napi::Result<(String, Value)> {
 
 const VALID_SETTINGS_PAGES: &[&str] = &[
     "api-settings",
+    "imagegen-settings",
+    "image-library",
     "proxy-browser-settings",
     "codebase-settings",
     "system-prompt-settings",

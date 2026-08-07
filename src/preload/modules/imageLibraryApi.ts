@@ -1,5 +1,5 @@
 import { ipcRenderer } from "electron";
-import type { ImageLibraryRecord } from "../types/imageLibrary";
+import type { ImageLibraryMigrationProgress, ImageLibraryRecord } from "../types/imageLibrary";
 
 /** 图像管理系统（Image Library）API。 */
 export const imageLibraryApi = {
@@ -38,4 +38,20 @@ export const imageLibraryApi = {
   /** 级联删除指定会话中引用的图库图片（删除会话时选择不保留图片） */
   deleteConversationImages: (conversationIds: string[]): Promise<number> =>
     ipcRenderer.invoke("images:delete-conversation-images", conversationIds),
+
+  /** 准备图库迁移：校验目标目录并写入迁移日志；返回待迁移图片数量（0 表示无需迁移） */
+  prepareImageLibraryMigration: (targetDir: string): Promise<number> =>
+    ipcRenderer.invoke("images:library-migrate-prepare", targetDir),
+
+  /** 复制下一批图库文件并返回迁移进度（copied/total/done） */
+  migrateImageLibraryChunk: (): Promise<ImageLibraryMigrationProgress> =>
+    ipcRenderer.invoke("images:library-migrate-chunk"),
+
+  /** 提交迁移：写入新目录设置并清理旧根目录文件 */
+  commitImageLibraryMigration: (): Promise<void> =>
+    ipcRenderer.invoke("images:library-migrate-commit"),
+
+  /** 回滚迁移：删除已复制到新目录的文件并移除日志（幂等） */
+  rollbackImageLibraryMigration: (): Promise<void> =>
+    ipcRenderer.invoke("images:library-migrate-rollback"),
 };

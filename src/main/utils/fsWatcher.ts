@@ -1,5 +1,6 @@
 import { BrowserWindow } from "electron";
 import { watch, type FSWatcher } from "node:fs";
+import { safeSend } from "./safeSend";
 
 type WatchEntry = {
   watcher: FSWatcher;
@@ -19,12 +20,8 @@ const flushChange = (dirPath: string): void => {
   entry.timer = null;
 
   for (const window of BrowserWindow.getAllWindows()) {
-    if (
-      !window.isDestroyed() &&
-      window.webContents &&
-      !window.webContents.isDestroyed()
-    ) {
-      window.webContents.send("workspace-directories:changed", dirPath);
+    if (!window.isDestroyed() && window.webContents) {
+      safeSend(window.webContents, "workspace-directories:changed", dirPath);
     }
   }
 };

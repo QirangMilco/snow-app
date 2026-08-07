@@ -12,6 +12,7 @@ export type TerminalPanelContentProps = {
   tabId: string;
   cwd: string;
   shellPath?: string;
+  sessionId?: string;
   isActive: boolean;
   onTitleChange?: (title: string) => void;
   /** 点击终端内的链接时回调（用于打开内置浏览器 tab）。 */
@@ -86,6 +87,7 @@ export const TerminalPanelContent = ({
   tabId,
   cwd,
   shellPath: shellPathProp,
+  sessionId,
   isActive,
   onTitleChange,
   onOpenLink,
@@ -261,6 +263,7 @@ export const TerminalPanelContent = ({
           cols,
           rows,
           shellPath: shellPath || undefined,
+          sessionId,
         });
         if (disposed) {
           void window.snow.ptyKill(id);
@@ -329,7 +332,7 @@ export const TerminalPanelContent = ({
       cleanupRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, shellPath]);
+  }, [cwd, shellPath, sessionId]);
 
   // Live-update font settings without recreating the terminal / PTY.
   useEffect(() => {

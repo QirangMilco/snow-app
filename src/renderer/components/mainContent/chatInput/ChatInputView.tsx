@@ -13,7 +13,9 @@ import {
   Loader2,
   Paperclip,
   RefreshCw,
+  Search,
   Square,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -65,6 +67,7 @@ import { useConversationFileChanges } from "./useConversationFileChanges";
 import { CommandPanel, type CommandPanelHandle } from "./commands/CommandPanel";
 import { createChatCommands } from "./commands/commandRegistry";
 import { FileChangesPanel } from "./commands/FileChangesPanel";
+import { ReviewPanel } from "./commands/ReviewPanel";
 import type { ChatCommand } from "./commands/types";
 
 export const ChatInputView = ({
@@ -142,6 +145,7 @@ export const ChatInputView = ({
   const { t } = useI18n();
   const {
     handleNewChat,
+    handleSendMessage,
     messages,
     activeConversationId,
     conversationDirectoryId,
@@ -190,8 +194,16 @@ export const ChatInputView = ({
   const [isProjectCodebaseOpen, setIsProjectCodebaseOpen] = useState(false);
   const [isRoleEditorOpen, setIsRoleEditorOpen] = useState(false);
   const [isFileChangesOpen, setIsFileChangesOpen] = useState(false);
+  // 稳定引用：供 StreamMetricsWorkSummary memo 使用，避免父组件重渲染时
+  // 传入新的 inline lambda 导致文件统计区域失效重绘（P0-1 性能优化）。
+  const handleOpenFileChanges = useCallback(() => {
+    setIsFileChangesOpen(true);
+  }, []);
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isCustomThinkingMode, setIsCustomThinkingMode] = useState(false);
   const [customThinkingValue, setCustomThinkingValue] = useState("");
+  // 模型列表搜索关键词，仅 model 视图生效
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
 
   // 菜单关闭时退出自定义思考强度输入
   useEffect(() => {
@@ -199,6 +211,18 @@ export const ChatInputView = ({
       setIsCustomThinkingMode(false);
     }
   }, [isModelMenuOpen]);
+
+  // 关闭菜单或离开模型列表视图时清空搜索词
+  useEffect(() => {
+    if (!isModelMenuOpen || modelMenuView !== "model") {
+      setModelSearchQuery("");
+    }
+  }, [isModelMenuOpen, modelMenuView]);
+
+  // review 指令只在新建会话（尚未绑定历史会话）时开放，审查对象是
+  // 当前项目目录的 Git 状态，而不是某个历史会话绑定的目录。
+  const isNewChat = !activeConversationId;
+  const reviewWorkDir = directoryIdToPath(projectId);
 
   const commands = useMemo(
     () =>
@@ -253,11 +277,21 @@ export const ChatInputView = ({
           setIsFileChangesOpen(false);
           setIsProjectCodebaseOpen(true);
         },
+        onOpenReviewPanel: () => {
+          setIsProjectMcpOpen(false);
+          setIsProjectSensitiveCommandsOpen(false);
+          setIsProjectSkillsOpen(false);
+          setIsProjectCodebaseOpen(false);
+          setIsRoleEditorOpen(false);
+          setIsFileChangesOpen(false);
+          setIsReviewOpen(true);
+        },
         model: selectedModel || undefined,
         apiProfile: selectedApiProfile || undefined,
         compactDisabled: messages.length === 0 || isCompacting,
         fileChangesDisabled: !activeConversationId,
         mcpDisabled: !projectId,
+        reviewDisabled: !isNewChat || !reviewWorkDir,
         roleDisabled: !projectId,
         sensitiveCommandsDisabled: !projectId,
         skillsDisabled: !projectId,
@@ -280,16 +314,24 @@ export const ChatInputView = ({
             : t("chatCommand.skillsNoProject"),
           codebaseDescription: t("chatCommand.codebaseDescription"),
           codebaseNoProject: t("chatCommand.codebaseNoProject"),
+          reviewDescription: !isNewChat
+            ? t("chatCommand.reviewNewChatOnly")
+            : reviewWorkDir
+              ? t("chatCommand.reviewDescription")
+              : t("chatCommand.reviewNoProject"),
+          reviewNoProject: t("chatCommand.reviewNoProject"),
         },
       }),
     [
       activeConversationId,
       handleNewChat,
       isCompacting,
+      isNewChat,
       isStreaming,
       messages.length,
       onCompactConversation,
       projectId,
+      reviewWorkDir,
       selectedApiProfile,
       selectedModel,
       t,
@@ -326,6 +368,19 @@ export const ChatInputView = ({
   const isCustomThinkingValue = !thinkingOptions.some(
     (option) => option.value === thinkingValue
   );
+
+  // 模型列表模糊过滤：关键词对 id / ownedBy 做不区分大小写的包含匹配
+  const filteredModels = useMemo(() => {
+    const query = modelSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return models;
+    }
+    return models.filter(
+      (model) =>
+        model.id.toLowerCase().includes(query) ||
+        model.ownedBy.toLowerCase().includes(query)
+    );
+  }, [models, modelSearchQuery]);
 
   const renumberImageChips = useCallback(() => {
     const el = textareaRef.current;
@@ -505,6 +560,64 @@ export const ChatInputView = ({
     [syncContent, textareaRef]
   );
 
+  /**
+   * 将外部文件（拖入或粘贴，均为 File 对象）解析为真实磁盘路径，
+   * 图片文件插入 image chip（读取 dataUrl），其余文件/文件夹插入
+   * file chip（携带路径）。contextIsolation 下渲染进程无法直接读取
+   * 真实路径，由 preload 的 resolveDroppedFiles 解析。
+   */
+  const insertExternalFiles = useCallback(
+    (files: File[]) => {
+      if (!files || files.length === 0) {
+        return;
+      }
+      void window.snow
+        .resolveDroppedFiles(files)
+        .then((entries) => {
+          if (entries.length === 0) {
+            return;
+          }
+          const imageFiles: File[] = [];
+          const fileTags: FileTag[] = [];
+          // entries 顺序与 files 顺序一一对应；以 File.type 优先判断
+          // 图片，路径扩展名兜底（某些系统 File.type 可能为空）。
+          entries.forEach((entry, idx) => {
+            const matchedFile = files[idx];
+            const isImage =
+              !entry.isDirectory &&
+              ((matchedFile && matchedFile.type.startsWith("image/")) ||
+                /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(
+                  entry.path
+                ));
+            if (isImage && matchedFile) {
+              imageFiles.push(matchedFile);
+            } else {
+              const name =
+                entry.path.split(/[\\/]/).filter(Boolean).pop() ||
+                entry.path;
+              fileTags.push({
+                path: entry.path,
+                name,
+                isDirectory: entry.isDirectory,
+              });
+            }
+          });
+          if (imageFiles.length > 0) {
+            for (const imageFile of imageFiles) {
+              insertImageFromFile(imageFile);
+            }
+          }
+          if (fileTags.length > 0) {
+            insertFileTags(fileTags);
+          }
+        })
+        .catch(() => {
+          // 解析失败时静默处理
+        });
+    },
+    [insertFileTags, insertImageFromFile]
+  );
+
   const handleMentionDragStart = useCallback(
     (event: React.DragEvent<HTMLDivElement>, tag: FileTag) => {
       event.dataTransfer.setData("application/json", JSON.stringify(tag));
@@ -513,12 +626,61 @@ export const ChatInputView = ({
     []
   );
 
+  /**
+   * 将图片文件（拖拽 / 粘贴）以 image chip 形式插入编辑区。
+   * 通过 FileReader 读取为 dataURL，逐个插入并触发 syncContent
+   * （内部会调用 renumberImageChips 统一编号）。
+   */
+  const insertImageFiles = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) {
+        return;
+      }
+
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+
+      for (const file of files) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          if (!dataUrl) {
+            return;
+          }
+
+          const mimeMatch = file.type.match(/^image\/([a-z]+)$/);
+          const ext = mimeMatch ? mimeMatch[1] : "png";
+          const imageTag: ImageTag = {
+            name: `image.${ext}`,
+            dataUrl,
+          };
+
+          insertHtmlAtSelection(createImageChipHtml(imageTag));
+          syncContent();
+        };
+        reader.readAsDataURL(file);
+      }
+    },
+    [syncContent, textareaRef]
+  );
+
   const handleDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       isDraggingOverRef.current = false;
       if (textareaRef.current) {
         textareaRef.current.classList.remove("drag-over");
+      }
+
+      // 支持从文件管理器拖入图片（单张或多张），与粘贴图片行为保持一致
+      const droppedFiles = Array.from(event.dataTransfer.files);
+      const imageFiles = droppedFiles.filter((file) =>
+        file.type.startsWith("image/")
+      );
+      if (imageFiles.length > 0) {
+        insertImageFiles(imageFiles);
+        return;
       }
 
       const jsonData = event.dataTransfer.getData("application/json");
@@ -536,51 +698,7 @@ export const ChatInputView = ({
               files.push(file);
             }
           }
-          if (files.length > 0) {
-            void window.snow
-              .resolveDroppedFiles(files)
-              .then((entries) => {
-                if (entries.length === 0) {
-                  return;
-                }
-                const imageFiles: File[] = [];
-                const fileTags: FileTag[] = [];
-                // entries 顺序与 files 顺序一一对应；以 File.type 优先判断
-                // 图片，路径扩展名兜底（某些系统 File.type 可能为空）。
-                entries.forEach((entry, idx) => {
-                  const matchedFile = files[idx];
-                  const isImage =
-                    !entry.isDirectory &&
-                    ((matchedFile && matchedFile.type.startsWith("image/")) ||
-                      /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(
-                        entry.path
-                      ));
-                  if (isImage && matchedFile) {
-                    imageFiles.push(matchedFile);
-                  } else {
-                    const name =
-                      entry.path.split(/[\\/]/).filter(Boolean).pop() ||
-                      entry.path;
-                    fileTags.push({
-                      path: entry.path,
-                      name,
-                      isDirectory: entry.isDirectory,
-                    });
-                  }
-                });
-                if (imageFiles.length > 0) {
-                  for (const imageFile of imageFiles) {
-                    insertImageFromFile(imageFile);
-                  }
-                }
-                if (fileTags.length > 0) {
-                  insertFileTags(fileTags);
-                }
-              })
-              .catch(() => {
-                // 解析失败时静默处理
-              });
-          }
+          insertExternalFiles(files);
         }
         return;
       }
@@ -700,7 +818,7 @@ export const ChatInputView = ({
         // Ignore invalid drag data
       }
     },
-    [insertFileTags, insertImageFromFile, syncContent, textareaRef]
+    [insertExternalFiles, insertFileTags, syncContent, textareaRef]
   );
 
   const handleDragOver = useCallback(
@@ -854,10 +972,18 @@ export const ChatInputView = ({
 
       const items = event.clipboardData.items;
       const imageItems: DataTransferItem[] = [];
+      const fileItems: DataTransferItem[] = [];
 
       for (const item of items) {
+        if (item.kind !== "file") {
+          continue;
+        }
+        // 粘贴的图片（截图、从文件管理器复制的图片文件等）走 image chip；
+        // 其余文件（kind === "file" 且非图片 MIME）走 file chip。
         if (item.type.startsWith("image/")) {
           imageItems.push(item);
+        } else {
+          fileItems.push(item);
         }
       }
 
@@ -869,6 +995,24 @@ export const ChatInputView = ({
           }
           insertImageFromFile(file);
         }
+      }
+
+      // 粘贴的外部文件（如从文件管理器复制的文件）与拖入共用解析逻辑：
+      // 图片插入 image chip，其余文件/文件夹插入 file chip。
+      if (fileItems.length > 0) {
+        const pastedFiles: File[] = [];
+        for (const fileItem of fileItems) {
+          const file = fileItem.getAsFile();
+          if (file) {
+            pastedFiles.push(file);
+          }
+        }
+        if (pastedFiles.length > 0) {
+          insertExternalFiles(pastedFiles);
+        }
+      }
+
+      if (imageItems.length > 0 || fileItems.length > 0) {
         return;
       }
 
@@ -942,7 +1086,63 @@ export const ChatInputView = ({
       syncContent();
       checkInputTriggers();
     },
-    [syncContent, insertImageFromFile, checkInputTriggers, textareaRef]
+    [syncContent, insertImageFromFile, insertExternalFiles, checkInputTriggers, textareaRef]
+  );
+
+  /**
+   * 路径@导航：将 @ 后的查询文本替换为相对路径（保留 @ 前缀），
+   * 用于 @ 面板"进入文件夹 / 面包屑跳转 / 返回上级"。
+   * 替换后重新解析触发词，面板随新路径刷新内容；relPath 为空表示回到根目录。
+   */
+  const replaceMentionQuery = useCallback(
+    (relPath: string) => {
+      const el = textareaRef.current;
+      if (!el || mentionStartOffsetRef.current < 0) {
+        return;
+      }
+
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) {
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const currentNode = range.startContainer;
+      const currentOffset = range.startOffset;
+
+      if (currentNode.nodeType !== Node.TEXT_NODE) {
+        return;
+      }
+
+      const textNode = currentNode as Text;
+      const start = mentionStartOffsetRef.current;
+      // @ 后无文本时（currentOffset === start，如刚输入 @ 就直接点目录）
+      // 也允许插入路径；仅当光标在 @ 之前时放弃。
+      if (currentOffset < start) {
+        return;
+      }
+
+      range.setStart(textNode, start);
+      range.setEnd(textNode, currentOffset);
+      range.deleteContents();
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      // 接入浏览器撤销栈，Ctrl+Z 可回退本次导航；空路径（回根）只做删除
+      const newText = relPath ? `${relPath}/` : "";
+      if (newText) {
+        document.execCommand("insertText", false, newText);
+      }
+      checkInputTriggers();
+    },
+    [checkInputTriggers, textareaRef]
+  );
+
+  const handleMentionNavigateTo = useCallback(
+    (relPath: string) => {
+      replaceMentionQuery(relPath);
+    },
+    [replaceMentionQuery]
   );
 
   const handleInput = useCallback(() => {
@@ -1326,6 +1526,17 @@ export const ChatInputView = ({
         changesOverride={conversationFileChanges}
         onClose={() => setIsFileChangesOpen(false)}
       />
+      <ReviewPanel
+        open={isReviewOpen}
+        workDir={reviewWorkDir ?? ""}
+        onStartReview={(prompt) => {
+          handleSendMessage(prompt, {
+            model: selectedModel || undefined,
+            apiProfile: selectedApiProfile || undefined,
+          });
+        }}
+        onClose={() => setIsReviewOpen(false)}
+      />
       <div className="input-content" ref={mentionAnchorRef}>
         <FileMentionPopup
           ref={mentionPopupRef}
@@ -1336,6 +1547,7 @@ export const ChatInputView = ({
           onSelectBatch={handleMentionSelectBatch}
           textareaRef={textareaRef}
           onDragStart={handleMentionDragStart}
+          onNavigateTo={handleMentionNavigateTo}
         />
         <CommandPanel
           ref={commandPanelRef}
@@ -1814,6 +2026,36 @@ export const ChatInputView = ({
                               </button>
                             </div>
                           )}
+                          <div className="model-dropdown-search">
+                            <Search
+                              size={13}
+                              className="model-dropdown-search-icon"
+                            />
+                            <input
+                              className="model-dropdown-search-input"
+                              type="text"
+                              value={modelSearchQuery}
+                              onChange={(event) =>
+                                setModelSearchQuery(event.target.value)
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") {
+                                  setModelSearchQuery("");
+                                }
+                              }}
+                              placeholder={labels.searchModels}
+                            />
+                            {modelSearchQuery && (
+                              <button
+                                className="model-dropdown-search-clear"
+                                type="button"
+                                aria-label={labels.searchModels}
+                                onClick={() => setModelSearchQuery("")}
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
                           <div className="model-dropdown-list">
                             {models.length === 0 &&
                               !modelError &&
@@ -1822,7 +2064,13 @@ export const ChatInputView = ({
                                   {labels.noModelsFound}
                                 </div>
                               )}
-                            {models.map((model) => (
+                            {models.length > 0 &&
+                              filteredModels.length === 0 && (
+                                <div className="model-dropdown-empty">
+                                  {labels.noMatchingModels}
+                                </div>
+                              )}
+                            {filteredModels.map((model) => (
                               <button
                                 key={model.id}
                                 className={`model-dropdown-item ${

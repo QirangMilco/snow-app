@@ -175,7 +175,20 @@ export const ChatMessageList = ({
       const isLastAssistant = message.id === lastAssistantMessageId;
       const hasToolCalls = (message.toolCalls?.length ?? 0) > 0;
       const isMessageStreaming = message.status === "sending";
-      // Show actions on:
+
+      // Hook records bound to a tool call of this message (via
+      // toolCallInteractionId) are rendered inside the tool card itself.
+      // Only unbound records — or bound records whose card is not in this
+      // message (should not happen) — stay in the message footer.
+      const boundInteractionIds = new Set(
+        (message.toolCalls ?? []).map((tc) => tc.interactionId)
+      );
+      const footerHookExecutions = (message.hookExecutions ?? []).filter(
+        (record) =>
+          !record.toolCallInteractionId ||
+          !boundInteractionIds.has(record.toolCallInteractionId)
+      );
+
       // - All assistant messages without tool calls (1-on-1 conversations)
       // - The last assistant message when it has tool calls (AI Loop ending)
       // - Never on a message that is currently streaming
@@ -209,6 +222,7 @@ export const ChatMessageList = ({
             thinking={message.thinking}
             showActions={showActions}
             toolCalls={message.toolCalls}
+            hookExecutions={message.hookExecutions}
             pendingToolAuthorizations={
               isLastAssistant
                 ? pendingToolAuthorizations.filter(
@@ -225,8 +239,8 @@ export const ChatMessageList = ({
             responseId={message.responseId}
             onFork={handleFork}
           />
-          {message.hookExecutions && message.hookExecutions.length > 0 ? (
-            <HookExecutionUI executions={message.hookExecutions} />
+          {footerHookExecutions.length > 0 ? (
+            <HookExecutionUI executions={footerHookExecutions} />
           ) : null}
         </div>
       );

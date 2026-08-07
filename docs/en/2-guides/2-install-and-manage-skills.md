@@ -27,7 +27,9 @@ Each skill is a directory containing a `SKILL.md`; the directory name is the ski
 
 1. Open **Settings → Skills Settings**;
 2. Paste the repository address into the "Install from GitHub" input box;
-3. Full URLs and `owner/repo` shorthand are supported, and you can specify a branch and a subdirectory;
+3. Full URLs and `owner/repo` shorthand are supported, and you can specify a branch and a subdirectory. URL examples:
+   - `https://github.com/owner/repo` or `owner/repo` — uses the default branch and auto-discovers skills at the repo root or under `skills/`;
+   - `https://github.com/owner/repo/tree/<branch>/<subdir>` — targets a specific branch and subdirectory, e.g. `https://github.com/cli/cli/tree/trunk/skills/gh` installs the skill under `skills/gh` on the `trunk` branch of `cli/cli`;
 4. Click Install; once complete, the skill appears in the list and can be toggled immediately.
 
 ### Manually (the agent can execute this directly)

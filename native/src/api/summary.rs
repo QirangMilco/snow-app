@@ -8,6 +8,8 @@ use crate::api::config::{
     get_active_api_request_context, normalize_base_url, resolve_sdk_api_base_url,
     DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_GEMINI_BASE_URL, DEFAULT_OPENAI_BASE_URL,
 };
+use crate::api::chat::payload::build_chat_reasoning_effort;
+use crate::api::responses::payload::build_responses_reasoning;
 use crate::api::retry::{RetryOptions, should_retry};
 use crate::storage::services::chat_conversations::{load_context_messages, update_conversation_summary};
 
@@ -165,13 +167,19 @@ async fn generate_summary_via_chat(
     }
 
     let chat_messages = build_summary_chat_messages(messages, requirements);
-    let payload = json!({
+    let mut payload = json!({
         "model": model,
         "messages": chat_messages,
         "stream": false,
         "max_tokens": 4096,
-        "reasoning_effort": "none",
     });
+
+    // DeepSeek 等供应商不接受 "none" 作为 reasoning_effort（仅支持 low/medium/high 等）。
+    // 跟随用户 chatThinking 配置：build_chat_reasoning_effort 会过滤 "none" 值，
+    // 关闭思考时返回 None → 不发送该字段，由供应商使用默认值。
+    if let Some(reasoning_effort) = build_chat_reasoning_effort(&api_config.config_json) {
+        payload["reasoning_effort"] = json!(reasoning_effort);
+    }
 
     let client = crate::api::http_client::build_proxied_client().await?;
 
@@ -209,12 +217,17 @@ async fn generate_summary_via_responses(
     let endpoint = format!("{}/responses", resolved_base);
 
     let input = build_summary_responses_input(messages, requirements);
-    let payload = json!({
+    let mut payload = json!({
         "model": model,
         "input": input,
         "stream": false,
-        "reasoning": {"effort": "none"},
     });
+
+    // 同样跟随 responsesReasoning 配置：build_responses_reasoning 会过滤 "none"，
+    // 关闭思考时返回 None → 不发送 reasoning 字段，避免供应商 400。
+    if let Some(reasoning) = build_responses_reasoning(&api_config.config_json) {
+        payload["reasoning"] = reasoning;
+    }
 
     let client = crate::api::http_client::build_proxied_client().await?;
 

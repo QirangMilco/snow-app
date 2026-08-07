@@ -1,9 +1,10 @@
-import { BrowserWindow, ipcMain, nativeTheme, shell } from "electron";
+import { BrowserWindow, ipcMain, nativeTheme, shell, WebContents } from "electron";
 import { is } from "@electron-toolkit/utils";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   APP_ICON_PATH,
+  APP_WINDOW_ICON_PATH,
   isMacOS,
   isWindows,
   macTrafficLightPosition,
@@ -17,6 +18,8 @@ import {
   isStatePositionVisible,
   loadWindowState,
 } from "./windowState";
+import { safeSend } from "../utils/safeSend";
+import { snowLog } from "../../utils/snowLogger";
 
 // 模块级关闭确认标志：渲染进程确认关闭后置为 true，使 close 事件不再被拦截。
 // 这样可以统一覆盖所有关闭路径（自定义标题栏按钮、Alt+F4、任务栏关闭等）。
@@ -57,6 +60,30 @@ const registerThemeBackgroundSync = (): void => {
 
 // 在模块加载时注册一次主题背景色同步 IPC。
 registerThemeBackgroundSync();
+
+// DevTools 独立窗口由 Chromium 内部管理，默认显示 DevTools 默认图标而非应用图标。
+// Electron 的 DevTools 窗口同样关联了 owner BrowserWindow（NativeWindowViews），
+// 因此在 devtools-opened 时通过 fromWebContents 取到 DevTools 窗口并设置 Snow 图标，
+// 使 DevTools 窗口的标题栏 / 任务栏图标与应用保持一致（仅 Windows/Linux 生效）。
+const applyDevToolsSnowIcon = (contents: WebContents): void => {
+  contents.on("devtools-opened", () => {
+    if (isMacOS) {
+      return;
+    }
+    const devToolsContents = contents.devToolsWebContents;
+    if (!devToolsContents || devToolsContents.isDestroyed()) {
+      return;
+    }
+    const devToolsWindow = BrowserWindow.fromWebContents(devToolsContents);
+    if (devToolsWindow && !devToolsWindow.isDestroyed()) {
+      try {
+        devToolsWindow.setIcon(APP_WINDOW_ICON_PATH);
+      } catch {
+        // 窗口已关闭等竞态场景下忽略，下次打开 DevTools 时会重新设置。
+      }
+    }
+  });
+};
 
 export const createWindow = (): BrowserWindow => {
   // macOS 关闭窗口后进程不退出，用户点击 dock 图标会重新 createWindow。
@@ -103,6 +130,9 @@ export const createWindow = (): BrowserWindow => {
     mainWindow.maximize();
   }
 
+  // 主窗口自身的 DevTools（如 F12）也应用 Snow 图标。
+  applyDevToolsSnowIcon(mainWindow.webContents);
+
   // 监听尺寸/位置/最大化状态变化，防抖后持久化到 userData。
   bindWindowStatePersistence(mainWindow);
 
@@ -129,7 +159,8 @@ export const createWindow = (): BrowserWindow => {
   // Windows: 通知渲染进程窗口最大化状态变化（自定义标题栏需要同步图标）
   if (isWindows) {
     const notifyMaximizeState = (): void => {
-      mainWindow.webContents.send(
+      safeSend(
+        mainWindow.webContents,
         "window:maximize-state-changed",
         mainWindow.isMaximized()
       );
@@ -144,10 +175,24 @@ export const createWindow = (): BrowserWindow => {
   mainWindow.on("close", (event) => {
     if (!isCloseConfirmed()) {
       event.preventDefault();
-      mainWindow.webContents.send("window:close-requested");
+      safeSend(mainWindow.webContents, "window:close-requested");
       return;
     }
     killAllPtyForWebContents(mainWindow.webContents);
+  });
+
+  // 渲染进程异常退出（崩溃/被系统回收）时自动重新加载，避免前端黑屏卡死。
+  // 崩溃细节记录到应用日志便于排查；reload 后 preload/React 会重新初始化。
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    snowLog.error({
+      module: "app/mainWindow",
+      func: "render-process-gone",
+      message: "Renderer process gone, reloading window",
+      context: JSON.stringify(details),
+    });
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.reload();
+    }
   });
 
   // 渲染进程每次主框架导航（含开发模式 Ctrl+R 刷新）后，旧页面的 PTY
@@ -155,6 +200,11 @@ export const createWindow = (): BrowserWindow => {
   // 避免 PTY 泄漏。首次 loadURL 时会话表为空，kill 空集无副作用。
   mainWindow.webContents.on("did-navigate", () => {
     killAllPtyForWebContents(mainWindow.webContents);
+  });
+
+  // webview（如浏览器面板）打开的 DevTools 独立窗口同样应用 Snow 图标。
+  mainWindow.webContents.on("did-attach-webview", (_event, webContents) => {
+    applyDevToolsSnowIcon(webContents);
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

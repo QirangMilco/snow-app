@@ -1,7 +1,7 @@
 {
   "name": "snow-app",
-  "version": "0.1.19",
-  "description": "High-performance cross-platform desktop app scaffold powered by Electron, React, TypeScript, and Rust.",
+  "version": "0.1.21",
+  "description": "Snow App The best AI Agent client in the universe",
   "author": {
     "name": "Qirang",
     "email": "qirang@snow.app"
@@ -100,6 +100,10 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
       },
       {
         "from": "resources/web",

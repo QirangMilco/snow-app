@@ -5,6 +5,7 @@ import {
   RefreshCw,
   Copy,
   X,
+  Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GitBranch as GitBranchType } from "../../../../preload";
@@ -238,64 +239,65 @@ export const BranchSelector = ({
       </button>
       {isOpen && (
         <div className="branch-dropdown" ref={dropdownRef}>
-          {loading ? (
-            <div className="branch-dropdown-loading">{t("git.loading")}</div>
-          ) : (
-            <>
-              <div className="branch-dropdown-create">
-                {showCreate ? (
-                  <div className="branch-create-form">
-                    <div className="branch-create-input-row">
-                      <input
-                        ref={createInputRef}
-                        type="text"
-                        className="branch-create-input"
-                        placeholder={t("git.createBranchPlaceholder")}
-                        value={newBranchName}
-                        onChange={(e) => {
-                          setNewBranchName(e.target.value);
-                          setCreateError(null);
-                        }}
-                        onKeyDown={handleCreateInputKeyDown}
-                        disabled={creating}
-                        spellCheck={false}
-                        autoComplete="off"
-                      />
-                      <button
-                        type="button"
-                        className="branch-create-cancel-btn"
-                        onClick={handleToggleCreate}
-                        disabled={creating}
-                        title={t("git.discardCancelBtn")}
-                      >
-                        <X size={14} strokeWidth={1.8} />
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      className="branch-create-submit-btn"
-                      onClick={handleCreateBranch}
-                      disabled={
-                        creating || newBranchName.trim().length === 0
-                      }
-                    >
-                      {creating ? t("git.loading") : t("git.createBranchSubmit")}
-                    </button>
-                    {createError && (
-                      <div className="branch-create-error">{createError}</div>
-                    )}
-                  </div>
-                ) : (
+          <div className="branch-dropdown-create">
+            {showCreate ? (
+              <div className="branch-create-form">
+                <div className="branch-create-input-row">
+                  <input
+                    ref={createInputRef}
+                    type="text"
+                    className="branch-create-input"
+                    placeholder={t("git.createBranchPlaceholder")}
+                    value={newBranchName}
+                    onChange={(e) => {
+                      setNewBranchName(e.target.value);
+                      setCreateError(null);
+                    }}
+                    onKeyDown={handleCreateInputKeyDown}
+                    disabled={creating}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
                   <button
                     type="button"
-                    className="branch-create-toggle-btn"
+                    className="branch-create-cancel-btn"
                     onClick={handleToggleCreate}
+                    disabled={creating}
+                    title={t("git.discardCancelBtn")}
                   >
-                    <GitBranchPlus size={14} strokeWidth={1.8} />
-                    <span>{t("git.createBranch")}</span>
+                    <X size={14} strokeWidth={1.8} />
                   </button>
+                </div>
+                <button
+                  type="button"
+                  className="branch-create-submit-btn"
+                  onClick={handleCreateBranch}
+                  disabled={creating || newBranchName.trim().length === 0}
+                >
+                  {creating ? t("git.loading") : t("git.createBranchSubmit")}
+                </button>
+                {createError && (
+                  <div className="branch-create-error">{createError}</div>
                 )}
               </div>
+            ) : (
+              <button
+                type="button"
+                className="branch-create-toggle-btn"
+                onClick={handleToggleCreate}
+              >
+                <GitBranchPlus size={14} strokeWidth={1.8} />
+                <span>{t("git.createBranch")}</span>
+              </button>
+            )}
+          </div>
+          {loading ? (
+            <div className="branch-dropdown-loading">
+              <Loader2 size={14} strokeWidth={1.8} className="spin" />
+              <span>{t("git.loading")}</span>
+            </div>
+          ) : (
+            <>
               {localBranches.length > 0 && (
                 <div className="branch-dropdown-group">
                   <div className="branch-dropdown-label">

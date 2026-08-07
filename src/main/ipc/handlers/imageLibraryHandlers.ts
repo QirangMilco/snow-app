@@ -105,4 +105,29 @@ export const registerImageLibraryHandlers = (native: NativeBridge): void => {
       return native.deleteConversationImages(safeIds);
     }
   );
+
+  ipcMain.handle(
+    "images:library-migrate-prepare",
+    async (_event, targetDir: unknown): Promise<number> => {
+      if (typeof targetDir !== "string") {
+        throw new Error("Invalid image library target directory");
+      }
+      return native.prepareImageLibraryMigration(targetDir.trim());
+    }
+  );
+
+  ipcMain.handle(
+    "images:library-migrate-chunk",
+    async (): Promise<unknown> => {
+      return native.migrateImageLibraryChunk();
+    }
+  );
+
+  ipcMain.handle("images:library-migrate-commit", async (): Promise<void> => {
+    await native.commitImageLibraryMigration();
+  });
+
+  ipcMain.handle("images:library-migrate-rollback", async (): Promise<void> => {
+    await native.rollbackImageLibraryMigration();
+  });
 };

@@ -11,11 +11,13 @@ export type {
   ImportCommitSummary,
   ImportConfigPath,
   ImportDiscovery,
+  ImportEnvironmentKind,
   ImportOwnership,
   ImportProvider,
   ImportSelection,
   ImportScope,
   ImportSource,
+  ImportSourceEnvironment,
   ReadonlyImportResult,
 } from "../../shared/importDiscovery";
 

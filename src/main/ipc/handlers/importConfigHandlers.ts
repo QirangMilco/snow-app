@@ -230,10 +230,14 @@ export const registerImportConfigHandlers = (
     if (!plugin) throw new Error("Plugin not found");
     return plugin;
   };
-  ipcMain.handle("import-config:discover", async () => {
+  ipcMain.handle("import-config:discover", async (_event, activeDirectoryId?: unknown) => {
     await clearImportDiscoveryCache();
     await ensureLegacyImportResourceMigration(native);
-    return discoverAllImportCandidates(native);
+    const directoryId =
+      typeof activeDirectoryId === "string" && activeDirectoryId.trim()
+        ? activeDirectoryId.trim()
+        : undefined;
+    return discoverAllImportCandidates(native, directoryId);
   });
   ipcMain.handle("import-config:list-managed-resources", async () => {
     await ensureLegacyImportResourceMigration(native);
@@ -399,7 +403,11 @@ export const registerImportConfigHandlers = (
     // Build the provider contexts once and reuse them for the resolve phase
     // below; previously each resolve*SelectedImports call re-scanned every
     // provider directory from scratch, doubling the scan cost of a commit.
-    const { discovery, contexts } = await discoverAllImportContexts(native);
+    const activeDirectoryId =
+      typeof (value as Partial<ImportSelection>).activeDirectoryId === "string"
+        ? ((value as Partial<ImportSelection>).activeDirectoryId as string).trim() || undefined
+        : undefined;
+    const { discovery, contexts } = await discoverAllImportContexts(native, activeDirectoryId);
     const candidates = candidateIds.map((candidateId) =>
       discovery.candidates.find(
         (candidate) => candidate.candidateId === candidateId

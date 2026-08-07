@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { ToolCallInfo } from "../utils/conversationTypes";
+import type { HookExecutionRecord } from "../utils/conversationTypes";
 import {
   AskUserQuestionToolCall,
   PlanModeApprovalToolCall,
@@ -16,12 +17,20 @@ import {
   ImageGenToolCall,
   BrowserToolCall,
   TerminalToolCall,
+  SkillToolCall,
+  ConfigToolCall,
+  AppControlToolCall,
+  DbxToolCall,
 } from "../toolCalls";
 import { ToolCallNode } from "../toolCalls/shared/ToolCallNode";
 import { useI18n } from "../../../../i18n";
 
 type ToolCallItemProps = {
   toolCall: ToolCallInfo;
+  /** Hook execution records bound to this tool call (matched by
+   *  toolCallInteractionId).  Forwarded to the sub-agent card renderer;
+   *  other tool renderers ignore it. */
+  hookExecutions?: HookExecutionRecord[];
 };
 
 /** Pretty-print JSON arguments if possible, otherwise return raw string. */
@@ -55,8 +64,98 @@ const hasResultError = (result: string | undefined): boolean => {
   }
 };
 
+/** 按信息量优先级提取参数中的摘要字段，用于折叠态 header 展示。 */
+const SUMMARY_KEYS = [
+  "filePath",
+  "path",
+  "url",
+  "query",
+  "expression",
+  "pattern",
+  "command",
+  "selector",
+  "text",
+  "name",
+  "tool",
+  "key",
+  "prompt",
+  "message",
+  "content",
+  "host",
+  "server",
+  "database",
+  "db",
+  "connection",
+  "connectionName",
+  "connection_name",
+  "channel",
+  "agentId",
+  "agent_id",
+  "skillId",
+  "skill_id",
+  "scope",
+  "fileName",
+  "file",
+  "domain",
+  "endpoint",
+  "baseUrl",
+  "model",
+  "instanceId",
+  "instance_id",
+  "taskId",
+  "task_id",
+  "table",
+  "action",
+] as const;
+
+const truncateSummary = (value: string, max = 56): string =>
+  value.length > max ? `${value.slice(0, max)}...` : value;
+
+const getArgsSummary = (args: string): string | undefined => {
+  if (!args || args === "{}") {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(args);
+    if (!isRecord(parsed)) {
+      return undefined;
+    }
+    // 1. 直接字符串字段。
+    for (const key of SUMMARY_KEYS) {
+      const value = parsed[key];
+      if (typeof value === "string" && value.trim() !== "") {
+        return truncateSummary(value.trim());
+      }
+    }
+    // 2. host/server + port 组合（外部 MCP 服务器工具常见）。
+    const hostValue = parsed.host ?? parsed.server;
+    const portValue = parsed.port;
+    if (typeof hostValue === "string" && hostValue.trim() !== "") {
+      if (typeof portValue === "number" && Number.isFinite(portValue)) {
+        return truncateSummary(`${hostValue.trim()}:${portValue}`);
+      }
+      return truncateSummary(hostValue.trim());
+    }
+    // 3. 数组字段取第一项。
+    for (const key of SUMMARY_KEYS) {
+      const value = parsed[key];
+      if (Array.isArray(value)) {
+        const first = value.find(
+          (item): item is string => typeof item === "string"
+        );
+        if (first && first.trim() !== "") {
+          return truncateSummary(first.trim());
+        }
+      }
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export const ToolCallItem = memo(
-  ({ toolCall }: ToolCallItemProps): React.JSX.Element => {
+  ({ toolCall, hookExecutions }: ToolCallItemProps): React.JSX.Element => {
     const { t } = useI18n();
     // Delegate to specialized renderers based on tool name
     if (toolCall.name === "user-interaction-askUserQuestion") {
@@ -92,7 +191,12 @@ export const ToolCallItem = memo(
     }
 
     if (toolCall.name === "sub-agents-activate") {
-      return <SubAgentToolCall toolCall={toolCall} />;
+      return (
+        <SubAgentToolCall
+          toolCall={toolCall}
+          hookExecutions={hookExecutions}
+        />
+      );
     }
 
     if (toolCall.name === "codebase-search") {
@@ -100,7 +204,6 @@ export const ToolCallItem = memo(
     }
 
     if (
-      toolCall.name === "codelens-diagnose" ||
       toolCall.name === "codelens-find_definition" ||
       toolCall.name === "codelens-find_references" ||
       toolCall.name === "codelens-file_outline"
@@ -127,14 +230,46 @@ export const ToolCallItem = memo(
       return <TerminalToolCall toolCall={toolCall} />;
     }
 
+    if (toolCall.name === "skills-skill-execute") {
+      return <SkillToolCall toolCall={toolCall} />;
+    }
+
+    if (toolCall.name.startsWith("config-")) {
+      return <ConfigToolCall toolCall={toolCall} />;
+    }
+
+    if (toolCall.name.startsWith("app-control-")) {
+      return <AppControlToolCall toolCall={toolCall} />;
+    }
+
+    if (
+      toolCall.name.startsWith("dbx-") ||
+      toolCall.name.startsWith("dbx_")
+    ) {
+      // 外部 MCP（DBX 桌面数据库应用）统一渲染，见 DbxToolCall 头部注释。
+      // 注意：外部 MCP 工具名可能被规范化为下划线风格（dbx_execute_query），
+      // 因此同时兼容连字符与下划线两种前缀。
+      return <DbxToolCall toolCall={toolCall} />;
+    }
+
+    // —— 以下为通用兜底渲染 ——
+    // 未匹配到任何专用渲染器的工具（通常是外部 MCP 或第三方扩展的工具）：
+    // 折叠态 header 显示参数摘要（getArgsSummary），展开后展示参数与结果 JSON，
+    // 保持与专用工具一致的 ToolCallNode 风格。
     const effectiveStatus = hasResultError(toolCall.result)
       ? "error"
       : toolCall.status;
     const formattedArgs = formatArguments(toolCall.arguments);
+    const argsSummary = getArgsSummary(toolCall.arguments);
     const hasBody = Boolean(formattedArgs || toolCall.result);
 
     return (
-      <ToolCallNode toolName={toolCall.name} status={effectiveStatus}>
+      <ToolCallNode
+        toolName={toolCall.name}
+        status={effectiveStatus}
+        displayName={argsSummary}
+        displayNameTitle={toolCall.arguments}
+      >
         {hasBody ? (
           <>
             {formattedArgs ? (

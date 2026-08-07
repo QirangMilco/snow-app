@@ -43,6 +43,7 @@ import {
   registerSshCommandAbort,
   unregisterSshCommandAbort,
 } from "../../ssh/sshCommandRegistry";
+import { safeSend } from "../../utils/safeSend";
 
 const MCP_TOOL_CHUNK_CHANNEL = "mcp:call-tool:chunk";
 
@@ -65,21 +66,6 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
   ipcMain.handle("settings:get-yolo-mode", () => native.getYoloMode());
   ipcMain.handle("settings:set-yolo-mode", (_event, enabled: boolean) =>
     native.setYoloMode(enabled)
-  );
-  ipcMain.handle("settings:get-plan-mode", () => native.getPlanMode());
-  ipcMain.handle("settings:set-plan-mode", (_event, enabled: boolean) =>
-    native.setPlanMode(enabled)
-  );
-  ipcMain.handle("settings:get-goal-mode", () => native.getGoalMode());
-  ipcMain.handle("settings:set-goal-mode", (_event, enabled: boolean) =>
-    native.setGoalMode(enabled)
-  );
-  ipcMain.handle("settings:get-goal-mode-token-budget", () =>
-    native.getGoalModeTokenBudget()
-  );
-  ipcMain.handle(
-    "settings:set-goal-mode-token-budget",
-    (_event, budget: number) => native.setGoalModeTokenBudget(budget)
   );
   ipcMain.handle("settings:get-conversation-modes", (_event, conversationId: string) =>
     native.getConversationModes(conversationId)
@@ -208,13 +194,11 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
       return native
         .setCodebaseProjectEnabled(normalizedProjectId, enabled)
         .then(() => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send("codebase:scope-changed", {
-              projectId: normalizedProjectId,
-              key: "enabled",
-              enabled,
-            });
-          }
+          safeSend(event.sender, "codebase:scope-changed", {
+            projectId: normalizedProjectId,
+            key: "enabled",
+            enabled,
+          });
         });
     }
   );
@@ -275,10 +259,7 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
         normalizedProjectId,
         normalizedSessionId,
         (progress: CodebaseEmbedProgress) => {
-          if (event.sender.isDestroyed()) {
-            return;
-          }
-          event.sender.send("codebase:embed:progress", {
+          safeSend(event.sender, "codebase:embed:progress", {
             sessionId: normalizedSessionId,
             projectId: normalizedProjectId,
             progress,
@@ -378,10 +359,7 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
         normalizedProjectId,
         normalizedProjectPath,
         (changedProjectId: string) => {
-          if (event.sender.isDestroyed()) {
-            return;
-          }
-          event.sender.send("codebase:files-changed", changedProjectId);
+          safeSend(event.sender, "codebase:files-changed", changedProjectId);
         }
       );
     }
@@ -398,10 +376,7 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
     }
     const normalizedProjectId = projectId.trim();
     return native.syncCodebaseChanges(normalizedProjectId, (progress) => {
-      if (event.sender.isDestroyed()) {
-        return;
-      }
-      event.sender.send("codebase:sync:progress", {
+      safeSend(event.sender, "codebase:sync:progress", {
         projectId: normalizedProjectId,
         progress,
       });
@@ -849,11 +824,7 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
             remoteExecutionIds.add(executionId);
             registerSshCommandAbort(executionId, sshAbortController);
           }
-          if (event.sender.isDestroyed()) {
-            return;
-          }
-
-          event.sender.send(MCP_TOOL_CHUNK_CHANNEL, {
+          safeSend(event.sender, MCP_TOOL_CHUNK_CHANNEL, {
             streamId: normalizedStreamId,
             chunk,
           });

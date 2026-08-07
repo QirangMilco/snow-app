@@ -16,6 +16,12 @@ const RESOURCES_DIR = app.isPackaged
   : join(__dirname, "../../resources");
 
 export const APP_ICON_PATH = join(RESOURCES_DIR, "icon.png");
+// Windows 标题栏小图标优先使用包含多尺寸位图的 ICO；PNG 在 Chromium DevTools
+// 内容完成加载后可能被其默认 Electron favicon 覆盖或无法生成合适的 HICON。
+export const APP_WINDOW_ICON_PATH = join(
+  RESOURCES_DIR,
+  isWindows ? "icon.ico" : "icon.png"
+);
 
 // 托盘图标用的小尺寸源图：16px（100% DPI）与 32px（200% DPI @2x 表示），
 // 直接使用设计好的 favicon，避免从大图缩放导致的模糊。

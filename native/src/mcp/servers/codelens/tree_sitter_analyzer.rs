@@ -1,23 +1,18 @@
 //! Multi-language analyzer powered by tree-sitter.
 //!
-//! Provides syntax-level analysis (diagnostics, outline, definition lookup,
-//! reference search) for a wide range of programming languages:
+//! Provides syntax-level analysis (outline, definition lookup, reference
+//! search) for a wide range of programming languages:
 //! Python, Rust, Go, C, C++, Java, C#, Ruby, PHP, CSS, HTML, JSON, YAML,
 //! Bash, SQL, Lua, Dockerfile, Make, and more.
 //!
-//! JS/TS are handled separately by the oxc-based `analyzer.rs` which also
-//! performs deep semantic analysis (scope resolution, unresolved references).
+//! JS/TS are handled separately by the oxc-based `analyzer.rs`.
 
 use std::path::Path;
 
 use tree_sitter::{Language, Node, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 use super::analyzer::LineIndex;
-use super::semantic_analyzer;
-use super::types::{
-    AnalyzedFile, DiagnosticItem, DiagnosticSeverity, OutlineEntry, ReferenceInfo, SymbolInfo,
-    SymbolLocation,
-};
+use super::types::{OutlineEntry, ReferenceInfo, SymbolInfo, SymbolLocation};
 
 /// Supported tree-sitter languages.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -122,83 +117,6 @@ fn parse(file_path: &str, source: &str) -> Option<(TsLang, Tree)> {
     parser.set_language(&lang.language()).ok()?;
     let tree = parser.parse(source, None)?;
     Some((lang, tree))
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
-/// Analyze a file using tree-sitter: collect syntax errors and run
-/// lightweight semantic analysis (unresolved references, unused definitions).
-pub fn analyze_file(file_path: &str, source_text: &str) -> Option<AnalyzedFile> {
-    let (lang, tree) = parse(file_path, source_text)?;
-    let line_index = LineIndex::new(source_text);
-
-    let mut diagnostics = Vec::new();
-
-    // Walk the tree to find ERROR and MISSING nodes
-    collect_error_nodes(&tree.root_node(), source_text, &line_index, &mut diagnostics);
-
-    // Run semantic analysis (unresolved references, unused variables/imports)
-    let semantic_result =
-        semantic_analyzer::analyze_semantics(lang, &tree, source_text, &line_index);
-    diagnostics.extend(semantic_result.diagnostics);
-
-    Some(AnalyzedFile {
-        file_path: file_path.to_string(),
-        source_text: source_text.to_string(),
-        diagnostics,
-        symbols: Vec::new(),
-        references: Vec::new(),
-        unresolved_references: Vec::new(),
-    })
-}
-
-fn collect_error_nodes(
-    node: &Node,
-    source: &str,
-    line_index: &LineIndex,
-    diagnostics: &mut Vec<DiagnosticItem>,
-) {
-    if node.is_error() {
-        let (start_line, start_col) = line_index.line_col(node.start_byte() as u32);
-        let (end_line, end_col) = line_index.line_col(node.end_byte() as u32);
-        let snippet: String = source
-            .get(node.start_byte()..node.end_byte().min(source.len()))
-            .unwrap_or("")
-            .chars()
-            .take(80)
-            .collect();
-        diagnostics.push(DiagnosticItem {
-            severity: DiagnosticSeverity::Error.as_str().to_string(),
-            message: format!("Syntax error near: \"{snippet}\""),
-            start_line,
-            end_line,
-            start_column: start_col,
-            end_column: end_col,
-            source: "tree-sitter".to_string(),
-            code: Some("syntax-error".to_string()),
-        });
-    } else if node.is_missing() {
-        let (start_line, start_col) = line_index.line_col(node.start_byte() as u32);
-        let (end_line, end_col) = line_index.line_col(node.end_byte() as u32);
-        diagnostics.push(DiagnosticItem {
-            severity: DiagnosticSeverity::Error.as_str().to_string(),
-            message: format!("Missing \"{}\"", node.kind()),
-            start_line,
-            end_line,
-            start_column: start_col,
-            end_column: end_col,
-            source: "tree-sitter".to_string(),
-            code: Some("missing-syntax".to_string()),
-        });
-    }
-
-    // Recurse into children
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_error_nodes(&child, source, line_index, diagnostics);
-    }
 }
 
 // ---------------------------------------------------------------------------

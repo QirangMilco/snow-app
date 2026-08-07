@@ -15,8 +15,6 @@ use crate::storage::services::chat_conversations::ChatContextMessage;
 use crate::api::responses::ResponsesApiRequest;
 use crate::storage::ApiConfigRecord;
 
-pub(crate) const DEFAULT_MAX_TOKENS: i32 = 64000;
-
 /// Process-level persistent Anthropic user_id.
 ///
 /// Mirrors Snow CLI's `getPersistentUserId`: the value is generated once per
@@ -280,17 +278,18 @@ pub(super) fn build_anthropic_payload(
         return Err(Error::from_reason("Chat message content is required"));
     }
 
-    let max_tokens = api_config
-        .max_tokens
-        .filter(|&v| v > 0)
-        .unwrap_or(DEFAULT_MAX_TOKENS);
-
     let mut payload = json!({
         "model": model,
-        "max_tokens": max_tokens,
         "messages": anthropic_messages,
         "stream": true,
     });
+
+    // max_tokens 为用户可选配置：留空（None）时不传该参数，由服务端决定默认值。
+    if let Some(max_tokens) = api_config.max_tokens {
+        if max_tokens > 0 {
+            payload["max_tokens"] = json!(max_tokens);
+        }
+    }
 
     // Build the `system` field.
     // the field exclusively (each prompt as an independent text block, with

@@ -57,6 +57,7 @@ export const CommandPanel = forwardRef<CommandPanelHandle, CommandPanelProps>(
         handleKeyDown: (event): boolean => {
           if (event.key === "Escape") {
             event.preventDefault();
+            event.stopPropagation();
             onClose();
             return true;
           }
@@ -113,6 +114,7 @@ export const CommandPanel = forwardRef<CommandPanelHandle, CommandPanelProps>(
       <div
         className="chat-command-panel"
         role="listbox"
+        data-esc-panel
         aria-label={t("chatCommand.title")}
       >
         <div className="chat-command-list" ref={listRef}>

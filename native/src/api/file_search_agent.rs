@@ -9,7 +9,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::anthropic::payload::{
     apply_last_user_message_cache_control, build_anthropic_thinking, get_persistent_user_id,
-    DEFAULT_MAX_TOKENS,
 };
 use crate::api::chat::payload::build_chat_reasoning_effort;
 use crate::api::config::{
@@ -832,18 +831,19 @@ async fn run_anthropic_round(
         ));
     }
 
-    let max_tokens = api_config
-        .max_tokens
-        .filter(|&v| v > 0)
-        .unwrap_or(DEFAULT_MAX_TOKENS);
-
     let mut payload = json!({
         "model": model,
-        "max_tokens": max_tokens,
         "stream": true,
         "messages": messages,
         "tools": tools_as_anthropic_json(tools),
     });
+
+    // 与主流程（api/anthropic/payload.rs）保持一致：max_tokens 留空时不传该参数。
+    if let Some(max_tokens) = api_config.max_tokens {
+        if max_tokens > 0 {
+            payload["max_tokens"] = json!(max_tokens);
+        }
+    }
 
     // 与主流程（api/anthropic/payload.rs）保持一致：
     // system 以数组形式携带 cache_control 启用 prompt 缓存、携带

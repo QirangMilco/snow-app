@@ -11,16 +11,13 @@
 //! loop is never blocked.
 //!
 //! Tools:
-//! - `codelens-diagnose`: Run diagnostics on any source file
 //! - `codelens-find_definition`: Find the definition of a symbol at a position
 //! - `codelens-find_references`: Find all references to a symbol at a position
 //! - `codelens-file_outline`: Get the symbol outline of a file
 
 #![allow(dead_code)]
 
-mod ambient_globals;
 mod analyzer;
-mod semantic_analyzer;
 mod symbol_index;
 mod tree_sitter_analyzer;
 mod types;
@@ -64,21 +61,6 @@ impl McpService for CodeLensService {
 
     fn tools(&self) -> Vec<McpTool> {
         vec![
-            McpTool {
-                server_id: SERVER_ID.to_string(),
-                name: "diagnose".to_string(),
-                description: "Run code diagnostics on a source file. Supports TypeScript, JavaScript, Python, Rust, Go, C, C++, Java, C#, Ruby, PHP, CSS, HTML, JSON, YAML, Bash, SQL, Lua, Dockerfile, and Make. For TS/JS, detects syntax errors, semantic errors, and unresolved references via oxc. For other languages (Python, Rust, Go, C, Java, C#, Ruby, PHP, Lua, Bash), detects syntax errors via tree-sitter AND performs lightweight semantic analysis: unresolved reference detection (using a name that is not defined in the file and not a known built-in) and unused variable/import detection. Returns a list of diagnostics with severity, message, and location.".to_string(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "filePath": {
-                            "type": "string",
-                            "description": "Absolute path to the source file to diagnose."
-                        }
-                    },
-                    "required": ["filePath"]
-                }),
-            },
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: "find_definition".to_string(),
@@ -145,14 +127,14 @@ impl McpService for CodeLensService {
 
     fn execute(&self, tool_name: &str, _args: &Value) -> napi::Result<Value> {
         match tool_name {
-            "diagnose" | "find_definition" | "find_references" | "file_outline" => Err(Error::new(
+            "find_definition" | "find_references" | "file_outline" => Err(Error::new(
                 Status::GenericFailure,
                 "CodeLens tools must be executed through the asynchronous executor".to_string(),
             )),
             _ => Err(Error::new(
                 Status::GenericFailure,
                 format!(
-                    "Unknown tool: \"{}\" for MCP server \"codelens\". Available tools: [codelens-diagnose, codelens-find_definition, codelens-find_references, codelens-file_outline]",
+                    "Unknown tool: \"{}\" for MCP server \"codelens\". Available tools: [codelens-find_definition, codelens-find_references, codelens-file_outline]",
                     tool_name
                 ),
             )),
@@ -174,70 +156,6 @@ fn is_js_ts(file_path: &str) -> bool {
 }
 
 impl CodeLensService {
-    /// Execute the diagnose tool asynchronously.
-    pub async fn execute_diagnose(&self, args: &Value) -> napi::Result<Value> {
-        let file_path = require_string_arg(args, "filePath")?;
-
-        let result = tokio::task::spawn_blocking(move || -> napi::Result<Value> {
-            let (path_str, source_text) = read_source_file(&file_path)?;
-
-            let diagnostics = if is_js_ts(&path_str) {
-                // oxc: deep semantic analysis
-                let analyzed = analyzer::analyze_file(&path_str, &source_text);
-                analyzed.diagnostics
-            } else {
-                // tree-sitter: syntax-level analysis
-                match tree_sitter_analyzer::analyze_file(&path_str, &source_text) {
-                    Some(analyzed) => analyzed.diagnostics,
-                    None => {
-                        return Err(Error::new(
-                            Status::InvalidArg,
-                            format!(
-                                "Unsupported file type for diagnostics: {path_str}. Supported: TypeScript, JavaScript, Python, Rust, Go, C, C++, Java, C#, Ruby, PHP, CSS, HTML, JSON, YAML, Bash, SQL, Lua, Dockerfile, Make."
-                            ),
-                        ));
-                    }
-                }
-            };
-
-            let diagnostics_json: Vec<Value> = diagnostics
-                .iter()
-                .map(|d| {
-                    json!({
-                        "severity": d.severity,
-                        "message": d.message,
-                        "startLine": d.start_line,
-                        "endLine": d.end_line,
-                        "startColumn": d.start_column,
-                        "endColumn": d.end_column,
-                        "source": d.source,
-                        "code": d.code,
-                    })
-                })
-                .collect();
-
-            let error_count = diagnostics.iter().filter(|d| d.severity == "error").count();
-            let warning_count = diagnostics.iter().filter(|d| d.severity == "warning").count();
-
-            Ok(json!({
-                "filePath": path_str,
-                "diagnostics": diagnostics_json,
-                "totalDiagnostics": diagnostics.len(),
-                "errorCount": error_count,
-                "warningCount": warning_count,
-            }))
-        })
-        .await
-        .map_err(|e| {
-            Error::new(
-                Status::GenericFailure,
-                format!("Diagnose task failed: {e}"),
-            )
-        })??;
-
-        Ok(result)
-    }
-
     /// Execute the find_definition tool asynchronously.
     ///
     /// If `project_id` is provided, the search is performed across the entire

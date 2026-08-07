@@ -71,20 +71,11 @@ export const useAppControl = ({
           case "set_mode": {
             const mode = payload.mode as string;
             const enabled = payload.enabled as boolean;
-            if (mode === "plan") {
-              await window.snow.setPlanMode(enabled);
-              if (enabled) {
-                await window.snow.setGoalMode(false);
-              }
-            } else if (mode === "goal") {
-              await window.snow.setGoalMode(enabled);
-              if (enabled) {
-                await window.snow.setPlanMode(false);
-              }
-            }
-            // Replay through the session-aware path so the active session's
-            // ref, the global defaults and the per-conversation DB record
-            // all stay consistent with the persisted settings.
+            // Plan/Goal Mode is strictly per-conversation: the persisted
+            // global settings are never written here. Replaying through the
+            // session-aware path applies the change to the ACTIVE
+            // conversation only (its session ref + per-conversation DB
+            // record) — other conversations never inherit the toggle.
             window.dispatchEvent(
               new CustomEvent(APP_CONTROL_MODE_CHANGED_EVENT, {
                 detail: { mode, enabled },

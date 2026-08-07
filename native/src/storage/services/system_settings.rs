@@ -27,21 +27,6 @@ const DEFAULT_YOLO_MODE_SETTING_NAME: &str = "YOLO mode";
 const DEFAULT_YOLO_MODE_SETTING_CODE: &str = "yolo_mode";
 const DEFAULT_YOLO_MODE_SETTING_VALUE: &str = "false";
 
-const DEFAULT_PLAN_MODE_SETTING_NAME: &str = "Plan mode";
-const DEFAULT_PLAN_MODE_SETTING_CODE: &str = "plan_mode";
-const DEFAULT_PLAN_MODE_SETTING_VALUE: &str = "false";
-
-const DEFAULT_GOAL_MODE_SETTING_NAME: &str = "Goal mode";
-const DEFAULT_GOAL_MODE_SETTING_CODE: &str = "goal_mode";
-const DEFAULT_GOAL_MODE_SETTING_VALUE: &str = "false";
-
-const DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_NAME: &str = "Goal mode token budget";
-const DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_CODE: &str = "goal_mode_token_budget";
-const DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_VALUE: &str = "2000000";
-// Goal Mode Token Budget 持久化方案与 Goal Mode 开关一致：system_settings.setting_code = goal_mode_token_budget，
-// 值为字符串数字（默认 200000）。get_goal_mode_token_budget/set_goal_mode_token_budget 在 system_settings.rs 实现，
-// 通过 goal_settings.rs re-export，storage/mod.rs 桥接，exports/storage.rs 用 #[napi]+spawn_blocking 导出。
-
 const DEFAULT_REQUEST_LOGGING_SETTING_NAME: &str = "Request logging";
 const DEFAULT_REQUEST_LOGGING_SETTING_CODE: &str = "request_logging";
 const DEFAULT_REQUEST_LOGGING_SETTING_VALUE: &str = "false";
@@ -292,74 +277,6 @@ pub fn set_yolo_mode(database_path: &Path, enabled: bool) -> Result<()> {
         DEFAULT_YOLO_MODE_SETTING_NAME,
         DEFAULT_YOLO_MODE_SETTING_CODE,
         if enabled { "true" } else { "false" },
-    )
-}
-
-pub fn get_plan_mode(database_path: &Path) -> Result<bool> {
-    let Some(value) = get_system_setting_value(database_path, DEFAULT_PLAN_MODE_SETTING_CODE)? else {
-        return Ok(false);
-    };
-
-    value.parse::<bool>().map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Failed to parse Plan mode setting: {error}"),
-        )
-    })
-}
-
-pub fn set_plan_mode(database_path: &Path, enabled: bool) -> Result<()> {
-    set_system_setting(
-        database_path,
-        DEFAULT_PLAN_MODE_SETTING_NAME,
-        DEFAULT_PLAN_MODE_SETTING_CODE,
-        if enabled { "true" } else { "false" },
-    )
-}
-
-pub fn get_goal_mode(database_path: &Path) -> Result<bool> {
-    let Some(value) = get_system_setting_value(database_path, DEFAULT_GOAL_MODE_SETTING_CODE)? else {
-        return Ok(false);
-    };
-
-    value.parse::<bool>().map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Failed to parse Goal mode setting: {error}"),
-        )
-    })
-}
-
-pub fn set_goal_mode(database_path: &Path, enabled: bool) -> Result<()> {
-    set_system_setting(
-        database_path,
-        DEFAULT_GOAL_MODE_SETTING_NAME,
-        DEFAULT_GOAL_MODE_SETTING_CODE,
-        if enabled { "true" } else { "false" },
-    )
-}
-
-pub fn get_goal_mode_token_budget(database_path: &Path) -> Result<i64> {
-    let Some(value) =
-        get_system_setting_value(database_path, DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_CODE)?
-    else {
-        return Ok(2000000);
-    };
-
-    value.parse::<i64>().map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Failed to parse Goal mode token budget setting: {error}"),
-        )
-    })
-}
-
-pub fn set_goal_mode_token_budget(database_path: &Path, budget: i64) -> Result<()> {
-    set_system_setting(
-        database_path,
-        DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_NAME,
-        DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_CODE,
-        &budget.to_string(),
     )
 }
 
@@ -1174,24 +1091,6 @@ fn seed_default_settings_with_connection(connection: &Connection) -> rusqlite::R
         DEFAULT_YOLO_MODE_SETTING_NAME,
         DEFAULT_YOLO_MODE_SETTING_CODE,
         DEFAULT_YOLO_MODE_SETTING_VALUE,
-    )?;
-    insert_default_setting(
-        connection,
-        DEFAULT_PLAN_MODE_SETTING_NAME,
-        DEFAULT_PLAN_MODE_SETTING_CODE,
-        DEFAULT_PLAN_MODE_SETTING_VALUE,
-    )?;
-    insert_default_setting(
-        connection,
-        DEFAULT_GOAL_MODE_SETTING_NAME,
-        DEFAULT_GOAL_MODE_SETTING_CODE,
-        DEFAULT_GOAL_MODE_SETTING_VALUE,
-    )?;
-    insert_default_setting(
-        connection,
-        DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_NAME,
-        DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_CODE,
-        DEFAULT_GOAL_MODE_TOKEN_BUDGET_SETTING_VALUE,
     )?;
     insert_default_setting(
         connection,

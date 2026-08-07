@@ -140,7 +140,7 @@ config-set scope=subAgents key=agent_code_reviewer value={
   "name": "代码审查员",
   "description": "审查代码质量与安全性",
   "systemPrompt": "你是资深代码审查员，专注发现 bug、安全问题与性能隐患。",
-  "toolsJson": ["grep-search", "filesystem-read", "codelens-diagnose"],
+  "toolsJson": ["grep-search", "filesystem-read", "codelens-file_outline"],
   "configProfile": "gpt-4o"
 }
 

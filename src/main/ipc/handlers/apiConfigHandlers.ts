@@ -11,6 +11,7 @@ import {
 import { readSnowCliCodebaseSettings } from "../../settings/codebaseSettings";
 import { readSnowCliProxyConfig } from "../../settings/proxyBrowserSettings";
 import { readSnowCliProfiles } from "../../snowCli/profiles";
+import { safeSend } from "../../utils/safeSend";
 
 export const registerApiConfigHandlers = (native: NativeBridge): void => {
   ipcMain.handle("api-configs:list", () => native.listApiConfigs());
@@ -156,12 +157,10 @@ export const registerApiConfigHandlers = (native: NativeBridge): void => {
         imagePath.trim(),
         normalizedProfileName,
         (chunk: ResponsesApiStreamChunk) => {
-          if (!event.sender.isDestroyed()) {
-            event.sender.send("theme:generate-palette:chunk", {
-              streamId: normalizedStreamId,
-              chunk,
-            });
-          }
+          safeSend(event.sender, "theme:generate-palette:chunk", {
+            streamId: normalizedStreamId,
+            chunk,
+          });
         },
         normalizedStreamId
       );

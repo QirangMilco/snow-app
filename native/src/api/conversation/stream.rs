@@ -127,6 +127,7 @@ pub async fn create_response_stream(
     // 否则问题消息会以 user 角色进入主对话（污染主任务上下文），
     // 无会话时还会创建垃圾会话。usage 记录与日志不受影响。
     let failure_skip_persist = request.skip_persist.unwrap_or(false);
+    let failure_resume_after_compaction = request.resume_after_compaction.unwrap_or(false);
     let failure_database_path = context.database_path.clone();
     // The profile that actually served this request. Persisted on failed
     // exchanges too so a conversation created by a failed first message is
@@ -283,6 +284,7 @@ pub async fn create_response_stream(
             let persisted_failure_model = failure_model.clone();
             let failure_dir_id = failure_directory_id.clone();
             let persisted_failure_api_profile = failure_api_profile.clone();
+            let persisted_failure_resume = failure_resume_after_compaction;
             let conversation_id = if failure_skip_persist {
                 // BTW 旁路问答（skip_persist = true）失败时不得写入会话历史：
                 // 否则问题消息会以 user 角色进入主对话，无会话时还会创建
@@ -299,6 +301,7 @@ pub async fn create_response_stream(
                         &persisted_failure_model,
                         &persisted_failure_api_profile,
                         &failure_directory_id,
+                        persisted_failure_resume,
                         &persisted_error_message,
                     )
                 })

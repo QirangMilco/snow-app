@@ -176,12 +176,16 @@ automatically:
   historical messages are kept, so later turns can still reference previously
   uploaded images (e.g. “turn the image from earlier into anime style”);
 
-- **Multiple images**: ask for several variants in one request (the `n`
-  parameter caps a single call at 4). When the AI fires several generation
-  calls at once they run **in parallel**, bounded by **Max concurrent
-  generations** in the settings (1–8, default 4); the rest queue up and a
-  new one starts as soon as one finishes, and each card shows its own
-  progress in real time;
+- **Multiple images (parallel calls)**: ONE call = ONE image. To generate
+  several images (e.g. a set with different styles or themes), the AI fires
+  **multiple parallel calls** — one call per image, each with its own single
+  `prompt` (and its own `images` group when editing). Parallel generation is
+  only done through multiple separate calls; several prompts are never
+  packed into one call (the `n` / `prompts` / `requestImages` parameters are
+  kept for backward compatibility only). Parallel calls run concurrently,
+  bounded by **Max concurrent generations** in the settings (1–8, default
+  4); the rest queue up and a new one starts as soon as one finishes, and
+  each card shows its own progress in real time;
 - **In-chat display**: results render as a **frame-free gallery** — each card's
   aspect ratio follows the real generated-image ratio (all images from one
   parallel batch share the same ratio, so rows never look ragged). The whole
@@ -192,6 +196,13 @@ automatically:
   aspect ratios stay fully visible and undistorted. Multiple images carry a
   subtle **index badge** at the top-left; click any image to zoom into the
   lightbox, where the download action lives;
+- **Upstream returns only links**: some relays return `data[].url` (e.g. S3
+  pre-signed links) instead of image data. The tool now **downloads and
+  persists** such images into the image library (disk + index), so the
+  gallery shows them like any other result and expired links don't matter.
+  If a download fails, the card degrades to a "failed to load remote image"
+  placeholder that opens the original URL on click, and the "Remote image
+  links" list stays below as a fallback;
 - **Streaming / Non-streaming**: in streaming mode, intermediate previews
   appear in real time while generating; in non-streaming mode, images are shown
   once generation finishes. The default mode is set in the channel's
@@ -204,15 +215,17 @@ automatically:
 
 | Param               | Type              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`            | string (required) | Generation description, or the edit instruction with reference images                                                                                                                                                                                                                                                                                                                                                             |
-| `images`            | array             | Reference images `[{data, mimeType}]` or `[{path, mimeType}]` for image-to-image editing; `path` is a relative path under the upload/ directory (from `[Reference image #N ...]` blocks in textified messages; the server reads the file itself); **server-side limit is 14 images**, ≤20MB each (the tool description guides the AI to ≤5 per call to stay compatible with stricter provider limits)                             |
+| `prompt`            | string (required) | Generation description, or the edit instruction with reference images (**one call = one image**; for several images fire multiple parallel calls)                                                                                                                                                                                                                                                                                             |
+| `prompts`           | array             | **Legacy, not recommended**: a different prompt per image `["prompt 1", "prompt 2", ...]` (1-8 items; overrides `n`). To generate several different images, fire **multiple parallel calls** (one call per image with its own single `prompt`) instead of packing prompts into one call                                                                                                                                                                                                                       |
+| `images`            | array             | Reference images `[{data, mimeType}]` or `[{path, mimeType}]` for image-to-image editing; `path` is a relative path under the upload/ directory (from `[Reference image #N ...]` blocks in textified messages; the server reads the file itself); **server-side limit is 14 images**, ≤20MB each (the tool description guides the AI to ≤5 per call to stay compatible with stricter provider limits); ignored when `requestImages` is provided |
+| `requestImages`     | array             | **Legacy, not recommended**: a different reference-image group per request `[[group 1...], [group 2...], ...]` (shape same as `images`), group count must equal the request count (= `prompts` length or `n`, 1-8). To restyle several source images, fire **multiple parallel calls** (one call per source image with its own `images` group) instead                                                                                                                                                              |
 | `model`             | string            | Override the configured model                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `provider`          | enum              | `auto` (default) / `openai` / `gemini`, backend override                                                                                                                                                                                                                                                                                                                                                                          |
 | `size`              | string            | OpenAI: a resolution like `1024x1024` or `auto`; Gemini: `1K`/`2K`/`4K` (imageSize) or an aspect ratio like `16:9` (aspectRatio), combinable as `16:9@2K` to set both                                                                                                                                                                                                                                                             |
 | `quality`           | enum              | `low` / `medium` / `high` / `auto`; Gemini only accepts `low`/`medium`/`high` (`auto` is ignored, i.e. the provider default quality is used)                                                                                                                                                                                                                                                                                      |
 | `outputFormat`      | enum              | OpenAI: `png` / `jpeg` / `webp`                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `outputCompression` | number            | OpenAI JPEG/WebP compression 0-100                                                                                                                                                                                                                                                                                                                                                                                                |
-| `n`                 | number            | Images per request (default 1, max 4); **`dall-e-3` is always 1** (clamped automatically)                                                                                                                                                                                                                                                                                                                                         |
+| `n`                 | number            | **Legacy, not recommended** for multiple images: 1-8 (default 1). To generate several images, fire **multiple parallel calls** (one call per image) instead of raising `n`; kept for backward compatibility only — n>1 fans out to n concurrent sub-requests of the SAME prompt (one image each — relays/upstreams reject n>1 in a single request) and returns the whole batch at once, persisting every image. Streaming preview is disabled when n>1. `dall-e-3` always returns 1. Passing `prompts` sets the request count from its length |
 | `personGeneration`  | enum              | Gemini: `dont_allow` (default) / `allow_all` / `allow_adult`                                                                                                                                                                                                                                                                                                                                                                      |
 | `webSearch`         | boolean           | Gemini Google Search grounding                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `stream`            | boolean           | Streaming preview (defaults to the setting)                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -228,7 +241,31 @@ automatically:
 > (multipart), Gemini edits use `inlineData` multimodal prompts; the Gemini
 > Nano Banana family uses the Interactions API.
 
-## 5. Managing via the config Tool (AI / CLI)
+## 5. Image Library Management
+
+Every generated image is automatically persisted into the **image library**
+(disk `~/.snowapp/image/` + SQLite `image_library` index), viewable and
+manageable in **Sidebar → Image Library** (or `app-control-openSettings
+page=image-library`):
+
+| Capability | Description |
+| --- | --- |
+| View | Lists all images newest-first (thumbnail + model/date metadata) with filters for aspect ratio (landscape/square/portrait), time (today/7d/30d), provider and model; click for a lightbox view |
+| Delete | **Removes the disk file and index row, and rewrites conversation messages referencing the image** (the image becomes a broken reference in chat, no dead links remain) |
+| Custom save dir | The panel header shows the current root; **Change** picks a new directory, **Reset** restores the default `~/.snowapp/image/` (backed by the `image_library_dir` setting) |
+
+Related behaviors:
+
+- **Remote-URL results are downloaded & persisted**: when the upstream only
+  returns a URL, the tool downloads it into the library (30s timeout / 50MB
+  cap / content-type check), so expired links never break the gallery;
+- **Cascading delete on conversation removal**: deleting a conversation with
+  "don't keep images" cascades deletion of its referenced library images
+  (physical files + index rows);
+- **Backup**: the library defaults to `~/.snowapp/image/` — include it in
+  backups (see [3-reference/4-data-storage-locations](../3-reference/4-data-storage-locations.md)).
+
+## 6. Managing via the config Tool (AI / CLI)
 
 `imagegen` is a database-backed scope of the `config` tool (same source as the
 app database, takes effect immediately):
@@ -244,7 +281,7 @@ app database, takes effect immediately):
 > `sk-e****7890`) — plaintext secrets are never exposed. Writes merge per
 > channel; fields you omit keep their previous values.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom                                              | Cause & fix                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -253,11 +290,12 @@ app database, takes effect immediately):
 | 400 errors                                           | Model-capability validation is built in (`dall-e-3`/`imagen` image-to-image, image count, size and quality are intercepted or clamped before the request is sent); if a 400 still comes back, the error message carries a fix hint and the agent usually retries successfully on its own. Manual checks: `n` above the model's limit, a size/quality outside the model's supported set, or image-to-image on a text-to-image-only model |
 | Channel enabled but unusable                         | Confirm the model is filled in — an empty model means unconfigured                                                                                                                                                                                                                                                                                                                                                                      |
 | Image-to-image not working                           | Make sure a reference image is attached and the prompt is an edit instruction                                                                                                                                                                                                                                                                                                                                                           |
+| Broken image icon in the AI reply body               | When the model references generated images by local relative paths (`image/...` library or `upload/...`) in Markdown, the renderer resolves them to data URLs via IPC; if it still breaks, confirm the file still exists (deleting a library image rewrites the conversations that reference it)                                                                                                                                            |
 | Slow generation                                      | Disable streaming preview; use `low` quality or a Lite model                                                                                                                                                                                                                                                                                                                                                                            |
-| How do I control concurrency for many images at once | Settings → Image generation → **Max concurrent generations** (1–8, default 4); excess requests queue automatically and start as one finishes; lower it if the provider returns 429 rate-limit errors                                                                                                                                                                                                                                    |
+| How do I control concurrency for many images at once | Parallel generation = **multiple separate calls**, controlled by Settings → Image generation → **Max concurrent generations** (1–8, default 4): at most that many calls run at once, excess calls queue automatically and start as one finishes. Lower the cap if your provider rate-limits (429). The legacy `n` (concurrent sub-requests inside one call) stacks with parallel calls and may overwhelm weak relays — not recommended |
 | Imagen model errors                                  | Imagen is deprecated (shut down 2026-08-17); use the Nano Banana family                                                                                                                                                                                                                                                                                                                                                                 |
 
-## 7. References
+## 8. References
 
 - Full tool parameters: the `imagegen` section of
   [3-reference/2-builtin-tools-reference](../3-reference/2-builtin-tools-reference.md)

@@ -100,6 +100,8 @@ export type ChatInputLabels = {
   manualModel: string;
   manualModelPlaceholder: string;
   noModelsFound: string;
+  searchModels: string;
+  noMatchingModels: string;
   cancel: string;
   confirm: string;
   retry: string;

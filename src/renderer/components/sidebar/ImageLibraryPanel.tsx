@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Download,
@@ -76,6 +76,21 @@ export const ImageLibraryPanel = ({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeletion, setPendingDeletion] =
     useState<ImageLibraryRecord | null>(null);
+  /** 待确认迁移的目标目录（null 表示无待确认迁移） */
+  const [pendingMigration, setPendingMigration] = useState<{
+    target: string;
+    dirLabel: string;
+  } | null>(null);
+  /** 迁移进度（null 表示未在迁移） */
+  const [migration, setMigration] = useState<{
+    total: number;
+    copied: number;
+  } | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
+  /** 用户请求取消迁移（chunk 循环之间检查） */
+  const migrationCancelledRef = useRef(false);
+  /** 组件卸载时若迁移仍进行中，触发回滚 */
+  const migrationActiveRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -214,36 +229,112 @@ export const ImageLibraryPanel = ({
     );
   };
 
-  const handleChangeDir = async (): Promise<void> => {
-    const selected = await window.snow.selectImageDirectory(
-      t("settings.imageLibrarySelectDir")
-    );
-    if (!selected) return;
+  /** 切换目录后刷新根路径与缩略图缓存。 */
+  const applyNewRoot = async (target: string): Promise<void> => {
+    setCustomDir(target);
+    const newRoot = await window.snow.getImageLibraryRoot().catch(() => "");
+    setRoot(newRoot);
+    imageDataCache.clear();
+    setDataUrls({});
+  };
+
+  /** 图库为空时直接切换目录（无需迁移）。 */
+  const switchDirDirect = async (target: string): Promise<void> => {
     setChangingDir(true);
     try {
-      await window.snow.setImageLibraryDir(selected);
-      setCustomDir(selected);
-      const newRoot = await window.snow.getImageLibraryRoot().catch(() => "");
-      setRoot(newRoot);
-      imageDataCache.clear();
-      setDataUrls({});
+      await window.snow.setImageLibraryDir(target);
+      await applyNewRoot(target);
     } finally {
       setChangingDir(false);
     }
   };
 
-  const handleResetDir = async (): Promise<void> => {
+  /** 确认迁移：prepare → 分批复制 → commit；取消则回滚。 */
+  const confirmMigration = async (): Promise<void> => {
+    const pending = pendingMigration;
+    if (!pending) {
+      return;
+    }
+    setPendingMigration(null);
+    migrationCancelledRef.current = false;
+    migrationActiveRef.current = true;
     setChangingDir(true);
     try {
-      await window.snow.setImageLibraryDir("");
-      setCustomDir("");
-      const newRoot = await window.snow.getImageLibraryRoot().catch(() => "");
-      setRoot(newRoot);
-      imageDataCache.clear();
-      setDataUrls({});
+      const total = await window.snow.prepareImageLibraryMigration(
+        pending.target
+      );
+      if (total === 0) {
+        // 无需迁移（目标与当前相同或图库为空）：直接切换
+        await window.snow.setImageLibraryDir(pending.target);
+        await applyNewRoot(pending.target);
+        return;
+      }
+      setMigration({ total, copied: 0 });
+      let done = false;
+      while (!done) {
+        if (migrationCancelledRef.current) {
+          break;
+        }
+        const progress = await window.snow.migrateImageLibraryChunk();
+        setMigration({ total: progress.total, copied: progress.copied });
+        done = progress.done;
+      }
+      if (migrationCancelledRef.current) {
+        // 用户取消：删除已复制文件，保持旧目录
+        setRollingBack(true);
+        await window.snow.rollbackImageLibraryMigration();
+        return;
+      }
+      await window.snow.commitImageLibraryMigration();
+      await applyNewRoot(pending.target);
+    } catch (migrationError) {
+      // 出错自动回滚，保持旧目录
+      try {
+        await window.snow.rollbackImageLibraryMigration();
+      } catch {
+        // 回滚失败不阻断错误提示
+      }
+      setError(
+        migrationError instanceof Error
+          ? migrationError.message
+          : String(migrationError)
+      );
     } finally {
+      setRollingBack(false);
+      setMigration(null);
+      migrationActiveRef.current = false;
       setChangingDir(false);
+      await load();
     }
+  };
+
+  const cancelMigration = (): void => {
+    migrationCancelledRef.current = true;
+  };
+
+  const handleChangeDir = async (): Promise<void> => {
+    const selected = await window.snow.selectImageDirectory(
+      t("settings.imageLibrarySelectDir")
+    );
+    if (!selected) return;
+    if (items.length > 0) {
+      // 已有图片：先确认再迁移
+      setPendingMigration({ target: selected, dirLabel: selected });
+      return;
+    }
+    await switchDirDirect(selected);
+  };
+
+  const handleResetDir = async (): Promise<void> => {
+    if (items.length > 0) {
+      // 已有图片：先确认再迁移回默认目录
+      setPendingMigration({
+        target: "",
+        dirLabel: t("settings.imageLibraryDefaultDir"),
+      });
+      return;
+    }
+    await switchDirDirect("");
   };
 
   const lightboxDataUrl = lightbox ? dataUrls[lightbox.relativePath] ?? "" : "";
@@ -258,6 +349,15 @@ export const ImageLibraryPanel = ({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [lightbox]);
+
+  // 迁移进行中关闭面板：触发回滚，避免遗留未完成的迁移日志
+  useEffect(() => {
+    return () => {
+      if (migrationActiveRef.current) {
+        void window.snow.rollbackImageLibraryMigration().catch(() => {});
+      }
+    };
+  }, []);
 
   return (
     <div className="api-settings-page image-library-page">
@@ -308,9 +408,9 @@ export const ImageLibraryPanel = ({
             onClick={() => void handleChangeDir()}
             disabled={changingDir}
             title={t("settings.imageLibraryChangeDir")}
-            aria-label={t("settings.imageLibraryChangeDir")}
           >
             <FolderCog size={11} aria-hidden="true" />
+            <span>{t("settings.imageLibraryChangeDir")}</span>
           </button>
           {customDir ? (
             <button
@@ -319,11 +419,57 @@ export const ImageLibraryPanel = ({
               onClick={() => void handleResetDir()}
               disabled={changingDir}
               title={t("settings.imageLibraryResetDir")}
-              aria-label={t("settings.imageLibraryResetDir")}
             >
               <X size={11} aria-hidden="true" />
+              <span>{t("settings.imageLibraryResetDir")}</span>
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {migration ? (
+        <div className="image-library-migrate-bar" role="status">
+          <div className="image-library-migrate-info">
+            <Loader2
+              size={12}
+              className="tool-call-icon-spinning"
+              aria-hidden="true"
+            />
+            <span>
+              {rollingBack
+                ? t("settings.imageLibraryMigrateRollingBack")
+                : t("settings.imageLibraryMigrateProgress", {
+                    values: {
+                      current: migration.copied,
+                      total: migration.total,
+                    },
+                  })}
+            </span>
+            {!rollingBack ? (
+              <button
+                type="button"
+                className="image-library-migrate-cancel"
+                onClick={cancelMigration}
+              >
+                {t("settings.cancel", { defaultValue: "Cancel" })}
+              </button>
+            ) : null}
+          </div>
+          <div className="image-library-migrate-progress-bar">
+            <div
+              className="image-library-migrate-progress-fill"
+              style={{
+                width: `${
+                  migration.total > 0
+                    ? Math.min(
+                        100,
+                        Math.round((migration.copied / migration.total) * 100)
+                      )
+                    : 0
+                }%`,
+              }}
+            />
+          </div>
         </div>
       ) : null}
 
@@ -561,6 +707,26 @@ export const ImageLibraryPanel = ({
         onConfirm={() => void confirmDelete()}
         onCancel={() => setPendingDeletion(null)}
         variant="danger"
+      />
+
+      <ConfirmDialog
+        open={pendingMigration !== null}
+        title={t("settings.imageLibraryMigrateTitle", {
+          defaultValue: "Migrate images",
+        })}
+        message={t("settings.imageLibraryMigrateConfirm", {
+          defaultValue: "Migrate images to the new directory?",
+          values: {
+            count: items.length,
+            dir: pendingMigration?.dirLabel ?? "",
+          },
+        })}
+        confirmLabel={t("settings.imageLibraryMigrateStart", {
+          defaultValue: "Start migration",
+        })}
+        cancelLabel={t("settings.cancel", { defaultValue: "Cancel" })}
+        onConfirm={() => void confirmMigration()}
+        onCancel={() => setPendingMigration(null)}
       />
     </div>
   );

@@ -27,6 +27,8 @@ export type ImportCandidateInput = {
   projectId?: string;
   projectRoot?: string;
   unsupportedReason?: string;
+  environmentId?: string;
+  environmentLabel?: string;
 };
 
 export type ImportSourceDiscovery = {
@@ -35,6 +37,11 @@ export type ImportSourceDiscovery = {
 };
 
 const canonicalPath = (path: string): string => {
+  // POSIX absolute paths belong to SSH remote environments; they must not
+  // be resolved against the local Windows drive.
+  if (path.startsWith("/")) {
+    return path;
+  }
   const resolved = resolve(path);
   try {
     return realpathSync.native(resolved);
@@ -98,6 +105,8 @@ const originFor = (input: ImportCandidateInput, originPath: string): ImportCandi
   scope: input.scope,
   originPath,
   ...(input.projectId ? { projectId: input.projectId } : {}),
+  ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+  ...(input.environmentLabel ? { environmentLabel: input.environmentLabel } : {}),
 });
 
 const sameImportTarget = (
@@ -211,6 +220,10 @@ export const buildImportDiscovery = (
       sources,
       ...(group.find((input) => input.unsupportedReason)?.unsupportedReason
         ? { unsupportedReason: group.find((input) => input.unsupportedReason)?.unsupportedReason }
+        : {}),
+      ...(primary.environmentId ? { environmentId: primary.environmentId } : {}),
+      ...(primary.environmentLabel
+        ? { environmentLabel: primary.environmentLabel }
         : {}),
     } satisfies ImportCandidate;
   });

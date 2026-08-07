@@ -380,6 +380,55 @@ pub(super) async fn collect_streaming_response(
             continue;
         }
 
+        // Empty-response interruption: the connection dropped (EOF or read
+        // error) before ANY content, thinking, tool call, or streaming tool
+        // fragment was produced. Retrying is safe — nothing was emitted to
+        // the user — and recovers transient relay/proxy disconnects that
+        // would otherwise surface as a silent empty "incomplete" response.
+        if !stream_completed_normally
+            && response_status != "cancelled"
+            && content_chunks.is_empty()
+            && thinking_chunks.is_empty()
+            && tool_calls.is_empty()
+            && streaming_tool_items.is_empty()
+        {
+            let error = Error::from_reason(
+                "Stream ended with empty response (connection dropped before any output)",
+            );
+
+            if !should_retry(&error, attempt, retry_options) {
+                return Err(error);
+            }
+
+            // Emit retry status to frontend
+            on_chunk.call(
+                ResponsesApiStreamChunk {
+                    content_delta: String::new(),
+                    thinking_delta: String::new(),
+                    content: String::new(),
+                    thinking: String::new(),
+                    retrying: true,
+                    retry_attempt: Some((attempt + 1) as i32),
+                    retry_error: Some(error.reason.clone()),
+                    stream_token_count: stream_token_count as i64,
+                    elapsed_ms: stream_start.elapsed().as_millis() as i64,
+                    ttft_ms,
+                },
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+
+            match wait_before_retry(retry_options, cancel_token, attempt).await {
+                Ok(()) => {
+                    // Per-attempt state is reset at the top of Phase 2
+                    // (raw_events/content_chunks/... are cleared there), so
+                    // just re-issue the request.
+                    attempt += 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         // If the stream ended abnormally (no terminal event and no
         // cancellation), mark the response as incomplete so the frontend
         // knows the result is partial but still usable.

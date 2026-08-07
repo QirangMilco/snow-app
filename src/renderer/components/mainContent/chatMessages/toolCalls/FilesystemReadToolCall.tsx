@@ -365,7 +365,6 @@ export const FilesystemReadToolCall = ({
   return (
     <ToolCallNode
       toolName={toolCall.name}
-      badgeName="read"
       category="read"
       displayName={
         isMulti ? (

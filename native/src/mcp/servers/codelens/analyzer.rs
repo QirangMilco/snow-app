@@ -3,15 +3,12 @@ use std::path::Path;
 use oxc::allocator::Allocator;
 use oxc::ast::ast;
 use oxc::ast_visit::Visit;
-use oxc::diagnostics::OxcDiagnostic;
 use oxc::parser::ParseOptions;
 use oxc::semantic::SemanticBuilder;
 use oxc::span::{GetSpan, SourceType};
-use oxc_miette::Diagnostic;
 
 use super::types::{
-    AnalyzedFile, DiagnosticItem, DiagnosticSeverity, OutlineEntry, ReferenceInfo, SymbolInfo,
-    SymbolKind, SymbolLocation,
+    AnalyzedFile, OutlineEntry, ReferenceInfo, SymbolInfo, SymbolKind, SymbolLocation,
 };
 
 fn source_type_from_path(path: &Path) -> SourceType {
@@ -61,6 +58,8 @@ impl<'a> LineIndexRef<'a> {
     }
 }
 
+/// Analyze a JS/TS file with oxc, collecting symbols, references and
+/// unresolved references for definition / reference lookups.
 pub fn analyze_file(file_path: &str, source_text: &str) -> AnalyzedFile {
     let path = Path::new(file_path);
     let source_type = source_type_from_path(path);
@@ -74,18 +73,8 @@ pub fn analyze_file(file_path: &str, source_text: &str) -> AnalyzedFile {
         })
         .parse();
 
-    let mut diagnostics: Vec<DiagnosticItem> = parse_ret
-        .errors
-        .iter()
-        .map(|err| diagnostic_from_oxc(err, &line_index, "parser"))
-        .collect();
-
     let program = parse_ret.program;
     let semantic_ret = SemanticBuilder::new().build(&program);
-
-    for err in &semantic_ret.errors {
-        diagnostics.push(diagnostic_from_oxc(err, &line_index, "semantic"));
-    }
 
     let semantic = &semantic_ret.semantic;
     let scoping = semantic.scoping();
@@ -165,78 +154,15 @@ pub fn analyze_file(file_path: &str, source_text: &str) -> AnalyzedFile {
                     access: access.to_string(),
                 },
             ));
-
-            // Type-position references (e.g. Record, Partial, Pick, Omit, ...)
-            // resolve to ambient declarations in lib.d.ts which are unavailable
-            // in single-file analysis.  Skip them to avoid false positives.
-            // Value-position references still go through the known-global check.
-            if reference.is_type() {
-                continue;
-            }
-
-            if !super::ambient_globals::is_ambient_global(name, file_path) {
-                diagnostics.push(DiagnosticItem {
-                    severity: DiagnosticSeverity::Error.as_str().to_string(),
-                    message: format!("Cannot find name '{name}'. Did you forget to import it?"),
-                    start_line,
-                    end_line,
-                    start_column: start_col,
-                    end_column: end_col,
-                    source: "codelens".to_string(),
-                    code: Some("unresolved-reference".to_string()),
-                });
-            }
         }
     }
 
     AnalyzedFile {
         file_path: file_path.to_string(),
         source_text: source_text.to_string(),
-        diagnostics,
         symbols,
         references,
         unresolved_references,
-    }
-}
-
-fn diagnostic_from_oxc(
-    diag: &OxcDiagnostic,
-    line_index: &LineIndex,
-    source: &str,
-) -> DiagnosticItem {
-    let (start_offset, end_offset) = if let Some(mut labels) = diag.labels() {
-        if let Some(first) = labels.next() {
-            let start = first.offset() as u32;
-            let end = (first.offset() + first.len()) as u32;
-            (start, end)
-        } else {
-            (0, 0)
-        }
-    } else {
-        (0, 0)
-    };
-
-    let (start_line, start_col) = line_index.line_col(start_offset);
-    let (end_line, end_col) = line_index.line_col(end_offset);
-
-    let severity = match diag.severity() {
-        Some(oxc::diagnostics::Severity::Error) | None => DiagnosticSeverity::Error,
-        Some(oxc::diagnostics::Severity::Warning) => DiagnosticSeverity::Warning,
-        Some(oxc::diagnostics::Severity::Advice) => DiagnosticSeverity::Hint,
-    };
-
-    let code = diag.code().map(|c| c.to_string());
-    let message = diag.to_string();
-
-    DiagnosticItem {
-        severity: severity.as_str().to_string(),
-        message,
-        start_line,
-        end_line,
-        start_column: start_col,
-        end_column: end_col,
-        source: source.to_string(),
-        code,
     }
 }
 

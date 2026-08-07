@@ -206,25 +206,52 @@ pub async fn call_tool(
     }
 
     let client = ExternalMcpClient::connect(&config).await?;
-    let result = async {
-        let tools = client.list_all_tools().await?;
-        let tool_names = public_tool_names(&tools);
-        let remote_tool = tools
-            .into_iter()
-            .find(|tool| {
-                tool_names.get(&tool.name).map(String::as_str) == Some(public_tool_name)
-            })
-            .ok_or_else(|| {
-                Error::from_reason(format!(
-                    "External MCP tool {tool_full_name} is no longer available"
-                ))
-            })?;
-        client.call_tool(&remote_tool.name, arguments).await
-    }
-    .await;
+    let result = call_tool_with_client(&client, &public_tool_name, arguments).await;
     client.close().await;
 
-    result.map(Some)
+    match result {
+        Ok(result) => Ok(Some(result)),
+        // 旧版本回退：Auto 协商降级后的连接可能在调用时被关闭
+        // （Transport closed，如 issue #51 的 mysql-mcp-server 场景）。
+        // 按 http 的 legacy 回退做法，重建连接（Initialize 握手）
+        // 并重试一次；重试失败时保留原始错误（含 Transport closed
+        // 诊断信息），避免掩盖根因。
+        Err(error) if is_transport_closed(&error) => {
+            let retry_client = ExternalMcpClient::connect_legacy(&config).await?;
+            let retry = call_tool_with_client(&retry_client, &public_tool_name, arguments).await;
+            retry_client.close().await;
+            retry.map(Some).or_else(|_| Err(error))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// 在已连接的客户端上解析工具名并调用，返回服务器原始结果。
+async fn call_tool_with_client(
+    client: &ExternalMcpClient,
+    public_tool_name: &str,
+    arguments: &Value,
+) -> Result<Value> {
+    let tools = client.list_all_tools().await?;
+    let tool_names = public_tool_names(&tools);
+    let remote_tool = tools
+        .into_iter()
+        .find(|tool| {
+            tool_names.get(&tool.name).map(String::as_str) == Some(public_tool_name)
+        })
+        .ok_or_else(|| {
+            Error::from_reason(format!(
+                "External MCP tool {public_tool_name} is no longer available"
+            ))
+        })?;
+    client.call_tool(&remote_tool.name, arguments).await
+}
+
+/// 判断错误是否为 MCP 传输层关闭（Transport closed）。
+/// 传输关闭意味着子进程已退出或管道已断开，重建连接重试有机会恢复；
+/// 其他协议/业务错误重试无意义，应直接返回。
+fn is_transport_closed(error: &napi::Error) -> bool {
+    error.reason.contains("Transport closed")
 }
 
 async fn discover_config_tools(
@@ -516,6 +543,29 @@ impl ExternalMcpClient {
             }
             "http" => {
                 let client = http::HttpMcpClient::connect(config).await?;
+                Box::new(client)
+            }
+            transport => {
+                return Err(Error::from_reason(format!(
+                    "Unsupported external MCP transport: {transport}"
+                )))
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    /// 旧版本回退：直接以 legacy `initialize` 握手建立连接，跳过
+    /// Auto 模式对 2026-07-28 无状态协议的 `server/discover` 探测。
+    /// 当 Auto 协商降级后的连接不稳定（如旧 SDK 服务器调用时报
+    /// Transport closed）时，用本方法重连可绕过协商探测路径。
+    pub(super) async fn connect_legacy(config: &McpServerConfigRecord) -> Result<Self> {
+        let inner: Box<dyn ClientHandle> = match config.transport_type.as_str() {
+            "stdio" | "local" => {
+                let client = stdio::StdioMcpClient::connect_legacy(config).await?;
+                Box::new(client)
+            }
+            "http" => {
+                let client = http::HttpMcpClient::connect_legacy(config).await?;
                 Box::new(client)
             }
             transport => {

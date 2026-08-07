@@ -19,7 +19,7 @@ npm install                 # Install deps (postinstall patches spectre / ensure
 
 npm run dev                 # Dev mode (electron-vite dev, renderer hot reload)
 npm run build:rust          # Compile Rust native module → snow_native.<platform>.node
-npm run typecheck           # tsc --noEmit (must pass before committing)
+npm run check:ts            # tsc --noEmit (must pass before committing)
 npm run build               # build:rust + tsc --noEmit + electron-vite build
 npm run build:app           # Full package (electron-builder)
 npm run build:win           # Windows installers (nsis + portable)
@@ -93,12 +93,13 @@ Using "add a settings item" as an example — the cross-layer change pattern:
 
 ⑤ Build & verify
    npm run build:rust   # required after Rust changes
-   npm run typecheck    # no `any`, must pass
+   npm run check:ts     # no `any`, must pass
 ```
 
-**Read-only query chain**: Renderer → `window.snow.xxxApi` →
+**Read-only query chain**: Renderer → `window.snow.xxxMethod` →
 `ipcRenderer.invoke` → `ipcMain.handle` → `native.xxx` (storageReady gate
-auto-waits) → rusqlite.
+auto-waits) → rusqlite. `src/preload/index.ts` spreads each `*Api` object, so
+the runtime API is flat.
 
 ## 5. Coding Conventions
 
@@ -147,7 +148,8 @@ auto-waits) → rusqlite.
 | CSS rules silently don't apply                                                             | A custom class inside a shared container is overridden: `.api-settings-summary-card span/small` (specificity 0,1,1) beats a bare class selector (0,1,0) — always qualify child selectors with the container class (e.g. `.imagegen-concurrency-card .imagegen-concurrency-head`)  |
 | The same class is defined twice in styles.css                                              | Classes from retired layouts (e.g. `imagegen-*` at ~line 12180) are still reused by newer panels; `grep -n` the whole file before writing a new rule, add only delta rules                                                                                                        |
 | File corrupted after a large search-replace                                                | Replacing very long JSX/CSS blocks can leave stale tails (`})}`, stray `}`); read the region back and verify pairs immediately, then run `tsc --noEmit` + `electron-vite build`                                                                                                   |
-| imagegen reference images show only placeholders                                           | `images:resolve-upload-image` used `join(uploadRoot, normalized)` while `normalized` already carries the `upload/` prefix → double `uploadRoot\upload\...` prefix made every read fail; join against `dirname(databasePath)` instead (fixed with a comment in `imageHandlers.ts`) |
+| imagegen reference images show only placeholders                                           | `images:resolve-upload-image` used `join(uploadRoot, normalized)` while `normalized` already carries the `upload/` prefix → double `uploadRoot\\upload\\...` prefix made every read fail; join against `dirname(databasePath)` instead (fixed with a comment in `imageHandlers.ts`) |
+| Broken images for `image/`/`upload/` paths in Markdown                                       | The markdown worker's image rule used to proxy only http(s) images, so local relative paths were loaded as relative URLs and broke. Local paths (`image/`, `upload/` — decodes first, normalizes separators, rejects `..` and absolute paths, `normalizeLocalImagePath` in `markdownWorker.ts`) are now rewritten to `img-proxy://` URLs (`localImageProxyUrl`) just like external images, and the main-process protocol handler (`serveLocalImage` in `imageProxyProtocol.ts`) resolves the library/upload root and reads the file directly — no IPC or data-URL round-trip in the renderer |
 | Debugging renderer image/file chains                                                       | Use plain `node` with `require("../native/index.cjs")`, call `initializeAppStorage()` to get `databasePath`, replicate the main-process path logic + `readFile` — no Electron needed to locate the fault                                                                          |
 
 ### callMcpTool callbacks (standalone scripts / e2e verification)

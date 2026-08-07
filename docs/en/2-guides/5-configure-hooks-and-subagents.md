@@ -143,7 +143,7 @@ config-set scope=subAgents key=agent_code_reviewer value={
   "name": "Code Reviewer",
   "description": "Reviews code quality and security",
   "systemPrompt": "You are a senior code reviewer focused on bugs, security issues and performance.",
-  "toolsJson": ["grep-search", "filesystem-read", "codelens-diagnose"],
+  "toolsJson": ["grep-search", "filesystem-read", "codelens-file_outline"],
   "configProfile": "gpt-4o"
 }
 

@@ -64,7 +64,11 @@ export function HooksSettingsList({
               >
                 <div className="system-prompt-item-main">
                   <div className="system-prompt-item-info">
-                    <strong>{hook.hookType}</strong>
+                    <strong title={hook.hookType}>
+                      {t(`hookTypes.${hook.hookType}`, {
+                        defaultValue: hook.hookType,
+                      })}
+                    </strong>
                     <span title={detail}>{detail}</span>
                   </div>
                   <span className="hooks-state-label">{stateLabel}</span>

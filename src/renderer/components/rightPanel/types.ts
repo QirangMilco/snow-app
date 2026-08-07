@@ -27,6 +27,7 @@ export type DiffTabData = {
 export type TerminalTabData = {
   cwd: string;
   shellPath?: string;
+  sessionId?: string;
 };
 
 export type BrowserTabData = {

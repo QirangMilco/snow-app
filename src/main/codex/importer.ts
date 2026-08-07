@@ -1,605 +1,329 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { parse as parseToml } from "@iarna/toml";
-import type {
-  McpServerConfigInput,
-  NativeBridge,
-  SystemPromptItemInput,
-  WorkspaceDirectoryRecord,
-} from "../native/types";
-import { isRecord, toBoolean } from "../utils/value";
-import { getCodexConfigPath, getCodexHome } from "./paths";
-import type { CodexImportPreview, CodexImportResult } from "./types";
+import type { NativeBridge, SystemPromptItemInput } from "../native/types";
+import type { ImportSource } from "../../shared/importDiscovery";
 import {
   buildImportDiscovery,
-  hashImportPath,
   hashImportValue,
   skillLogicalId,
   type ImportCandidateInput,
   type ImportSourceDiscovery,
 } from "../importConfig/discovery";
-import type { ImportSource } from "../../shared/importDiscovery";
-import { walkFiles as walkImportFiles } from "../importConfig/utils";
+import type { ImportEnvironment } from "../importConfig/importEnvironments";
+import {
+  buildProviderSource,
+  collectSkillDirectoriesForEnvironment,
+  hashSkillForEnvironment,
+  scanProviderStandalone,
+  type EnvironmentDiscoveredSkill,
+  type ProviderScannerResult,
+} from "../importConfig/providerScanning";
 import {
   selectionForInput,
   skillDestination,
   type ResolvedImportAction,
   type SelectedImportCandidate,
 } from "../importConfig/selectedImport";
+import {
+  asStringArray,
+  asStringRecord,
+  createMcpInput,
+  createPrompt,
+  nonEmptyString,
+  type ImportedMcp,
+  type UnsupportedImportedMcp,
+} from "../importConfig/utils";
+import { isRecord } from "../utils/value";
 
-const CODEX_MCP_SOURCE = "codex";
-const CODEX_PLUGIN_MCP_SOURCE = "codex-plugin";
-const SKILL_FILE_NAME = "SKILL.md";
-const MAX_SCAN_DEPTH = 10;
-
-type ImportScope = "global" | "project";
+const SOURCE = "codex" as const;
 
 type ConfigSource = {
-  scope: ImportScope;
+  scope: "global" | "project";
   configPath: string;
-  projectId?: string;
-  projectRoot?: string;
   values: Record<string, unknown>;
-};
-
-type ImportedMcp = {
-  scope: ImportScope;
-  projectId?: string;
-  input: McpServerConfigInput;
-};
-
-type ImportedPrompt = SystemPromptItemInput;
-
-type PluginDescriptor = {
-  manifestKind: "codex" | "claude" | "cursor";
-  id: string;
-  name: string;
-  root: string;
-  manifestPath: string;
-  scope: ImportScope;
   projectId?: string;
   projectRoot?: string;
-  enabled: boolean;
-  manifest: Record<string, unknown>;
-  skillRoots: string[];
-  mcpServers: Record<string, unknown>;
-  defaultPrompts: string[];
-};
-
-type DiscoveredSkill = {
-  sourceDir: string;
-  scope: ImportScope;
-  projectId?: string;
-  projectRoot?: string;
-  plugin?: boolean;
+  environmentId: string;
+  environmentLabel: string;
 };
 
 export type CodexImportContext = {
   source: ImportSource;
   mcpServers: ImportedMcp[];
-  prompts: ImportedPrompt[];
-  skills: DiscoveredSkill[];
-  plugins: PluginDescriptor[];
+  unsupportedMcpServers: UnsupportedImportedMcp[];
+  prompts: SystemPromptItemInput[];
+  skills: EnvironmentDiscoveredSkill[];
+  scans: ProviderScannerResult[];
 };
 
-const asStringArray = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-
-const asStringRecord = (value: unknown): Record<string, string> => {
-  if (!isRecord(value)) {
-    return {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(value).filter(
-      ([key, item]) => key.trim().length > 0 && typeof item === "string"
-    )
-  ) as Record<string, string>;
+const parseToml = async (text: string): Promise<Record<string, unknown>> => {
+  const { parse } = await import("@iarna/toml");
+  const parsed = parse(text);
+  return isRecord(parsed) ? parsed : {};
 };
 
-const asPathList = (value: unknown): string[] => {
-  if (typeof value === "string") {
-    return [value];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => {
-      if (typeof item === "string") {
-        return [item];
-      }
-      if (isRecord(item) && typeof item.path === "string") {
-        return [item.path];
-      }
-      return [];
-    });
-  }
-  if (isRecord(value) && typeof value.path === "string") {
-    return [value.path];
-  }
-  return [];
-};
-
-const nonEmptyString = (value: unknown): string | null => {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text ? text : null;
-};
-
-const safeSegment = (value: string): string =>
-  value
-    .trim()
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .replace(/\.\.+/g, ".") || "codex-plugin";
-
-const readToml = (
-  filePath: string,
-  warnings: string[]
-): Record<string, unknown> | null => {
-  if (!existsSync(filePath)) {
-    return null;
-  }
-  try {
-    const parsed = parseToml(readFileSync(filePath, "utf8"));
-    return isRecord(parsed) ? parsed : {};
-  } catch (error) {
-    warnings.push(
-      `Unable to parse ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return null;
-  }
-};
-
-const readJson = (
-  filePath: string,
-  warnings: string[]
-): Record<string, unknown> | null => {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
-    return isRecord(parsed) ? parsed : null;
-  } catch (error) {
-    warnings.push(
-      `Unable to parse ${filePath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-    return null;
-  }
-};
-
-const walkFiles = (
-  root: string,
-  predicate: (filePath: string) => boolean
-): Promise<string[]> => walkImportFiles(root, predicate, MAX_SCAN_DEPTH);
-
-const collectSkillDirectories = async (root: string): Promise<string[]> => {
-  const files = await walkFiles(root, (filePath) =>
-    filePath.endsWith(`${sep}${SKILL_FILE_NAME}`)
-  );
-  return files
-    .map(dirname)
-    .filter((skillDir) => relative(root, skillDir) !== "");
-};
-
-const resolveDeclaredPath = (root: string, declaredPath: string): string => {
-  const trimmed = declaredPath.trim();
-  return isAbsolute(trimmed)
-    ? resolve(trimmed)
-    : resolve(root, trimmed.replace(/^\.\//, ""));
-};
-
-const resolvePluginDeclaredPath = (
-  root: string,
-  declaredPath: string,
-  warnings: string[],
-  resourceName: string
-): string | null => {
-  const trimmed = declaredPath.trim();
-  if (!trimmed.startsWith("./") || isAbsolute(trimmed)) {
-    warnings.push(
-      "Ignoring " + resourceName + " path outside plugin root: " + declaredPath
-    );
-    return null;
-  }
-  const candidate = resolve(root, trimmed.slice(2));
-  const resolvedRoot = resolve(root);
-  const rootWithSeparator = resolvedRoot + sep;
-  if (candidate !== resolvedRoot && !candidate.startsWith(rootWithSeparator)) {
-    warnings.push(
-      "Ignoring " + resourceName + " path outside plugin root: " + declaredPath
-    );
-    return null;
-  }
-  return candidate;
-};
-
-const pluginManifestFile = (filePath: string): boolean => {
-  const parent = dirname(filePath).split(sep).pop();
-  return (
-    parent === ".codex-plugin" ||
-    parent === ".claude-plugin" ||
-    parent === ".cursor-plugin"
-  );
-};
-
-const pluginManifestKind = (
-  manifestPath: string
-): PluginDescriptor["manifestKind"] => {
-  const parent = dirname(manifestPath).split(sep).pop();
-  return parent === ".claude-plugin"
-    ? "claude"
-    : parent === ".cursor-plugin"
-    ? "cursor"
-    : "codex";
-};
-
-const pluginRootFromManifest = (manifestPath: string): string => {
-  const parent = dirname(manifestPath);
-  const parentName = parent.split(sep).pop();
-  return parentName === ".codex-plugin" ||
-    parentName === ".claude-plugin" ||
-    parentName === ".cursor-plugin"
-    ? dirname(parent)
-    : parent;
-};
-
-// Callers must pass projects sorted by path length (longest first) so the
-// deepest matching workspace directory wins for nested project roots.
-const projectForPath = (
-  filePath: string,
-  projects: WorkspaceDirectoryRecord[]
-): WorkspaceDirectoryRecord | undefined =>
-  projects
-    .filter((project) => project.kind === "local")
-    .find(
-      (project) =>
-        filePath === project.path ||
-        filePath.startsWith(`${project.path}${sep}`)
-    );
-
-const pluginIdFor = (name: string, root: string, codexHome: string): string => {
-  const marketplaceRoot = join(codexHome, ".tmp", "marketplaces");
-  const marketplaceRelative = relative(marketplaceRoot, root);
-  const marketplace =
-    marketplaceRelative && !marketplaceRelative.startsWith(`..${sep}`)
-      ? marketplaceRelative.split(sep)[0]
-      : "local";
-  return `${name}@${marketplace}`;
-};
-
-const pluginIsEnabled = (
-  pluginId: string,
-  name: string,
-  configs: ConfigSource[]
-): boolean => {
-  let explicit: boolean | undefined;
-  for (const config of configs) {
-    const plugins = isRecord(config.values.plugins)
-      ? config.values.plugins
-      : {};
-    for (const [key, rawConfig] of Object.entries(plugins)) {
-      if (key !== pluginId && key !== name && !key.startsWith(`${name}@`)) {
-        continue;
-      }
-      if (isRecord(rawConfig) && typeof rawConfig.enabled === "boolean") {
-        explicit = rawConfig.enabled;
-      }
-    }
-  }
-  return explicit ?? true;
-};
-
-const loadPlugin = (
-  manifestPath: string,
-  codexHome: string,
-  projects: WorkspaceDirectoryRecord[],
-  configs: ConfigSource[],
-  warnings: string[]
-): PluginDescriptor | null => {
-  const manifest = readJson(manifestPath, warnings);
-  if (!manifest) {
-    return null;
-  }
-  const root = pluginRootFromManifest(manifestPath);
-  const manifestKind = pluginManifestKind(manifestPath);
-  const name =
-    nonEmptyString(manifest.name) ?? root.split(sep).pop() ?? "plugin";
-  const project = projectForPath(root, projects);
-  const scope: ImportScope = project ? "project" : "global";
-  const interfaceValue = isRecord(manifest.interface) ? manifest.interface : {};
-  const rawDefaultPrompt =
-    interfaceValue.defaultPrompt ?? interfaceValue.default_prompt;
-  const defaultPrompts = (
-    typeof rawDefaultPrompt === "string"
-      ? [rawDefaultPrompt]
-      : asStringArray(rawDefaultPrompt)
-  )
-    .slice(0, 3)
-    .map((prompt) => prompt.trim().slice(0, 128))
-    .filter(Boolean);
-  const skillRoots = [
-    join(root, "skills"),
-    ...asPathList(manifest.skills).flatMap((path) => {
-      const resolvedPath = resolvePluginDeclaredPath(
-        root,
-        path,
-        warnings,
-        "plugin Skills"
-      );
-      return resolvedPath ? [resolvedPath] : [];
-    }),
-  ].filter((path, index, paths) => paths.indexOf(path) === index);
-  const mcpDeclaration = manifest.mcpServers ?? manifest.mcp_servers;
-  const mcpServers: Record<string, unknown> = {};
-  const readMcpFile = (filePath: string): void => {
-    if (!existsSync(filePath)) {
-      return;
-    }
-    const parsed = readJson(filePath, warnings);
-    if (!parsed) {
-      return;
-    }
-    const nested = parsed.mcpServers ?? parsed.mcp_servers;
-    Object.assign(mcpServers, isRecord(nested) ? nested : parsed);
-  };
-
-  if (mcpDeclaration === undefined && manifestKind !== "cursor") {
-    readMcpFile(join(root, ".mcp.json"));
-  } else if (typeof mcpDeclaration === "string") {
-    const mcpPath = resolvePluginDeclaredPath(
-      root,
-      mcpDeclaration,
-      warnings,
-      "plugin MCP"
-    );
-    if (mcpPath) {
-      readMcpFile(mcpPath);
-    }
-  } else if (isRecord(mcpDeclaration)) {
-    Object.assign(mcpServers, mcpDeclaration);
-  }
-
-  return {
-    manifestKind,
-    id: pluginIdFor(name, root, codexHome),
-    name,
-    root,
-    manifestPath,
-    scope,
-    ...(project
-      ? { projectId: project.directoryId, projectRoot: project.path }
-      : {}),
-    enabled: pluginIsEnabled(pluginIdFor(name, root, codexHome), name, configs),
-    manifest,
-    skillRoots,
-    mcpServers,
-    defaultPrompts,
-  };
-};
-
-const collectPlugins = async (
-  codexHome: string,
-  projects: WorkspaceDirectoryRecord[],
-  configs: ConfigSource[],
-  warnings: string[]
-): Promise<PluginDescriptor[]> => {
-  // Sort once (longest path first) so projectForPath can match nested roots
-  // without re-sorting on every plugin manifest.
-  const localProjects = projects
-    .filter((project) => project.kind === "local")
-    .sort((left, right) => right.path.length - left.path.length);
-  const roots = [
-    join(codexHome, ".tmp", "marketplaces"),
-    join(codexHome, "plugins"),
-    join(codexHome, ".agents", "plugins"),
-    join(homedir(), ".agents", "plugins"),
-    join(homedir(), "plugins"),
-    ...localProjects.map((project) => join(project.path, ".agents", "plugins")),
-    ...localProjects.map((project) => join(project.path, "plugins")),
-    // Most of these roots do not exist (e.g. project "plugins" folders);
-    // skip them up front to avoid a worker round-trip per missing directory.
-  ].filter((root) => existsSync(root));
-  const manifestPaths = (
-    await Promise.all(
-      roots.map((root) =>
-        walkFiles(
-          root,
-          (filePath) =>
-            filePath.endsWith(`${sep}plugin.json`) &&
-            pluginManifestFile(filePath)
-        )
-      )
-    )
-  ).flat();
-  const seen = new Set<string>();
-  return manifestPaths
-    .map((path) =>
-      loadPlugin(path, codexHome, localProjects, configs, warnings)
-    )
-    .filter((plugin): plugin is PluginDescriptor => {
-      if (!plugin || seen.has(plugin.root)) {
-        return false;
-      }
-      seen.add(plugin.root);
-      return true;
-    });
-};
-
-const collectConfigs = async (
-  native: NativeBridge,
-  codexHome: string,
-  warnings: string[]
-): Promise<{
-  configs: ConfigSource[];
-  projects: WorkspaceDirectoryRecord[];
-}> => {
-  const configs: ConfigSource[] = [];
-  const globalConfigPath = join(codexHome, "config.toml");
-  const globalValues = readToml(globalConfigPath, warnings);
-  if (globalValues) {
-    configs.push({
-      scope: "global",
-      configPath: globalConfigPath,
-      values: globalValues,
-    });
-  }
-
-  const projects = await native.listWorkspaceDirectories();
-  for (const project of projects.filter((item) => item.kind === "local")) {
-    const configPath = join(project.path, ".codex", "config.toml");
-    const values = readToml(configPath, warnings);
-    if (values) {
-      configs.push({
-        scope: "project",
-        configPath,
-        projectId: project.directoryId,
-        projectRoot: project.path,
-        values,
-      });
-    }
-  }
-  return { configs, projects };
-};
-
-const readAgentsPrompt = (
+const readAgentsPrompt = async (
+  environment: ImportEnvironment,
   root: string
-): { path: string; content: string } | null => {
+): Promise<{ path: string; content: string } | null> => {
   for (const fileName of ["AGENTS.override.md", "AGENTS.md"]) {
-    const path = join(root, fileName);
-    if (!existsSync(path)) {
-      continue;
-    }
-    try {
-      const content = readFileSync(path, "utf8").trim();
-      if (content) {
-        return { path, content };
-      }
-    } catch {
-      return null;
+    const filePath = environment.fs.join(root, fileName);
+    const content = await environment.fs.readText(filePath);
+    if (content) {
+      return { path: filePath, content };
     }
   }
   return null;
 };
 
-const promptId = (source: ConfigSource, kind: string): string =>
-  source.scope === "global"
-    ? `codex:global:${kind}`
-    : `codex:project:${source.projectId ?? "unknown"}:${kind}`;
+const envSegment = (environment: ImportEnvironment): string =>
+  environment.kind === "local" ? "" : `:${environment.id.replace(/[^A-Za-z0-9._-]+/g, "-")}`;
 
-const profilePromptId = (
-  source: ConfigSource,
-  profileName: string,
+const promptId = (
+  environment: ImportEnvironment,
+  scope: "global" | "project",
+  projectId: string | undefined,
   kind: string
-): string =>
-  promptId(source, "profile:" + safeSegment(profileName) + ":" + kind);
+): string => {
+  const scopePart =
+    scope === "global"
+      ? `codex:global`
+      : `codex:project:${projectId ?? "unknown"}`;
+  const segment = envSegment(environment);
+  return segment ? `${scopePart}${segment}:${kind}` : `${scopePart}:${kind}`;
+};
 
-const collectPrompts = (
+const collectConfigs = async (
+  environment: ImportEnvironment,
+  codexHome: string,
+  warnings: string[]
+): Promise<ConfigSource[]> => {
+  const configs: ConfigSource[] = [];
+  const globalConfigPath = environment.fs.join(codexHome, "config.toml");
+  if (await environment.fs.exists(globalConfigPath)) {
+    const text = await environment.fs.readText(globalConfigPath);
+    if (text) {
+      try {
+        configs.push({
+          scope: "global",
+          configPath: globalConfigPath,
+          values: await parseToml(text),
+          environmentId: environment.id,
+          environmentLabel: environment.label,
+        });
+      } catch (error) {
+        warnings.push(
+          `Unable to parse ${globalConfigPath}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+  }
+  for (const project of environment.projects) {
+    const projectRoot = environment.projectRoot(project);
+    const configPath = environment.fs.join(projectRoot, ".codex", "config.toml");
+    if (!(await environment.fs.exists(configPath))) {
+      continue;
+    }
+    const text = await environment.fs.readText(configPath);
+    if (!text) {
+      continue;
+    }
+    try {
+      configs.push({
+        scope: "project",
+        configPath,
+        values: await parseToml(text),
+        projectId: project.directoryId,
+        projectRoot,
+        environmentId: environment.id,
+        environmentLabel: environment.label,
+      });
+    } catch (error) {
+      warnings.push(
+        `Unable to parse ${configPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+  return configs;
+};
+
+const collectMcpServers = (
+  environment: ImportEnvironment,
+  configs: ConfigSource[],
+  warnings: string[]
+): { servers: ImportedMcp[]; unsupported: UnsupportedImportedMcp[] } => {
+  const servers: ImportedMcp[] = [];
+  const unsupported: UnsupportedImportedMcp[] = [];
+  for (const config of configs) {
+    const declared = isRecord(config.values.mcp_servers)
+      ? config.values.mcp_servers
+      : {};
+    for (const [index, [name, raw]] of Object.entries(declared).entries()) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+      const command = nonEmptyString(raw.command) ?? "";
+      const url = nonEmptyString(raw.url) ?? "";
+      if (!command && !url) {
+        continue;
+      }
+      const idPrefix =
+        config.scope === "global"
+          ? `codex:global`
+          : `codex:project:${config.projectId}`;
+      const serverId = `${idPrefix}:${name}`;
+      const originPath = config.configPath;
+      const timeoutMs =
+        typeof raw.startup_timeout_ms === "number"
+          ? raw.startup_timeout_ms
+          : typeof raw.startup_timeout_sec === "number"
+          ? Math.round(raw.startup_timeout_sec * 1000)
+          : typeof raw.timeout === "number"
+          ? raw.timeout
+          : undefined;
+
+      if (command) {
+        const adaptation = environment.adaptStdioMcp(
+          command,
+          asStringArray(raw.args)
+        );
+        if ("unsupportedReason" in adaptation) {
+          unsupported.push({
+            name,
+            scope: config.scope,
+            ...(config.projectId ? { projectId: config.projectId } : {}),
+            reason: adaptation.unsupportedReason,
+            originPath,
+            environmentId: environment.id,
+            environmentLabel: environment.label,
+          });
+          continue;
+        }
+        const input = createMcpInput({
+          serverId,
+          name,
+          source: SOURCE,
+          sortOrder: index,
+          transportType: "stdio",
+          command: adaptation.command,
+          args: adaptation.args,
+          env: asStringRecord(raw.env),
+          enabled: raw.enabled,
+          timeoutMs,
+        });
+        if (input) {
+          servers.push({
+            scope: config.scope,
+            ...(config.projectId ? { projectId: config.projectId } : {}),
+            input,
+            originPath,
+            environmentId: environment.id,
+            environmentLabel: environment.label,
+          });
+          continue;
+        }
+      } else {
+        const input = createMcpInput({
+          serverId,
+          name,
+          source: SOURCE,
+          sortOrder: index,
+          transportType: "http",
+          url,
+          headers: asStringRecord(raw.http_headers ?? raw.headers),
+          enabled: raw.enabled,
+          timeoutMs,
+        });
+        if (input) {
+          servers.push({
+            scope: config.scope,
+            ...(config.projectId ? { projectId: config.projectId } : {}),
+            input,
+            originPath,
+            environmentId: environment.id,
+            environmentLabel: environment.label,
+          });
+          continue;
+        }
+      }
+      warnings.push(`Skipping Codex MCP server ${name}: incomplete configuration`);
+    }
+  }
+  return { servers, unsupported };
+};
+
+const collectPrompts = async (
+  environment: ImportEnvironment,
   codexHome: string,
   configs: ConfigSource[],
-  projects: WorkspaceDirectoryRecord[],
-  plugins: PluginDescriptor[],
   warnings: string[]
-): ImportedPrompt[] => {
-  const prompts = new Map<string, ImportedPrompt>();
+): Promise<SystemPromptItemInput[]> => {
+  const prompts = new Map<string, SystemPromptItemInput>();
   let order = 0;
   const add = (
     id: string,
     name: string,
     content: string,
-    scope: ImportScope,
+    scope: "global" | "project",
     projectId?: string,
     isActive = true
   ): void => {
     const trimmed = content.trim();
-    if (!trimmed) {
-      return;
+    if (!trimmed) return;
+    const prompt = createPrompt(id, name, trimmed, order++);
+    if (prompt) {
+      prompts.set(id, {
+        ...prompt,
+        isActive,
+        scope,
+        ...(scope === "project" && projectId ? { projectId } : {}),
+      });
     }
-    prompts.set(id, {
-      promptId: id,
-      name,
-      content: trimmed,
-      isActive,
-      sortOrder: order++,
-      scope,
-      ...(scope === "project" && projectId ? { projectId } : {}),
-    });
   };
 
-  const globalAgents = readAgentsPrompt(codexHome);
+  const globalAgents = await readAgentsPrompt(environment, codexHome);
   if (globalAgents) {
     add(
-      "codex:global:agents",
-      "Codex AGENTS.md",
+      promptId(environment, "global", undefined, "agents"),
+      `Codex AGENTS.md (${environment.label})`,
       globalAgents.content,
       "global"
     );
   }
 
-  const collectConfigPrompts = (
+  const collectConfigPrompts = async (
     config: ConfigSource,
     values: Record<string, unknown>,
     idFor: (kind: string) => string,
     labelSuffix: string
-  ): void => {
+  ): Promise<void> => {
     const labels: Array<[string, string, string]> = [
       ["instructions", "Codex instructions", "instructions"],
-      [
-        "developer_instructions",
-        "Codex developer instructions",
-        "developer-instructions",
-      ],
+      ["developer_instructions", "Codex developer instructions", "developer-instructions"],
       ["compact_prompt", "Codex compact prompt", "compact-prompt"],
     ];
     for (const [key, name, idPart] of labels) {
       const value = nonEmptyString(values[key]);
-      if (value) {
-        add(
-          idFor(idPart),
-          name + labelSuffix,
-          value,
-          config.scope,
-          config.projectId
-        );
-      }
+      if (value) add(idFor(idPart), name + labelSuffix, value, config.scope, config.projectId);
     }
     const filePrompts: Array<[string, string, string]> = [
-      [
-        "model_instructions_file",
-        "Codex model instructions",
-        "model-instructions",
-      ],
-      [
-        "experimental_compact_prompt_file",
-        "Codex compact prompt file",
-        "compact-prompt-file",
-      ],
+      ["model_instructions_file", "Codex model instructions", "model-instructions"],
+      ["experimental_compact_prompt_file", "Codex compact prompt file", "compact-prompt-file"],
     ];
     for (const [key, name, idPart] of filePrompts) {
       const declaredPath = nonEmptyString(values[key]);
-      if (!declaredPath) {
-        continue;
-      }
-      const path = resolveDeclaredPath(
-        dirname(config.configPath),
+      if (!declaredPath) continue;
+      const filePath = environment.fs.resolveDeclared(
+        environment.fs.dirname(config.configPath),
         declaredPath
       );
-      try {
-        add(
-          idFor(idPart),
-          name + labelSuffix,
-          readFileSync(path, "utf8"),
-          config.scope,
-          config.projectId
-        );
-      } catch (error) {
-        warnings.push(
-          "Unable to read Codex prompt file " +
-            path +
-            ": " +
-            (error instanceof Error ? error.message : String(error))
-        );
+      const content = await environment.fs.readText(filePath);
+      if (content) {
+        add(idFor(idPart), name + labelSuffix, content, config.scope, config.projectId);
+      } else {
+        warnings.push(`Unable to read Codex prompt file ${filePath}`);
       }
     }
   };
@@ -607,34 +331,36 @@ const collectPrompts = (
   for (const config of configs) {
     const suffix =
       config.scope === "global"
-        ? ""
-        : " (" + (config.projectId ?? "unknown") + ")";
-    collectConfigPrompts(
+        ? ` (${environment.label})`
+        : ` (${config.projectId ?? "unknown"} · ${environment.label})`;
+    await collectConfigPrompts(
       config,
       config.values,
-      (kind) => promptId(config, kind),
+      (kind) => promptId(environment, config.scope, config.projectId, kind),
       suffix
     );
-    const profiles = isRecord(config.values.profiles)
-      ? config.values.profiles
-      : {};
+    const profiles = isRecord(config.values.profiles) ? config.values.profiles : {};
     for (const [profileName, rawProfile] of Object.entries(profiles)) {
-      if (!isRecord(rawProfile)) {
-        continue;
-      }
-      collectConfigPrompts(
+      if (!isRecord(rawProfile)) continue;
+      await collectConfigPrompts(
         config,
         rawProfile,
-        (kind) => profilePromptId(config, profileName, kind),
-        suffix + " [" + profileName + "]"
+        (kind) =>
+          promptId(
+            environment,
+            config.scope,
+            config.projectId,
+            `profile:${profileName}:${kind}`
+          ),
+        `${suffix} [${profileName}]`
       );
     }
     if (config.projectRoot) {
-      const agents = readAgentsPrompt(config.projectRoot);
+      const agents = await readAgentsPrompt(environment, config.projectRoot);
       if (agents) {
         add(
-          promptId(config, "agents"),
-          "Codex AGENTS.md (" + (config.projectId ?? "unknown") + ")",
+          promptId(environment, config.scope, config.projectId, "agents"),
+          `Codex AGENTS.md (${config.projectId ?? "unknown"} · ${environment.label})`,
           agents.content,
           config.scope,
           config.projectId
@@ -648,216 +374,85 @@ const collectPrompts = (
       .filter((config) => config.scope === "project" && config.projectId)
       .map((config) => config.projectId as string)
   );
-  for (const project of projects.filter(
-    (item) =>
-      item.kind === "local" && !configuredProjectIds.has(item.directoryId)
-  )) {
-    const agents = readAgentsPrompt(project.path);
+  for (const project of environment.projects) {
+    if (configuredProjectIds.has(project.directoryId)) continue;
+    const projectRoot = environment.projectRoot(project);
+    const agents = await readAgentsPrompt(environment, projectRoot);
     if (agents) {
       add(
-        "codex:project:" + project.directoryId + ":agents",
-        "Codex AGENTS.md (" + project.directoryId + ")",
+        promptId(environment, "project", project.directoryId, "agents"),
+        `Codex AGENTS.md (${project.directoryId} · ${environment.label})`,
         agents.content,
         "project",
         project.directoryId
       );
     }
   }
-
-  for (const plugin of plugins.filter((item) => item.enabled)) {
-    for (const [index, content] of plugin.defaultPrompts.entries()) {
-      add(
-        `codex-plugin:${plugin.id}:prompt:${index}`,
-        `${plugin.name} prompt ${index + 1}`,
-        content,
-        plugin.scope,
-        plugin.projectId
-      );
-    }
-  }
   return [...prompts.values()];
 };
 
-const toMcpInput = (
-  name: string,
-  raw: unknown,
-  serverId: string,
-  source: string,
-  sortOrder: number,
-  warnings: string[]
-): McpServerConfigInput | null => {
-  if (!isRecord(raw)) {
-    return null;
-  }
-  const command = nonEmptyString(raw.command) ?? "";
-  const url = nonEmptyString(raw.url) ?? "";
-  if (!command && !url) {
-    return null;
-  }
-  const startupTimeoutMs =
-    typeof raw.startup_timeout_ms === "number"
-      ? raw.startup_timeout_ms
-      : typeof raw.startup_timeout_sec === "number"
-      ? Math.round(raw.startup_timeout_sec * 1000)
-      : typeof raw.timeout === "number"
-      ? raw.timeout
-      : undefined;
-  if (typeof raw.tool_timeout_sec === "number") {
-    warnings.push(
-      "MCP server " +
-        name +
-        " uses tool_timeout_sec, which is not representable in Snow App MCP settings"
-    );
-  }
-  const headers = asStringRecord(raw.http_headers ?? raw.headers);
-  for (const [headerName, envName] of Object.entries(
-    asStringRecord(raw.env_http_headers)
-  )) {
-    const value = process.env[envName];
-    if (value) {
-      headers[headerName] = value;
-    } else {
-      warnings.push(
-        "MCP server " +
-          name +
-          " references missing environment variable " +
-          envName +
-          " for header " +
-          headerName
-      );
-    }
-  }
-  const bearerTokenEnvVar = nonEmptyString(raw.bearer_token_env_var);
-  if (
-    bearerTokenEnvVar &&
-    !Object.keys(headers).some((key) => key.toLowerCase() === "authorization")
-  ) {
-    const token = process.env[bearerTokenEnvVar];
-    if (token) {
-      headers.Authorization = "Bearer " + token;
-    } else {
-      warnings.push(
-        "MCP server " +
-          name +
-          " references missing bearer token environment variable " +
-          bearerTokenEnvVar
-      );
-    }
-  }
-  return {
-    serverId,
-    name,
-    transportType: url ? "http" : "stdio",
-    url,
-    command,
-    argsJson: JSON.stringify(asStringArray(raw.args)),
-    envJson: JSON.stringify(asStringRecord(raw.env)),
-    headersJson: JSON.stringify(headers),
-    enabled: toBoolean(raw.enabled, true),
-    ...(startupTimeoutMs && startupTimeoutMs > 0
-      ? { timeoutMs: Math.round(startupTimeoutMs) }
-      : {}),
-    sortOrder,
-    source,
-  };
-};
-
-const collectMcpServers = (
-  configs: ConfigSource[],
-  warnings: string[]
-): ImportedMcp[] => {
-  const servers: ImportedMcp[] = [];
-  for (const config of configs) {
-    const declared = isRecord(config.values.mcp_servers)
-      ? config.values.mcp_servers
-      : {};
-    for (const [index, [name, raw]] of Object.entries(declared).entries()) {
-      const idPrefix =
-        config.scope === "global"
-          ? "codex:global"
-          : `codex:project:${config.projectId}`;
-      const input = toMcpInput(
-        name,
-        raw,
-        `${idPrefix}:${name}`,
-        CODEX_MCP_SOURCE,
-        index,
-        warnings
-      );
-      if (input) {
-        servers.push({
-          scope: config.scope,
-          projectId: config.projectId,
-          input,
-        });
-      }
-    }
-  }
-  return servers;
-};
-
-const collectSkillCopies = async (
-  codexHome: string,
-  projects: WorkspaceDirectoryRecord[]
-): Promise<DiscoveredSkill[]> => {
-  const skills: DiscoveredSkill[] = [];
+const collectSkills = async (
+  environment: ImportEnvironment,
+  codexHome: string
+): Promise<EnvironmentDiscoveredSkill[]> => {
+  const skills: EnvironmentDiscoveredSkill[] = [];
   const sourcePaths = new Set<string>();
   const addSkill = (
     sourceDir: string,
-    scope: ImportScope,
+    scope: "global" | "project",
     projectId?: string,
-    projectRoot?: string,
-    plugin = false
+    projectRoot?: string
   ): void => {
-    const key = resolve(sourceDir);
-    if (sourcePaths.has(key)) {
-      return;
-    }
-    sourcePaths.add(key);
+    if (sourcePaths.has(sourceDir)) return;
+    sourcePaths.add(sourceDir);
     skills.push({
       sourceDir,
       scope,
       ...(projectId ? { projectId } : {}),
       ...(projectRoot ? { projectRoot } : {}),
-      ...(plugin ? { plugin: true } : {}),
+      environmentId: environment.id,
+      environmentLabel: environment.label,
+      contentHash: "",
+      ...(environment.sshWorkspaceUrl
+        ? { sshWorkspaceUrl: environment.sshWorkspaceUrl }
+        : {}),
     });
   };
-  const localProjects = projects.filter((item) => item.kind === "local");
-  // Walk every skills root in parallel. Most project roots do not have a
-  // `.codex/skills` / `.agents/skills` folder; the existsSync pre-check
-  // avoids a worker round-trip per missing directory. Task order is kept
-  // identical to the previous sequential loop so discovery order (and thus
-  // sortOrder in later phases) is unchanged.
+
   const tasks: Array<{
     sourceRoot: string;
-    scope: ImportScope;
+    scope: "global" | "project";
     projectId?: string;
     projectRoot?: string;
-  }> = [];
-  for (const sourceRoot of [
-    join(codexHome, "skills"),
-    join(homedir(), ".agents", "skills"),
-  ]) {
-    tasks.push({ sourceRoot, scope: "global" });
+  }> = [
+    { sourceRoot: environment.fs.join(codexHome, "skills"), scope: "global" },
+  ];
+  if (environment.home) {
+    tasks.push({
+      sourceRoot: environment.fs.join(environment.home, ".agents", "skills"),
+      scope: "global",
+    });
   }
-  for (const project of localProjects) {
-    for (const sourceRoot of [
-      join(project.path, ".codex", "skills"),
-      join(project.path, ".agents", "skills"),
-    ]) {
-      tasks.push({
-        sourceRoot,
-        scope: "project",
-        projectId: project.directoryId,
-        projectRoot: project.path,
-      });
-    }
+  for (const project of environment.projects) {
+    const projectRoot = environment.projectRoot(project);
+    tasks.push({
+      sourceRoot: environment.fs.join(projectRoot, ".codex", "skills"),
+      scope: "project",
+      projectId: project.directoryId,
+      projectRoot,
+    });
+    tasks.push({
+      sourceRoot: environment.fs.join(projectRoot, ".agents", "skills"),
+      scope: "project",
+      projectId: project.directoryId,
+      projectRoot,
+    });
   }
   const results = await Promise.all(
     tasks.map(async (task) => ({
       task,
-      skillDirs: existsSync(task.sourceRoot)
-        ? await collectSkillDirectories(task.sourceRoot)
+      skillDirs: (await environment.fs.exists(task.sourceRoot))
+        ? await collectSkillDirectoriesForEnvironment(environment, task.sourceRoot)
         : [],
     }))
   );
@@ -866,97 +461,165 @@ const collectSkillCopies = async (
       addSkill(skillDir, task.scope, task.projectId, task.projectRoot);
     }
   }
+  // Hash skills after collecting them so each walk only runs once.
+  for (const skill of skills) {
+    skill.contentHash = await hashSkillForEnvironment(environment, skill.sourceDir);
+  }
   return skills;
 };
 
-export const buildCodexContext = async (
-  native: NativeBridge
-): Promise<CodexImportContext> => {
-  const codexHome = getCodexHome();
-  const warnings: string[] = [];
-  const { configs, projects } = await collectConfigs(
-    native,
-    codexHome,
-    warnings
-  );
-  const plugins = await collectPlugins(codexHome, projects, configs, warnings);
-  const mcpServers = collectMcpServers(configs, warnings);
-  const prompts = collectPrompts(codexHome, configs, projects, [], warnings);
-  const skills = await collectSkillCopies(codexHome, projects);
-  const configPath = getCodexConfigPath();
-  const globalInstructionsPath = readAgentsPrompt(codexHome)?.path ?? null;
-  const source: ImportSource = {
-    provider: "codex",
-    sourceHome: codexHome,
-    sourceFound: existsSync(codexHome) || existsSync(configPath),
-    configPaths: [
-      { label: "config.toml", path: configPath, found: existsSync(configPath) },
-    ],
-    instructionPaths: globalInstructionsPath
-      ? [{ label: "AGENTS.md", path: globalInstructionsPath, found: true }]
-      : [],
-    projectConfigCount: configs.filter((config) => config.scope === "project")
-      .length,
-    warnings,
-  };
-  const codexHomeFound = existsSync(codexHome);
-  if (!codexHomeFound) {
-    warnings.push(`Codex home not found: ${codexHome}`);
-  }
+const scanCodexEnvironment = async (
+  environment: ImportEnvironment,
+  warnings: string[]
+): Promise<ProviderScannerResult> => {
+  const codexHome = environment.fs.join(environment.home, ".codex");
+  const envWarnings = [...environment.warnings];
+  const configs = await collectConfigs(environment, codexHome, envWarnings);
+  const { servers, unsupported } = collectMcpServers(environment, configs, envWarnings);
+  const prompts = await collectPrompts(environment, codexHome, configs, envWarnings);
+  const skills = await collectSkills(environment, codexHome);
+
+  const configPath = environment.fs.join(codexHome, "config.toml");
+  const configPaths = [
+    { label: "config.toml", path: configPath, found: await environment.fs.exists(configPath) },
+  ];
+  const globalAgents = await readAgentsPrompt(environment, codexHome);
+  const instructionPaths = globalAgents
+    ? [{ label: "AGENTS.md", path: globalAgents.path, found: true }]
+    : [];
+
+  warnings.push(...envWarnings);
   return {
-    source,
-    mcpServers,
+    environment,
+    home: codexHome,
+    found: await environment.fs.exists(codexHome),
+    configPaths,
+    instructionPaths,
+    projectConfigCount: configs.filter((config) => config.scope === "project").length,
+    mcpServers: servers,
+    unsupportedMcpServers: unsupported,
     prompts,
     skills,
-    plugins,
   };
 };
 
+const buildCodexSourceFromScans = (
+  scans: ProviderScannerResult[],
+  warnings: string[]
+): ImportSource => buildProviderSource(scans, "codex", warnings);
+
+const buildContextFromScans = (
+  scans: ProviderScannerResult[],
+  warnings: string[]
+): CodexImportContext => {
+  const mcpServers: ImportedMcp[] = [];
+  const unsupportedMcpServers: UnsupportedImportedMcp[] = [];
+  const prompts: SystemPromptItemInput[] = [];
+  const skills: EnvironmentDiscoveredSkill[] = [];
+  for (const scan of scans) {
+    mcpServers.push(...scan.mcpServers);
+    unsupportedMcpServers.push(...scan.unsupportedMcpServers);
+    prompts.push(...scan.prompts);
+    skills.push(...scan.skills);
+  }
+  return {
+    source: buildCodexSourceFromScans(scans, warnings),
+    mcpServers,
+    unsupportedMcpServers,
+    prompts,
+    skills,
+    scans,
+  };
+};
+
+export const buildCodexContext = async (
+  native: NativeBridge,
+  activeDirectoryId?: string
+): Promise<CodexImportContext> => {
+  const { scans, warnings } = await scanProviderStandalone(native, scanCodexEnvironment, activeDirectoryId);
+  return buildContextFromScans(scans, warnings);
+};
+
+const mcpCandidateFromServer = (server: ImportedMcp, originHome: string): ImportCandidateInput => ({
+  type: "mcp",
+  provider: SOURCE,
+  scope: server.scope,
+  originPath: server.originPath ?? originHome,
+  logicalId: server.input.name,
+  contentHash: hashImportValue({
+    transportType: server.input.transportType,
+    url: server.input.url,
+    command: server.input.command,
+    argsJson: server.input.argsJson,
+    envJson: server.input.envJson,
+    headersJson: server.input.headersJson,
+  }),
+  ...(server.projectId ? { projectId: server.projectId } : {}),
+  environmentId: server.environmentId,
+  environmentLabel: server.environmentLabel,
+});
+
+const mcpCandidateFromUnsupported = (
+  unsupported: UnsupportedImportedMcp
+): ImportCandidateInput => ({
+  type: "mcp",
+  provider: SOURCE,
+  scope: unsupported.scope,
+  originPath: unsupported.originPath,
+  logicalId: unsupported.name,
+  contentHash: hashImportValue({
+    unsupported: unsupported.reason,
+    name: unsupported.name,
+  }),
+  ...(unsupported.projectId ? { projectId: unsupported.projectId } : {}),
+  unsupportedReason: unsupported.reason,
+  environmentId: unsupported.environmentId,
+  environmentLabel: unsupported.environmentLabel,
+});
+
+const promptCandidateFromPrompt = (
+  prompt: SystemPromptItemInput,
+  scan: ProviderScannerResult
+): ImportCandidateInput => ({
+  type: "prompt",
+  provider: SOURCE,
+  scope: prompt.scope ?? "global",
+  originPath: scan.home,
+  logicalId: prompt.promptId,
+  contentHash: hashImportValue(prompt.content),
+  ...(prompt.projectId ? { projectId: prompt.projectId } : {}),
+  environmentId: scan.environment.id,
+  environmentLabel: scan.environment.label,
+});
+
+const skillCandidateFromSkill = (skill: EnvironmentDiscoveredSkill): ImportCandidateInput => ({
+  type: "skill",
+  provider: SOURCE,
+  scope: skill.scope,
+  originPath: skill.sourceDir,
+  logicalId: skillLogicalId(skill.sourceDir),
+  contentHash: skill.contentHash,
+  ...(skill.projectId ? { projectId: skill.projectId } : {}),
+  ...(skill.projectRoot ? { projectRoot: skill.projectRoot } : {}),
+  environmentId: skill.environmentId,
+  environmentLabel: skill.environmentLabel,
+});
+
 export const discoverCodexImportFromContext = async (
   context: CodexImportContext
-): Promise<ImportSourceDiscovery> => {
-  const skillCandidates = await Promise.all(
-    context.skills.map(async (skill) => ({
-      type: "skill" as const,
-      provider: "codex" as const,
-      scope: skill.scope,
-      originPath: skill.sourceDir,
-      logicalId: skillLogicalId(skill.sourceDir),
-      contentHash: await hashImportPath(skill.sourceDir),
-      ...(skill.projectId ? { projectId: skill.projectId } : {}),
-      ...(skill.projectRoot ? { projectRoot: skill.projectRoot } : {}),
-    }))
-  );
-  const candidates: ImportCandidateInput[] = [
-    ...context.mcpServers.map((server) => ({
-      type: "mcp" as const,
-      provider: "codex" as const,
-      scope: server.scope,
-      originPath: context.source.sourceHome,
-      logicalId: server.input.name,
-      contentHash: hashImportValue({
-        transportType: server.input.transportType,
-        url: server.input.url,
-        command: server.input.command,
-        argsJson: server.input.argsJson,
-        envJson: server.input.envJson,
-        headersJson: server.input.headersJson,
-      }),
-      ...(server.projectId ? { projectId: server.projectId } : {}),
-    })),
-    ...context.prompts.map((prompt) => ({
-      type: "prompt" as const,
-      provider: "codex" as const,
-      scope: prompt.scope ?? "global",
-      originPath: context.source.sourceHome,
-      logicalId: prompt.promptId,
-      contentHash: hashImportValue(prompt.content),
-      ...(prompt.projectId ? { projectId: prompt.projectId } : {}),
-    })),
-    ...skillCandidates,
-  ];
-  return { source: context.source, candidates };
-};
+): Promise<ImportSourceDiscovery> => ({
+  source: context.source,
+  candidates: [
+    ...context.mcpServers.map((server) =>
+      mcpCandidateFromServer(server, context.source.sourceHome)
+    ),
+    ...context.unsupportedMcpServers.map(mcpCandidateFromUnsupported),
+    ...context.scans.flatMap((scan) =>
+      scan.prompts.map((prompt) => promptCandidateFromPrompt(prompt, scan))
+    ),
+    ...context.skills.map(skillCandidateFromSkill),
+  ],
+});
 
 export const discoverCodexImport = async (
   native: NativeBridge
@@ -966,31 +629,13 @@ export const discoverCodexImport = async (
 export const resolveCodexSelectedImports = async (
   native: NativeBridge,
   selected: SelectedImportCandidate[],
-  // Reuse a previously built context (e.g. from discoverAllImportContexts)
-  // to avoid re-scanning every Codex directory twice per commit.
   context?: CodexImportContext
 ): Promise<{ actions: ResolvedImportAction[]; warnings: string[] }> => {
   const ctx = context ?? (await buildCodexContext(native));
   const actions: ResolvedImportAction[] = [];
-  for (const server of ctx.mcpServers.filter(
-    (item) => item.input.source === CODEX_MCP_SOURCE
-  )) {
-    const input: ImportCandidateInput = {
-      type: "mcp",
-      provider: "codex",
-      scope: server.scope,
-      originPath: ctx.source.sourceHome,
-      logicalId: server.input.name,
-      contentHash: hashImportValue({
-        transportType: server.input.transportType,
-        url: server.input.url,
-        command: server.input.command,
-        argsJson: server.input.argsJson,
-        envJson: server.input.envJson,
-        headersJson: server.input.headersJson,
-      }),
-      ...(server.projectId ? { projectId: server.projectId } : {}),
-    };
+
+  for (const server of ctx.mcpServers) {
+    const input = mcpCandidateFromServer(server, ctx.source.sourceHome);
     const candidate = selectionForInput(input, selected);
     if (candidate) {
       actions.push({
@@ -1001,12 +646,11 @@ export const resolveCodexSelectedImports = async (
       });
     }
   }
-  for (const prompt of ctx.prompts.filter((item) =>
-    item.promptId.startsWith("codex:")
-  )) {
+
+  for (const prompt of ctx.prompts) {
     const input: ImportCandidateInput = {
       type: "prompt",
-      provider: "codex",
+      provider: SOURCE,
       scope: prompt.scope ?? "global",
       originPath: ctx.source.sourceHome,
       logicalId: prompt.promptId,
@@ -1023,17 +667,9 @@ export const resolveCodexSelectedImports = async (
       });
     }
   }
-  for (const skill of ctx.skills.filter((item) => !item.plugin)) {
-    const input: ImportCandidateInput = {
-      type: "skill",
-      provider: "codex",
-      scope: skill.scope,
-      originPath: skill.sourceDir,
-      logicalId: skillLogicalId(skill.sourceDir),
-      contentHash: await hashImportPath(skill.sourceDir),
-      ...(skill.projectId ? { projectId: skill.projectId } : {}),
-      ...(skill.projectRoot ? { projectRoot: skill.projectRoot } : {}),
-    };
+
+  for (const skill of ctx.skills) {
+    const input = skillCandidateFromSkill(skill);
     const candidate = selectionForInput(input, selected);
     if (candidate) {
       actions.push({
@@ -1043,26 +679,28 @@ export const resolveCodexSelectedImports = async (
         skill: {
           sourceDir: skill.sourceDir,
           destinationDir: skillDestination(
-            "codex",
+            SOURCE,
             skill.sourceDir,
             skill.scope,
             skill.projectRoot
           ),
+          ...(skill.sshWorkspaceUrl ? { sshWorkspaceUrl: skill.sshWorkspaceUrl } : {}),
         },
       });
     }
   }
+
   return { actions, warnings: ctx.source.warnings };
 };
 
 export const previewCodexImport = async (
   native: NativeBridge
-): Promise<CodexImportPreview> =>
+): Promise<ReturnType<typeof buildImportDiscovery>> =>
   buildImportDiscovery([await discoverCodexImport(native)]);
 
 export const importCodex = async (
   native: NativeBridge
-): Promise<CodexImportResult> => ({
+): Promise<{ applied: false } & ReturnType<typeof buildImportDiscovery>> => ({
   ...(await previewCodexImport(native)),
   applied: false,
 });

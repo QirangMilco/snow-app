@@ -41,6 +41,39 @@ type PendingScrollRestore = {
 
 const LOAD_OLDER_SCROLL_THRESHOLD = 96;
 const SHOW_SCROLL_TO_BOTTOM_THRESHOLD = 160;
+// 视口距底部小于该值视为“在底部”：scroll 事件把跟随状态重新吸附为 true，
+// 之后的内容增长会继续钉底。给用户回到底部留出少量容错，避免必须像素级触底。
+const STICK_TO_BOTTOM_THRESHOLD = 48;
+
+/**
+ * 判断一次滚轮手势是否会被聊天区内部的嵌套滚动容器（Thinking 块、子代理
+ * 活动列表等）消费。只有滚动聊天区本身的滚轮才允许改变跟随状态，否则在
+ * 嵌套容器里翻阅内容会误停整个对话的自动滚动。嵌套容器滚到边界后手势会
+ * 冒泡给外层，此时视为容器滚动。
+ */
+const willNestedScrollerConsumeWheel = (
+  container: HTMLElement,
+  target: EventTarget | null,
+  deltaY: number
+): boolean => {
+  let node = target instanceof HTMLElement ? target : null;
+  while (node && node !== container) {
+    if (node.scrollHeight > node.clientHeight + 1) {
+      const overflowY = window.getComputedStyle(node).overflowY;
+      if (overflowY === "auto" || overflowY === "scroll") {
+        const maxScrollTop = node.scrollHeight - node.clientHeight;
+        if (
+          (deltaY < 0 && node.scrollTop > 0) ||
+          (deltaY > 0 && node.scrollTop < maxScrollTop - 1)
+        ) {
+          return true;
+        }
+      }
+    }
+    node = node.parentElement;
+  }
+  return false;
+};
 
 const ChatContentBody = ({
   activeDirectory,
@@ -203,15 +236,32 @@ const ChatContentBody = ({
   const previousIsCompactingRef = useRef(isCompactingActive);
   const scrollRafIdRef = useRef(0);
   const hasMessagesRef = useRef(hasMessages);
+  const autoScrollEnabledRef = useRef(autoScrollEnabled);
   activeConversationIdRef.current = activeConversationId;
   hasMessagesRef.current = hasMessages;
+  autoScrollEnabledRef.current = autoScrollEnabled;
 
-  // Shared by the scroll handler and the resize observer: content height
-  // changes (tool details expanding/collapsing, lazily rendered message
-  // groups, decoded images) can leave the viewport at the bottom — or remove
-  // the scrollbar entirely — without ever firing a scroll event, so the
-  // follow state and button visibility must be derived from live geometry.
-  const updateScrollFollowState = useCallback(
+  // 纯几何同步“回到底部”按钮显隐，绝不触碰跟随状态。内容增长、窗口缩放等
+  // 非用户滚动场景只允许走这里——跟随状态只能被用户输入或显式动作改变。
+  const syncScrollButtonVisibility = useCallback(
+    (container: HTMLDivElement): void => {
+      if (isSmoothScrollingToBottomRef.current) {
+        setShowScrollToBottom(false);
+        return;
+      }
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      setShowScrollToBottom(
+        hasMessagesRef.current &&
+          distanceFromBottom > SHOW_SCROLL_TO_BOTTOM_THRESHOLD
+      );
+    },
+    []
+  );
+
+  // scroll 事件路径（用户滚动与程序化钉底都会触发）：从视口位置推导跟随
+  // 状态。钉底落点距底部为 0，只会把跟随重新确认为 true，不会误停。
+  const deriveFollowStateFromScroll = useCallback(
     (container: HTMLDivElement): void => {
       if (isSmoothScrollingToBottomRef.current) {
         shouldStickToBottomRef.current = true;
@@ -231,7 +281,8 @@ const ChatContentBody = ({
         return;
       }
 
-      shouldStickToBottomRef.current = distanceFromBottom < 48;
+      shouldStickToBottomRef.current =
+        distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD;
       setShowScrollToBottom(
         hasMessagesRef.current &&
           distanceFromBottom > SHOW_SCROLL_TO_BOTTOM_THRESHOLD
@@ -330,6 +381,7 @@ const ChatContentBody = ({
 
     let resizeRafId = 0;
     let lastScrollHeight = container.scrollHeight;
+    let lastClientHeight = container.clientHeight;
     const observedChildren = new Set<Element>();
 
     // Keep the viewport pinned to the latest content synchronously, within
@@ -338,6 +390,11 @@ const ChatContentBody = ({
     // scrollTop here ensures grown streaming content is never painted at a
     // stale scroll position — which was the source of the jitter when this
     // work was deferred to requestAnimationFrame.
+    //
+    // 关键不变量：内容几何变化绝不修改跟随状态。跟随状态只会被用户输入
+    // （滚轮/滚动条/键盘/触摸）或显式动作（发送、回到底部按钮、压缩）改变。
+    // 否则一次突发增长（图片解码、Markdown 重排、虚拟化展开）把距离推过
+    // 阈值，就会在用户毫无操作的情况下悄悄停掉自动滚动。
     const keepAtBottomSync = (): void => {
       if (
         scrollRef.current !== container ||
@@ -347,10 +404,14 @@ const ChatContentBody = ({
       }
 
       const nextScrollHeight = container.scrollHeight;
-      const didContentHeightChange = nextScrollHeight !== lastScrollHeight;
+      const nextClientHeight = container.clientHeight;
+      const didGeometryChange =
+        nextScrollHeight !== lastScrollHeight ||
+        nextClientHeight !== lastClientHeight;
       lastScrollHeight = nextScrollHeight;
+      lastClientHeight = nextClientHeight;
 
-      if (!didContentHeightChange) {
+      if (!didGeometryChange) {
         return;
       }
 
@@ -360,15 +421,6 @@ const ChatContentBody = ({
       // running: it re-derives its own target each frame, so a synchronous jump
       // here would fight the animation and cause the half-scroll / jitter.
       if (
-        !isLoadingOlderWithScrollRef.current &&
-        pendingScrollRestoreRef.current === null &&
-        !isSmoothScrollingToBottomRef.current
-      ) {
-        updateScrollFollowState(container);
-      }
-
-      if (
-        !shouldStickToBottomRef.current ||
         isLoadingOlderWithScrollRef.current ||
         pendingScrollRestoreRef.current !== null ||
         isSmoothScrollingToBottomRef.current
@@ -376,7 +428,19 @@ const ChatContentBody = ({
         return;
       }
 
-      container.scrollTop = nextScrollHeight;
+      // 窗口变高或内容收缩后视口可能物理上贴在底部：重新吸附，让后续增长
+      // 继续跟随（“回到底部后继续自动滚动”的几何等价形态）。
+      const distanceFromBottom =
+        nextScrollHeight - container.scrollTop - nextClientHeight;
+      if (!shouldStickToBottomRef.current && distanceFromBottom <= 0) {
+        shouldStickToBottomRef.current = true;
+      }
+
+      syncScrollButtonVisibility(container);
+
+      if (shouldStickToBottomRef.current && autoScrollEnabledRef.current) {
+        container.scrollTop = nextScrollHeight;
+      }
     };
 
     // Coalesce bulk DOM mutations (child list changes, image loads) into a
@@ -393,18 +457,9 @@ const ChatContentBody = ({
     };
 
     const resizeObserver = new ResizeObserver(keepAtBottomSync);
-    // Once the smooth scroll-to-bottom animation finishes (or is interrupted
-    // by the pinning jump below), the follow state can be re-derived from the
-    // live geometry again. "scrollend" fires after every programmatic and
-    // user-initiated scroll settles, including one that was cut short.
-    const handleScrollEnd = (): void => {
-      if (!isSmoothScrollingToBottomRef.current) {
-        return;
-      }
-      isSmoothScrollingToBottomRef.current = false;
-      updateScrollFollowState(container);
-    };
-    container.addEventListener("scrollend", handleScrollEnd);
+    // 观察容器自身：窗口/面板缩放只改变 clientHeight，不改变子元素高度，
+    // 不观察容器就收不到这类几何变化，钉底与按钮显隐会在缩放后失真。
+    resizeObserver.observe(container);
     const observeCurrentChildren = (): void => {
       for (const child of observedChildren) {
         if (!container.contains(child)) {
@@ -434,12 +489,11 @@ const ChatContentBody = ({
       if (resizeRafId !== 0) {
         cancelAnimationFrame(resizeRafId);
       }
-      container.removeEventListener("scrollend", handleScrollEnd);
       container.removeEventListener("load", scheduleResizeCheck, true);
       mutationObserver.disconnect();
       resizeObserver.disconnect();
     };
-  }, [activeConversationId, updateScrollFollowState]);
+  }, [activeConversationId, syncScrollButtonVisibility]);
 
   // When tool authorization prompts appear, force-scroll the chat area to
   // the bottom so users do not miss the confirmation while reading earlier
@@ -560,62 +614,138 @@ const ChatContentBody = ({
   const markUserScrollIntent = useCallback((): void => {
     isUserScrollIntentRef.current = true;
     isInitialBottomPositioningRef.current = false;
-    // A user-initiated scroll cancels the button's smooth animation: stop
-    // protecting the follow state so the user's position is respected.
+    // A user-initiated scroll cancels the button's smooth animation outright:
+    // leaving the tween running would keep dragging the viewport down against
+    // the user's gesture for the frames until its deviation check trips.
+    if (scrollToBottomAnimRef.current !== 0) {
+      cancelAnimationFrame(scrollToBottomAnimRef.current);
+      scrollToBottomAnimRef.current = 0;
+    }
     isSmoothScrollingToBottomRef.current = false;
   }, []);
 
+  // 滚轮是唯一带方向信息的滚动输入，在这里同步决定跟随状态，而不是等 scroll
+  // 事件：渲染帧里 ResizeObserver 的钉底先于 scroll 事件执行，若等事件再
+  // 推导，流式增长会先一步把视口钉回底部，用户向上的滚动会被“吃掉”。
+  const handleChatWheel = useCallback(
+    (event: React.WheelEvent<HTMLDivElement>): void => {
+      const container = event.currentTarget;
+      const deltaY = event.deltaY;
+      if (deltaY === 0) {
+        return;
+      }
+      // 嵌套滚动容器（Thinking 块等）消费的手势不改变对话跟随状态。
+      if (willNestedScrollerConsumeWheel(container, event.target, deltaY)) {
+        return;
+      }
+
+      markUserScrollIntent();
+
+      if (deltaY < 0) {
+        // 向上滚 = 阅读历史：立即脱离跟随。容器已在顶部时手势不产生滚动，
+        // 不应停掉自动滚动。
+        if (container.scrollTop > 0) {
+          shouldStickToBottomRef.current = false;
+          syncScrollButtonVisibility(container);
+        }
+        return;
+      }
+
+      // 向下滚：若已在吸附阈值内（手势可能不产生 scroll 事件），立即恢复
+      // 跟随；其余情况由随后的 scroll 事件在接近底部时恢复。
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD) {
+        shouldStickToBottomRef.current = true;
+        setShowScrollToBottom(false);
+      }
+    },
+    [markUserScrollIntent, syncScrollButtonVisibility]
+  );
+
   const handleChatPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>): void => {
-      const bounds = event.currentTarget.getBoundingClientRect();
-      if (event.clientX >= bounds.right - 16) {
-        markUserScrollIntent();
+      if (event.button !== 0) {
+        return;
       }
+      const container = event.currentTarget;
+      // 内容未溢出时滚动条区域只是一条空 gutter，点击不产生滚动，不算意图。
+      if (container.scrollHeight <= container.clientHeight) {
+        return;
+      }
+      // 垂直滚动条位于 clientWidth 与外边缘之间（clientWidth 不含滚动条），
+      // 该检测与滚动条实际宽度无关。按住滚动条 = 接管滚动：立即脱离跟随，
+      // 避免拖拽经过吸附阈值时与流式钉底打架；拖回底部由 scroll 事件恢复。
+      const scrollbarStartX =
+        container.getBoundingClientRect().left + container.clientWidth;
+      if (event.clientX < scrollbarStartX) {
+        return;
+      }
+      markUserScrollIntent();
+      shouldStickToBottomRef.current = false;
     },
     [markUserScrollIntent]
   );
 
   const handleChatKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>): void => {
-      if (
+      // 只有容器自身聚焦时按键才会滚动它；子元素（按钮等）冒泡上来的按键
+      // 不算滚动意图。
+      if (event.target !== event.currentTarget) {
+        return;
+      }
+      const scrollsUp =
         event.key === "ArrowUp" ||
-        event.key === "ArrowDown" ||
         event.key === "PageUp" ||
-        event.key === "PageDown" ||
         event.key === "Home" ||
+        (event.key === " " && event.shiftKey);
+      const scrollsDown =
+        event.key === "ArrowDown" ||
+        event.key === "PageDown" ||
         event.key === "End" ||
-        event.key === " "
-      ) {
-        markUserScrollIntent();
+        (event.key === " " && !event.shiftKey);
+      if (!scrollsUp && !scrollsDown) {
+        return;
+      }
+      markUserScrollIntent();
+      if (scrollsUp && event.currentTarget.scrollTop > 0) {
+        shouldStickToBottomRef.current = false;
       }
     },
     [markUserScrollIntent]
   );
 
   const handleChatScroll = useCallback((): void => {
-    // Throttle scroll handling with requestAnimationFrame to avoid
-    // excessive layout reads during fast scrolling through many
-    // Markdown-rendered messages.
+    const container = scrollRef.current;
+    if (!container) {
+      return;
+    }
+
+    // 跟随状态同步推导（几次几何读取，开销极小）：必须赶在渲染帧的
+    // ResizeObserver 钉底之前反映用户的滚动位置，否则节流间隙里流式钉底
+    // 会把视口拽回底部。
+    deriveFollowStateFromScroll(container);
+
+    // 只有“加载更早消息”检查走 rAF 节流，避免快速滚动时频繁触发分页逻辑。
     if (scrollRafIdRef.current !== 0) {
       return;
     }
 
     scrollRafIdRef.current = requestAnimationFrame(() => {
       scrollRafIdRef.current = 0;
-      const container = scrollRef.current;
-      if (!container) {
+      const throttledContainer = scrollRef.current;
+      if (!throttledContainer) {
         return;
       }
 
       const isFollowingInitialContent =
         isInitialBottomPositioningRef.current && !isUserScrollIntentRef.current;
-      updateScrollFollowState(container);
       if (isFollowingInitialContent) {
         return;
       }
 
       if (
-        container.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD ||
+        throttledContainer.scrollTop > LOAD_OLDER_SCROLL_THRESHOLD ||
         !hasMoreMessages ||
         isLoadingOlderMessages ||
         isLoadingOlderWithScrollRef.current
@@ -626,10 +756,10 @@ const ChatContentBody = ({
       void handleLoadOlderWithScroll();
     });
   }, [
+    deriveFollowStateFromScroll,
     handleLoadOlderWithScroll,
     hasMoreMessages,
     isLoadingOlderMessages,
-    updateScrollFollowState,
   ]);
 
   const handleScrollToBottom = useCallback((): void => {
@@ -675,14 +805,16 @@ const ChatContentBody = ({
 
       // The user took over the wheel / keyboard and moved away from the
       // tween's last position: stop the animation and let the live geometry
-      // drive the follow state, respecting the user's intent.
+      // drive the follow state, respecting the user's intent. (Safety net:
+      // the input handlers cancel this tween synchronously, but the message
+      // rail jump sets the intent ref directly and is caught by this check.)
       if (
         isUserScrollIntentRef.current &&
         Math.abs(container.scrollTop - lastTop) > 2
       ) {
         scrollToBottomAnimRef.current = 0;
         isSmoothScrollingToBottomRef.current = false;
-        updateScrollFollowState(container);
+        deriveFollowStateFromScroll(container);
         return;
       }
 
@@ -700,7 +832,7 @@ const ChatContentBody = ({
         container.scrollTop = maxScrollTop;
         scrollToBottomAnimRef.current = 0;
         isSmoothScrollingToBottomRef.current = false;
-        updateScrollFollowState(container);
+        deriveFollowStateFromScroll(container);
         return;
       }
 
@@ -708,7 +840,7 @@ const ChatContentBody = ({
     };
 
     scrollToBottomAnimRef.current = requestAnimationFrame(tick);
-  }, [updateScrollFollowState]);
+  }, [deriveFollowStateFromScroll]);
 
   const handleSendWithScroll = useCallback(
     (message: string, options: ChatInputSendOptions) => {
@@ -724,6 +856,18 @@ const ChatContentBody = ({
       });
     },
     [handleSendMessage]
+  );
+
+  // 开启自动滚动偏好是显式的“我要跟随”动作：立即平滑吸底并恢复跟随，
+  // 让开关有即时的视觉反馈；关闭则保持当前位置不动。
+  const handleAutoScrollChange = useCallback(
+    (enabled: boolean): void => {
+      setAutoScrollEnabled(enabled);
+      if (enabled) {
+        handleScrollToBottom();
+      }
+    },
+    [setAutoScrollEnabled, handleScrollToBottom]
   );
 
   const handleConfirmRollback = useCallback(
@@ -761,7 +905,7 @@ const ChatContentBody = ({
         }`}
         ref={scrollRef}
         onClick={pathClickOpenProps.onClick}
-        onWheel={markUserScrollIntent}
+        onWheel={handleChatWheel}
         onTouchStart={markUserScrollIntent}
         onPointerDown={handleChatPointerDown}
         onKeyDown={handleChatKeyDown}
@@ -884,7 +1028,7 @@ const ChatContentBody = ({
             goalModeTokenBudget={goalModeTokenBudget}
             onGoalModeTokenBudgetChange={setGoalModeTokenBudget}
             autoScrollEnabled={autoScrollEnabled}
-            onAutoScrollChange={setAutoScrollEnabled}
+            onAutoScrollChange={handleAutoScrollChange}
             isCompacting={isCompactingActive}
           />
         )}

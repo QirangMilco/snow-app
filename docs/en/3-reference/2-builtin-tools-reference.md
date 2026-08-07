@@ -10,22 +10,23 @@ Built-in tool full names follow the pattern `{server-id}-{tool-name}`, e.g. `fil
 
 Listed in registration order:
 
-| Server ID          | Description                                                                                                                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `filesystem`       | Local file read/write (read / replace_edit / create)                                                                                                                                                          |
-| `bash`             | Terminal command execution                                                                                                                                                                                    |
-| `todo`             | Session task list management                                                                                                                                                                                  |
-| `grep`             | File content search (ripgrep)                                                                                                                                                                                 |
-| `websearch`        | Web search and page fetching                                                                                                                                                                                  |
-| `browser`          | Built-in browser automation (embedded Electron browser)                                                                                                                                                       |
-| `user-interaction` | Ask the user questions (blocking interaction)                                                                                                                                                                 |
-| `sub-agents`       | Activate sub-agents to run tasks independently                                                                                                                                                                |
-| `codebase`         | Codebase semantic search (embedding index)                                                                                                                                                                    |
-| `codelens`         | Code diagnostics and symbol location                                                                                                                                                                          |
-| `app-control`      | App control (memos / modes / settings pages / scheduled tasks / projects)                                                                                                                                     |
-| `config`           | Read/write global config (files: settings/snowcfg/proxy/app/custom-headers/system-prompt/theme/language/permissions/lsp-config/buddy; database: subAgents/hooks/imagegen; delegated: skills; read-only: logs) |
-| `skills`           | Skill loading and execution                                                                                                                                                                                   |
-| `imagegen`         | AI image generation & editing (OpenAI / Gemini multiple channels; **hidden on demand when no channel is configured**)                                                                              |
+| Server ID          | Description                                                                                                                                                                                                                                        |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `filesystem`       | Local file read/write (read / replace_edit / create)                                                                                                                                                                                               |
+| `bash`             | Terminal command execution                                                                                                                                                                                                                         |
+| `todo`             | Session task list management                                                                                                                                                                                                                       |
+| `grep`             | File content search (ripgrep)                                                                                                                                                                                                                      |
+| `websearch`        | Web search and page fetching                                                                                                                                                                                                                       |
+| `browser`          | Built-in browser automation (embedded Electron browser)                                                                                                                                                                                            |
+| `user-interaction` | Ask the user questions (blocking interaction)                                                                                                                                                                                                      |
+| `sub-agents`       | Activate sub-agents to run tasks independently                                                                                                                                                                                                     |
+| `codebase`         | Codebase semantic search (embedding index; **only exposed when the project has codebase indexing enabled and an index has been built**)                                                                                                             |
+| `codelens`         | Code diagnostics and symbol location                                                                                                                                                                                                               |
+| `app-control`      | App control (memos / modes / settings pages / scheduled tasks / projects)                                                                                                                                                                          |
+| `config`           | Read/write global config (files: settings/snowcfg/proxy/app/custom-headers/system-prompt/theme/language/permissions/lsp-config/buddy/personalization; database: subAgents/hooks/imagegen; delegated: skills; read-only: logs)                     |
+| `terminal`         | Terminal automation (persistent PTY session tabs, unlike bash's one-shot commands)                                                                                                                                                                 |
+| `imagegen`         | AI image generation & editing (OpenAI / Gemini multiple channels; **hidden on demand when no channel is configured**)                                                                                                                              |
+| `skills`           | Skill loading and execution (**dynamically registered**: hidden from the tool list when no enabled skill exists)                                                                                                                                   |
 
 ## 3. Tool Details
 
@@ -35,13 +36,13 @@ Listed in registration order:
 | ------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- |
 | `filesystem-read`         | Read file content (supports text, images, Office documents) | `filePath`, `startLine`, `endLine`                          |
 | `filesystem-replace_edit` | Fuzzy search-and-replace editing                            | `filePath`, `searchContent`, `replaceContent`, `occurrence` |
-| `filesystem-create`       | Create a new file (auto-creates parent directories)         | `filePath`, `content`, `overwrite`                          |
+| `filesystem-create`       | Create a new file (auto-creates parent directories)         | `filePath`, `content`, `overwrite`, `encoding`                          |
 
 ### bash
 
-| Full tool name          | Purpose                                                           | Key parameters                                          |
-| ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------- |
-| `bash-terminal-execute` | Execute terminal commands (build, test, package management, etc.) | `command`, `description`, `workingDirectory`, `timeout` |
+| Full tool name          | Purpose                                                           | Key parameters                                                                                    |
+| ----------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `bash-terminal-execute` | Execute terminal commands (build, test, package management, etc.) | `command`, `description`, `workingDirectory`, `timeout`, `detach`, `isInteractive`, `sessionId`   |
 
 ### todo
 
@@ -60,7 +61,7 @@ Listed in registration order:
 | Full tool name               | Purpose                                                   | Key parameters                                    |
 | ---------------------------- | --------------------------------------------------------- | ------------------------------------------------- |
 | `websearch-websearch-search` | Web search, returns a list of results                     | `query`, `maxResults`                             |
-| `websearch-websearch-fetch`  | Fetch and read the full content of a web page or an image | `url`, `maxLength`, `isUserProvided`, `userQuery` |
+| `websearch-websearch-fetch`  | Fetch and read the full content of a web page or an image | `url`, `maxLength`, `isUserProvided`, `enableAiSummary`, `userQuery` |
 
 ### browser
 
@@ -68,11 +69,20 @@ Listed in registration order:
 | -------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `browser-create`     | Create an embedded browser instance                                                                      | `url`                                                                |
 | `browser-navigate`   | Navigate to the specified URL                                                                            | `url`, `timeoutMs`, `instanceId`                                     |
-| `browser-click`      | Click page elements with real mouse events                                                               | `selector`, `text`, `exact`, `instanceId`                            |
+| `browser-click`      | Click page elements with real mouse events (CSS selector / visible text / accessibility ref)            | `selector`, `text`, `ref`, `exact`, `instanceId`                     |
 | `browser-evaluate`   | Evaluate arbitrary JavaScript in the page and return the result                                          | `expression`, `instanceId`                                           |
-| `browser-type`       | Type text into an element (set at once or key by key)                                                    | `selector`/`text`, `value`, `submit`, `delayMs`, `instanceId`        |
+| `browser-type`       | Type text into an element (set at once or key by key; ref targeting supported)                           | `selector`/`text`/`ref`, `value`, `submit`, `delayMs`, `instanceId`  |
+| `browser-wait`       | Wait for text/element to appear or disappear, or a fixed duration (essential for SPA async rendering)                | `text`, `textGone`, `selector`, `selectorGone`, `time` (ms, 100-30000), `timeoutMs`, `instanceId` |
+| `browser-press_key`  | Press a keyboard key or combination (Enter/Tab/Escape/arrows, `Ctrl+A`-style)                             | `key`, `instanceId`                                                   |
+| `browser-select_option` | Select option(s) in a dropdown (match by value or label; exact text matching supported)               | `selector`/`text`, `values`, `exact`, `instanceId`                    |
+| `browser-hover`      | Hover an element (real mouse move, triggers hover overlays)                                               | `selector`/`text`, `exact`, `instanceId`                              |
+| `browser-upload-file` | Upload file(s) to a file input (CDP injection, no file chooser dialog)                                  | `selector`/`text`/`ref`, `files`, `instanceId`                       |
+| `browser-back`       | Go back in browser history and wait for navigation                                                        | `instanceId`                                                         |
+| `browser-forward`    | Go forward in browser history and wait for navigation                                                     | `instanceId`                                                         |
+| `browser-navigate_back` | Go back to the previous page in the browser history (no navigation wait)                               | `instanceId`                                                         |
+| `browser-navigate_forward` | Go forward to the next page in the browser history (no navigation wait)                             | `instanceId`                                                         |
 | `browser-screenshot` | Capture the page as PNG                                                                                  | `fullPage`, `instanceId`                                             |
-| `browser-devtools`   | Page snapshot / console messages (level-filterable) / network requests / dialog handling / open DevTools | `action`, `level`, `filter`, `limit`, `dialogResponse`, `instanceId` |
+| `browser-devtools`   | Text/accessibility-tree snapshot (ax, ref-addressable) / performance trace / console messages / network requests & details / offline simulation / route mocking / encrypted login-state save & restore / cookie management / dialog handling / open DevTools | `action`, `verbose`, `maxNodes`, `durationMs`, `level`, `filter`, `limit`, `requestId`, `state`, `pattern`, `fileName`, `domain`, `showValues`, `name`, `dialogResponse`, `instanceId` |
 | `browser-close`      | Close a browser tab                                                                                      | `instanceId`                                                         |
 | `browser-focus`      | Switch to the specified tab                                                                              | `instanceId`                                                         |
 | `browser-list`       | List all open tabs                                                                                       | —                                                                    |
@@ -93,13 +103,12 @@ Listed in registration order:
 
 | Full tool name    | Purpose                                                                                                                                       | Key parameters                              |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `codebase-search` | Codebase semantic search (embedding index based); **only exposed when the project has codebase indexing enabled and an index has been built** | `pattern`, `path`, `fileGlob`, `maxResults` |
+| `codebase-search` | Codebase semantic search (embedding index based); **only exposed when the project has codebase indexing enabled and an index has been built** | `query` (required), `topN` (default 10, max 50) |
 
 ### codelens
 
 | Full tool name             | Purpose                                              | Key parameters               |
 | -------------------------- | ---------------------------------------------------- | ---------------------------- |
-| `codelens-diagnose`        | Run code diagnostics, returns syntax/semantic errors | `filePath`                   |
 | `codelens-find_definition` | Find a symbol's definition location                  | `filePath`, `line`, `column` |
 | `codelens-find_references` | Find a symbol's reference locations                  | `filePath`, `line`, `column` |
 | `codelens-file_outline`    | Get a file's symbol outline                          | `filePath`                   |
@@ -119,11 +128,24 @@ Listed in registration order:
 
 | Full tool name  | Purpose                                                                                                                                                                                                                                                              | Key parameters                       |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `config-list`   | List manageable scopes (settings/snowcfg/proxy/app/custom-headers/system-prompt/theme/language/permissions/lsp-config/buddy/subAgents/hooks/skills/logs/imagegen) and their keys; pass `scope` to inspect a single scope with current values (sensitive keys masked) | `scope`, `projectId`                 |
-| `config-get`    | Read a key's value; sensitive keys (`apiKey`, `visionApiKey`, custom-header schemes, system-prompt prompts) are always masked; `subAgents`/`hooks` scopes read directly from the app database                                                                        | `scope`, `key`, `projectId`          |
-| `config-set`    | Write a key (whitelist + type check + auto backup + atomic write); `settings.mcpServers` auto-syncs to the app database and takes effect immediately; `subAgents`/`hooks` scopes write directly to the app database and take effect immediately                      | `scope`, `key`, `value`, `projectId` |
-| `config-delete` | Delete a key; `subAgents`/`hooks` scopes delete database records directly                                                                                                                                                                                            | `scope`, `key`, `projectId`          |
+| `config-list`   | List manageable scopes (settings/snowcfg/proxy/app/custom-headers/system-prompt/theme/language/permissions/lsp-config/buddy/subAgents/hooks/skills/logs/imagegen/personalization) and their keys; pass `scope` to inspect a single scope with current values (sensitive keys masked) | `scope`, `projectId`                 |
+| `config-get`    | Read a key's value; sensitive keys (`apiKey`, `visionApiKey`, custom-header schemes, system-prompt prompts) are always masked; `subAgents`/`hooks` scopes read directly from the app database; `personalization` with `key=role` returns the full ~/.snow/ROLE.md rules text (null when the file does not exist)                                                                        | `scope`, `key`, `projectId`          |
+| `config-set`    | Write a key (whitelist + type check + pre-write auto backup + atomic write, **the temporary backup is removed after a successful write**); `settings.mcpServers` auto-syncs to the app database and takes effect immediately; `subAgents`/`hooks`/`imagegen` scopes write directly to the app database and take effect immediately (same backup-then-cleanup behavior); `personalization` with `key=role` replaces the whole ~/.snow/ROLE.md file (value must be a string, takes effect in the next conversation) | `scope`, `key`, `value`, `projectId` |
+| `config-delete` | Delete a key; **DESTRUCTIVE — requires `confirmed: true`, which may only be set after the caller has obtained explicit user approval via the `user-interaction` `askUserQuestion` tool; calls without it are rejected**; pre-write backup with cleanup after success. **`imagegen` delete clears ALL image generation channels (not just the named key)**; `skills` delete uninstalls the skill; `logs` delete removes a log file; `subAgents`/`hooks` scopes delete database records directly; `personalization` delete removes ~/.snow/ROLE.md (restores default rules) | `scope`, `key`, `confirmed`, `projectId` |
 
+> **Safety mechanism (config-change protection)**: to prevent AI from
+> accidentally modifying/deleting user configuration, the config tool
+> enforces the following constraints —
+> - **Delete confirmation**: `config-delete` must first be confirmed by the
+>   user (`askUserQuestion`) and then called with `confirmed: true`; anything
+>   else is rejected. `imagegen` delete **clears all channels** (not a single
+>   key), so extra care is required.
+> - **Pre-write backup**: `config-set` / `config-delete` automatically back up
+>   the current value to `~/.snow/.config-backups/` before writing (both
+>   file-backed and DB-backed scopes), as a temporary safety net during the
+>   write; **the backup is removed after a successful verified write**, with a
+>   per-file cap of 10 backups as a fallback for leftovers.
+>
 > **Structural validation**: `settings.codebase`, `custom-headers.schemes`,
 > `system-prompt.prompts` and `lsp-config.servers` are deeply validated on
 > write (known fields are type-checked one by one, e.g.
@@ -155,6 +177,7 @@ File-backed scopes:
 | `permissions`    | `~/.snow/permissions.json`               | `alwaysApprovedTools`                                                                                                           |
 | `lsp-config`     | `~/.snow/lsp-config.json`                | `schemaVersion`, `servers`                                                                                                      |
 | `buddy`          | `~/.snow/buddy.json`                     | `version`, `companion`, `muted`                                                                                                 |
+| `personalization` | `~/.snow/ROLE.md` (plain markdown, non-JSON) | `role` (global rules text; list returns length + preview, get returns the full text, set replaces the whole file, delete removes it to restore defaults) |
 
 Database-backed scopes (write to the app SQLite database, same source as the UI settings panels, take effect immediately):
 
@@ -178,36 +201,44 @@ Read-only log scope (lets the agent self-diagnose app anomalies without a human 
 
 > Configuration examples: see [2-guides/5-configure-hooks-and-subagents](../2-guides/5-configure-hooks-and-subagents.md).
 
-### skills
+### terminal
 
-| Full tool name         | Purpose                              | Key parameters |
-| ---------------------- | ------------------------------------ | -------------- |
-| `skills-skill-execute` | Load and execute the specified skill | `skill`        |
+Manages terminal tabs in the right panel (persistent interactive PTY sessions
+that stay alive across multiple calls), complementary to `bash-terminal-execute`
+(single one-shot commands). Omitting `tabId` targets the most recently focused tab.
 
-> Note: the frontmatter field that controls the toggle is `enable` (not `enabled`).
-> The former `skills-config-*` tools (list/setEnabled/installGithub/uninstall)
-> have been removed; skill management now uses the `config` server's `skills`
-> scope exclusively (see above).
+| Full tool name      | Purpose                                                                                                                  | Key parameters                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| `terminal-open`     | Open a new terminal tab (persistent login-shell session; `cwd` defaults to the active project directory)                 | `cwd`, `shellPath`                                            |
+| `terminal-send`     | Send input to the terminal PTY (as if typed; a trailing newline is appended automatically if omitted)                    | `input` (required), `tabId`                                   |
+| `terminal-read`     | Read the currently visible text of the terminal screen buffer (ANSI stripped; not the full scrollback)                   | `tabId`, `waitMs` (0-60000)                                   |
+| `terminal-resize`   | Resize the terminal PTY dimensions (updates both the PTY process and the display)                                        | `cols` (1-500), `rows` (1-200), `tabId`                       |
+| `terminal-wait`     | Wait for the terminal to become idle (no new output for a quiet period); detects long-running command completion         | `tabId`, `timeoutMs` (≥1000, default 30000), `idleMs` (100-5000) |
+| `terminal-close`    | Close a terminal tab and kill its PTY process                                                                            | `tabId`                                                       |
+| `terminal-focus`    | Switch to (activate) the specified terminal tab                                                                          | `tabId` (required)                                            |
+| `terminal-list`     | List all open terminal tabs (id, title, working directory, active state)                                                 | —                                                             |
 
 ### imagegen
 
 | Full tool name      | Purpose                                                                                                                                                                                                         | Key parameters                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `imagegen-generate` | Text-to-image / image-to-image editing (OpenAI + Gemini Nano Banana multiple channels, independent from the conversation API config; **hidden from the AI tool list when no channel is configured**) | see the 18-parameter table below |
+| `imagegen-generate` | Text-to-image / image-to-image editing (OpenAI + Gemini Nano Banana multiple channels, independent from the conversation API config; **hidden from the AI tool list when no channel is configured**) | see the 20-parameter table below |
 
 `imagegen-generate` full parameters:
 
 | Param               | Type              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | ------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt`            | string (required) | Generation description, or the edit instruction when reference images are provided                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `images`            | array             | Reference images `[{data, mimeType}]` (base64 without the `data:` prefix; data URLs with the prefix are also accepted) or `[{path, mimeType}]` (a relative path under the upload/ directory from a `[Reference image #N for imagegen-generate: ...]` block in text-only-main-model messages; the server reads the file itself, so no need to copy large base64 strings) for editing; `path` is **restricted to the upload/ directory** (absolute paths and `..` traversal are rejected); server-side limit is **14 images**, ≤20MB each (the tool description guides the AI to ≤5 per call to stay compatible with stricter provider limits); OpenAI → `/images/edits`, Gemini → `inlineData` parts |
+| `prompt`            | string (required) | Generation description, or the edit instruction when reference images are provided (**one call = one image**; for several images fire multiple parallel calls)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `prompts`           | array             | **Legacy, not recommended**: a different prompt per image `["prompt 1", "prompt 2", ...]` (1-8 items; overrides `n`). To generate a whole set of DIFFERENT designs, fire **multiple parallel calls** (one call per image with its own single `prompt`) instead of packing prompts into one call                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `images`            | array             | Reference images `[{data, mimeType}]` (base64 without the `data:` prefix; data URLs with the prefix are also accepted) or `[{path, mimeType}]` (a relative path under the upload/ directory from a `[Reference image #N for imagegen-generate: ...]` block in text-only-main-model messages; the server reads the file itself, so no need to copy large base64 strings) for editing; `path` is **restricted to the upload/ directory** (absolute paths and `..` traversal are rejected); server-side limit is **14 images**, ≤20MB each (the tool description guides the AI to ≤5 per call to stay compatible with stricter provider limits); OpenAI → `/images/edits`, Gemini → `inlineData` parts; ignored when `requestImages` is provided |
+| `requestImages`     | array             | **Legacy, not recommended**: a different reference-image group per request `[[group 1...], [group 2...], ...]` (each group shaped like `images`), group count must equal the request count (= `prompts` length or `n`, 1-8). To restyle several source images, fire **multiple parallel calls** (one call per source image with its own `images` group) instead; omitted → all requests share the top-level `images` group                                                                                                                                                                                                                                                                                                                                                                |
 | `model`             | string            | Override the configured model; OpenAI: `gpt-image-1`/`gpt-image-2`/`dall-e-3`; Gemini: `gemini-3.1-flash-image` (Nano Banana 2)/`gemini-3.1-flash-lite-image` (Lite)/`gemini-3-pro-image` (Pro)/`gemini-2.5-flash-image` (legacy). **Capability rules (a 400 is returned for unsupported requests)**: `dall-e-3` is text-to-image only (no reference images) and always generates exactly 1 image; `imagen-*` models are text-to-image only too                                                                                                                                                                                                                                                     |
 | `provider`          | enum              | `auto` (default, derived from config) / `openai` / `gemini`, backend override                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `size`              | string            | OpenAI: `1024x1024`, `1024x1536`, `1536x1024`, etc.; Gemini: `1K`/`2K`/`4K` (imageSize) or `16:9`, `1:1`, `9:16`, etc. (aspectRatio)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `quality`           | enum              | `low` / `medium` / `high` / `auto`; OpenAI gpt-image models only, Gemini accepts `low`/`medium`/`high` only (`auto` is ignored)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `outputFormat`      | enum              | OpenAI: `png` (default) / `jpeg` / `webp`; ignored for dall-e and Gemini                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `outputCompression` | number            | OpenAI JPEG/WebP compression 0-100                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `n`                 | number            | Images per request (default 1, max 4); `dall-e-3` is always 1 (clamped automatically)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `n`                 | number            | **Legacy, not recommended** for multiple images: 1-8 (default 1). To generate several images, fire **multiple parallel calls** (one call per image) instead of raising `n`; kept for backward compatibility only — n>1 fans out to n **concurrent sub-requests** of the SAME prompt (one image each — relays/upstreams reject n>1 in a single request), returns the whole batch at once and persists every image into the image library; streaming preview is disabled when n>1; `dall-e-3` always returns 1; passing `prompts` sets the request count from its length |
 | `personGeneration`  | enum              | Gemini: `dont_allow` (default) / `allow_all` / `allow_adult`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `webSearch`         | boolean           | Gemini Google Search grounding, defaults to the setting                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `stream`            | boolean           | Streaming preview (OpenAI `partial_images` SSE / Gemini `streamGenerateContent`), defaults to the setting; ignored for dall-e and image edits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -227,13 +258,31 @@ Read-only log scope (lets the agent self-diagnose app anomalies without a human 
 > sent (`dall-e-3`/`imagen-*` reference images are rejected locally with a
 > switch-model hint; `dall-e-3` `n` is clamped to 1), and any provider 400 that
 > still occurs is annotated with a concrete fix hint (image count / image
-> input / size / quality). When the agent requests several images at once they run in parallel,
-> bounded by **Max concurrent generations** in the settings (1–8, default 4);
-> excess requests queue up and start as one finishes.
+> input / size / quality). Multiple-image generation is done via **parallel
+> separate calls** (one call = one image), bounded by **Max concurrent
+> generations** in the settings (1–8, default 4); excess requests queue up
+> and start as one finishes. The `n` / `prompts` / `requestImages` parameters
+> are kept for backward compatibility only and are not recommended.
 > GUI configuration: [2-guides/9-image-generation](../2-guides/9-image-generation.md);
 > the `config` tool's `imagegen` scope reads/writes the same settings (apiKey masked).
 > **Imagen deprecated**: `imagen-*` models shut down 2026-08-17 — use the Nano
 > Banana family.
+
+### skills
+
+| Full tool name         | Purpose                              | Key parameters |
+| ---------------------- | ------------------------------------ | -------------- |
+| `skills-skill-execute` | Load and execute the specified skill | `skill`        |
+
+> Note: the frontmatter field that controls the toggle is `enable` (not `enabled`).
+> The former `skills-config-*` tools (list/setEnabled/installGithub/uninstall)
+> have been removed; skill management now uses the `config` server's `skills`
+> scope exclusively (see above).
+>
+> The `skills` server is **dynamically registered**: `skills-skill-execute`
+> appears in the tool list only when at least one enabled skill exists under
+> `~/.snow/skills` or the project's `.snow/skills`; it disappears automatically
+> when all skills are disabled/uninstalled.
 
 ## 4. Special Notes
 
@@ -242,11 +291,15 @@ Read-only log scope (lets the agent self-diagnose app anomalies without a human 
 | page value                    | Corresponding settings page |
 | ----------------------------- | --------------------------- |
 | `api-settings`                | API Settings                |
+| `imagegen-settings`           | Image Generation            |
+| `image-library`               | Image Library               |
 | `proxy-browser-settings`      | Proxy & Browser             |
 | `codebase-settings`           | Codebase Settings           |
 | `system-prompt-settings`      | System Prompts              |
+| `personalization-settings`    | Personalization             |
 | `custom-headers-settings`     | Custom Headers              |
 | `mcp-settings`                | MCP Settings                |
+| `import-settings`             | Import                      |
 | `skills-settings`             | Skills Settings             |
 | `sub-agent-settings`          | Sub-Agent Settings          |
 | `sensitive-command-settings`  | Sensitive Commands          |

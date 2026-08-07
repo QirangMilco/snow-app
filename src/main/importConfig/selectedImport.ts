@@ -21,6 +21,7 @@ import {
   normalizeLogicalId,
   type ImportCandidateInput,
 } from "./discovery";
+import { downloadSshSkillSource } from "./importEnvironments";
 import { prepareDirectoryCommit } from "./directoryCommit";
 import { ImportExecutionPlan } from "./importTransaction";
 
@@ -35,6 +36,8 @@ export type ResolvedImportAction = {
   skill?: {
     sourceDir: string;
     destinationDir: string;
+    /** SSH workspace URL when the skill source lives on a remote host. */
+    sshWorkspaceUrl?: string;
   };
 };
 
@@ -281,6 +284,61 @@ export const prepareSelectedImport = async (
         plan.addSystemPrompt(input);
         results.set(action.candidate.candidateId, resultFor(action, "imported"));
       } else if (action.skill) {
+        if (action.skill.sshWorkspaceUrl) {
+          // The skill source lives on an SSH host; download it into a local
+          // staging directory first, then commit it through the regular
+          // directory machinery.
+          let staged;
+          try {
+            staged = await downloadSshSkillSource(
+              action.skill.sshWorkspaceUrl,
+              action.skill.sourceDir
+            );
+          } catch (error) {
+            results.set(action.candidate.candidateId, resultFor(
+              action,
+              "unsupported",
+              `Failed to download remote skill: ${
+                error instanceof Error ? error.message : String(error)
+              }`
+            ));
+            continue;
+          }
+          try {
+            if (existsSync(action.skill.destinationDir)) {
+              const destinationHash = await hashImportPath(action.skill.destinationDir);
+              if (destinationHash === action.candidate.contentHash) {
+                results.set(action.candidate.candidateId, resultFor(action, "unchanged"));
+              } else {
+                const managedSnapshot = managedResources.find((resource) =>
+                  isUnmodifiedManagedSkillSnapshot(resource, action, destinationHash)
+                );
+                if (!managedSnapshot) {
+                  results.set(action.candidate.candidateId, resultFor(
+                    action,
+                    "skipped",
+                    "Snow destination already exists with different content"
+                  ));
+                  continue;
+                }
+                plan.addDirectory(
+                  prepareDirectoryCommit(staged.localDir, action.skill.destinationDir),
+                  true
+                );
+                results.set(action.candidate.candidateId, resultFor(action, "imported"));
+              }
+              continue;
+            }
+            plan.addDirectory(
+              prepareDirectoryCommit(staged.localDir, action.skill.destinationDir),
+              false
+            );
+            results.set(action.candidate.candidateId, resultFor(action, "imported"));
+          } finally {
+            staged.cleanup();
+          }
+          continue;
+        }
         if (!existsSync(action.skill.sourceDir)) {
           results.set(resultFor(action, "unsupported").candidateId, resultFor(
             action,

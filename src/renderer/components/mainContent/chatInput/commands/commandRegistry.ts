@@ -3,6 +3,7 @@ import { createCodebaseCommand } from "./CodebaseCommand";
 import { createCompactCommand } from "./CompactCommand";
 import { createFileChangesCommand } from "./FileChangesCommand";
 import { createMcpCommand } from "./McpCommand";
+import { createReviewCommand } from "./ReviewCommand";
 import { createRoleCommand } from "./RoleCommand";
 import { createSensitiveCommandsCommand } from "./SensitiveCommandsCommand";
 import { createSkillsCommand } from "./SkillsCommand";
@@ -20,6 +21,7 @@ export const RUNNING_DISABLED_COMMAND_IDS: ReadonlySet<string> = new Set([
   "skills",
   "codebase",
   "mcp",
+  "review",
 ]);
 
 type ChatCommandLabels = {
@@ -29,6 +31,8 @@ type ChatCommandLabels = {
   compactDescription: string;
   fileChangesDescription: string;
   mcpDescription: string;
+  reviewDescription: string;
+  reviewNoProject: string;
   roleDescription: string;
   roleNoProject: string;
   sensitiveCommandsDescription: string;
@@ -44,6 +48,7 @@ type CreateChatCommandsOptions = {
   onOpenFileChangesPanel: () => void;
   onOpenMcpPanel: () => void;
   onOpenRolePanel: () => void;
+  onOpenReviewPanel: () => void;
   onOpenSensitiveCommandsPanel: () => void;
   onOpenSkillsPanel: () => void;
   onOpenCodebasePanel: () => void;
@@ -52,6 +57,7 @@ type CreateChatCommandsOptions = {
   compactDisabled: boolean;
   fileChangesDisabled: boolean;
   mcpDisabled: boolean;
+  reviewDisabled: boolean;
   roleDisabled: boolean;
   sensitiveCommandsDisabled: boolean;
   skillsDisabled: boolean;
@@ -66,6 +72,7 @@ export const createChatCommands = ({
   onOpenFileChangesPanel,
   onOpenMcpPanel,
   onOpenRolePanel,
+  onOpenReviewPanel,
   onOpenSensitiveCommandsPanel,
   onOpenSkillsPanel,
   onOpenCodebasePanel,
@@ -74,6 +81,7 @@ export const createChatCommands = ({
   compactDisabled,
   fileChangesDisabled,
   mcpDisabled,
+  reviewDisabled,
   roleDisabled,
   sensitiveCommandsDisabled,
   skillsDisabled,
@@ -129,6 +137,15 @@ export const createChatCommands = ({
         codebaseDisabled
       ),
       disabled: codebaseDisabled || isRunningDisabled("codebase"),
+    },
+    {
+      // review 的描述由调用方根据禁用原因预先计算（仅新建会话 / 无项目）。
+      ...createReviewCommand(
+        onOpenReviewPanel,
+        labels.reviewDescription,
+        reviewDisabled
+      ),
+      disabled: reviewDisabled || isRunningDisabled("review"),
     },
   ];
 

@@ -6,7 +6,7 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-use crate::storage::{ImageLibraryRecord};
+use crate::storage::{ImageLibraryRecord, MigrationProgress};
 
 fn map_spawn_error(error: tokio::task::JoinError) -> Error {
     Error::new(
@@ -84,4 +84,38 @@ pub async fn delete_conversation_images(
     })
     .await
     .map_err(map_spawn_error)?
+}
+
+/// 准备图库迁移：校验目标目录并写入迁移日志；返回待迁移图片数量（0 表示无需迁移）。
+#[napi]
+pub async fn prepare_image_library_migration(target_dir: String) -> napi::Result<u32> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::prepare_image_library_migration(target_dir)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+/// 复制下一批图库文件并返回迁移进度（copied/total/done）。
+#[napi]
+pub async fn migrate_image_library_chunk() -> napi::Result<MigrationProgress> {
+    tokio::task::spawn_blocking(crate::storage::migrate_image_library_chunk)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 提交迁移：写入新目录设置（提交点）并清理旧根目录文件。
+#[napi]
+pub async fn commit_image_library_migration() -> napi::Result<()> {
+    tokio::task::spawn_blocking(crate::storage::commit_image_library_migration)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 回滚迁移：删除已复制到新目录的文件并移除日志（幂等）。
+#[napi]
+pub async fn rollback_image_library_migration() -> napi::Result<()> {
+    tokio::task::spawn_blocking(crate::storage::rollback_image_library_migration)
+        .await
+        .map_err(map_spawn_error)?
 }

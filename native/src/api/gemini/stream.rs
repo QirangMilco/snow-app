@@ -365,6 +365,55 @@ pub(super) async fn collect_gemini_stream(
             }
         }
 
+        // Empty-response interruption: the connection dropped (EOF or read
+        // error) before ANY content, thinking, or tool call was produced.
+        // Unlike the non-SSE case above, this covers streams that ended with
+        // no usable data at all (including zero-byte bodies). Retrying is
+        // safe — nothing was emitted to the user — and recovers transient
+        // relay/proxy disconnects that would otherwise surface as a silent
+        // empty "incomplete" response.
+        if !stream_completed_normally
+            && response_status != "cancelled"
+            && content_chunks.is_empty()
+            && thinking_chunks.is_empty()
+            && tool_calls.is_empty()
+        {
+            let error = Error::from_reason(
+                "Stream ended with empty response (connection dropped before any output)",
+            );
+
+            if !should_retry(&error, attempt, retry_options) {
+                return Err(error);
+            }
+
+            // Emit retry status to frontend
+            on_chunk.call(
+                ResponsesApiStreamChunk {
+                    content_delta: String::new(),
+                    thinking_delta: String::new(),
+                    content: String::new(),
+                    thinking: String::new(),
+                    retrying: true,
+                    retry_attempt: Some((attempt + 1) as i32),
+                    retry_error: Some(error.reason.clone()),
+                    stream_token_count: stream_token_count as i64,
+                    elapsed_ms: stream_start.elapsed().as_millis() as i64,
+                    ttft_ms,
+                },
+                ThreadsafeFunctionCallMode::NonBlocking,
+            );
+
+            match wait_before_retry(retry_options, cancel_token, attempt).await {
+                Ok(()) => {
+                    // Per-attempt state is re-declared at the top of
+                    // Phase 2, so just re-issue the request.
+                    attempt += 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         let content = content_chunks.join("").trim().to_string();
         let thinking = thinking_chunks.join("").trim().to_string();
         let tool_calls_json = serde_json::to_string(&tool_calls).unwrap_or_else(|_| "[]".to_string());

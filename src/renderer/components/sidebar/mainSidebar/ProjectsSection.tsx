@@ -7,7 +7,6 @@ import {
   Server,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 
 import { useI18n } from "../../../i18n";
 import { shortcutEvents } from "../../shortcutEvents";
@@ -16,8 +15,8 @@ import type {
   WorkspaceDirectoryKind,
   WorkspaceDirectoryRecord,
 } from "../../../../preload";
+import { FormDialog } from "../../common/FormDialog";
 import { WorkspaceDirectoryList } from "./WorkspaceDirectoryList";
-import { useMenuPosition } from "./useMenuPosition";
 
 type AddDirectoryMode = "" | WorkspaceDirectoryKind;
 type ProjectsSectionProps = {
@@ -109,14 +108,15 @@ export function ProjectsSection({
   const [dragOverDirectoryId, setDragOverDirectoryId] = useState<string | null>(
     null
   );
-  const addMenuRef = useRef<HTMLDivElement | null>(null);
-  const addMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const addMenuPanelRef = useRef<HTMLDivElement | null>(null);
   const directoryListRef = useRef<HTMLDivElement | null>(null);
   const directoryLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const [isCreateProjectOpen, setIsCreateProjectOpen] = useState(false);
   const [projectNameInput, setProjectNameInput] = useState("");
   const createProjectInputRef = useRef<HTMLInputElement | null>(null);
+  const [isAddLocalDialogOpen, setIsAddLocalDialogOpen] = useState(false);
+  const [selectedLocalPath, setSelectedLocalPath] = useState("");
+  const [isDraggingLocalDirectory, setIsDraggingLocalDirectory] = useState(false);
+  const localPathInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isProjectsCollapsed, setIsProjectsCollapsed] = useState(() => {
     try {
@@ -142,13 +142,6 @@ export function ProjectsSection({
       setAddDirectoryMode("");
     }
   };
-
-  const { position: addMenuPosition } = useMenuPosition({
-    isOpen: isAddMenuOpen,
-    placement: "auto-up-down",
-    triggerRef: addMenuTriggerRef,
-    panelRef: addMenuPanelRef,
-  });
 
   const activeDirectory = useMemo(
     () => workspaceDirectories.find((directory) => directory.isActive),
@@ -311,36 +304,9 @@ export function ProjectsSection({
     };
   }, [hasMoreDirectories, loadNextDirectoryPage, visibleDirectories.length]);
 
-  useEffect(() => {
-    if (!isAddMenuOpen) {
-      return;
-    }
-
-    const handleClickOutside = (event: MouseEvent): void => {
-      const target = event.target as Node;
-
-      if (
-        (addMenuRef.current && addMenuRef.current.contains(target)) ||
-        (addMenuPanelRef.current && addMenuPanelRef.current.contains(target))
-      ) {
-        return;
-      }
-
-      setIsAddMenuOpen(false);
-      setAddDirectoryMode("");
-      setDirectoryError(null);
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [isAddMenuOpen]);
-
   const persistWorkspaceDirectory = async (
     item: WorkspaceDirectoryInput
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     setIsSavingDirectory(true);
     setDirectoryError(null);
 
@@ -349,6 +315,7 @@ export function ProjectsSection({
       setWorkspaceDirectories(directories);
       setIsAddMenuOpen(false);
       setAddDirectoryMode("");
+      return true;
     } catch (error) {
       setDirectoryError(
         error instanceof Error
@@ -357,14 +324,15 @@ export function ProjectsSection({
               defaultValue: "Failed to add workspace directory",
             })
       );
+      return false;
     } finally {
       setIsSavingDirectory(false);
     }
   };
 
-  const handleAddDirectoryModeSelect = async (
+  const handleAddDirectoryModeSelect = (
     mode: WorkspaceDirectoryKind
-  ): Promise<void> => {
+  ): void => {
     setAddDirectoryMode(mode);
     setDirectoryError(null);
     setIsAddMenuOpen(false);
@@ -374,26 +342,21 @@ export function ProjectsSection({
       return;
     }
 
-    setIsSavingDirectory(true);
+    setSelectedLocalPath("");
+    setIsAddLocalDialogOpen(true);
+  };
 
+  const handleSelectLocalDirectory = async (): Promise<void> => {
+    if (isSavingDirectory) return;
+
+    setDirectoryError(null);
     try {
       const selectedPath = await window.snow.selectWorkspaceDirectory(
         t("sidebar.selectLocalDirectoryTitle", {
           defaultValue: "Select local workspace directory",
         })
       );
-
-      if (selectedPath) {
-        await persistWorkspaceDirectory(
-          toWorkspaceDirectoryInput(
-            selectedPath,
-            "local",
-            workspaceDirectories.length
-          )
-        );
-      } else {
-        setAddDirectoryMode("");
-      }
+      if (selectedPath) setSelectedLocalPath(selectedPath);
     } catch (error) {
       setDirectoryError(
         error instanceof Error
@@ -402,8 +365,72 @@ export function ProjectsSection({
               defaultValue: "Failed to select local directory",
             })
       );
-    } finally {
-      setIsSavingDirectory(false);
+    }
+  };
+
+  const handleAddLocalDirectoryCancel = (): void => {
+    if (isSavingDirectory) return;
+    setIsAddLocalDialogOpen(false);
+    setSelectedLocalPath("");
+    setIsDraggingLocalDirectory(false);
+    setAddDirectoryMode("");
+    setDirectoryError(null);
+  };
+
+  const handleLocalDirectoryDrop = async (
+    event: React.DragEvent<HTMLDivElement>
+  ): Promise<void> => {
+    event.preventDefault();
+    setIsDraggingLocalDirectory(false);
+    setDirectoryError(null);
+
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length !== 1) {
+      setDirectoryError(
+        t("sidebar.localDirectoryDropSingleError", {
+          defaultValue: "Drop exactly one folder.",
+        })
+      );
+      return;
+    }
+
+    try {
+      const entries = await window.snow.resolveDroppedFiles(files);
+      const entry = entries[0];
+      if (!entry?.isDirectory) {
+        setDirectoryError(
+          t("sidebar.localDirectoryDropTypeError", {
+            defaultValue: "Only folders can be added here.",
+          })
+        );
+        return;
+      }
+      setSelectedLocalPath(entry.path);
+    } catch (error) {
+      setDirectoryError(
+        error instanceof Error
+          ? error.message
+          : t("sidebar.selectLocalDirectoryError", {
+              defaultValue: "Failed to select local directory",
+            })
+      );
+    }
+  };
+
+  const handleAddLocalDirectoryConfirm = async (): Promise<void> => {
+    const selectedPath = selectedLocalPath.trim();
+    if (!selectedPath || isSavingDirectory) return;
+
+    const didSave = await persistWorkspaceDirectory(
+      toWorkspaceDirectoryInput(
+        selectedPath,
+        "local",
+        workspaceDirectories.length
+      )
+    );
+    if (didSave) {
+      setIsAddLocalDialogOpen(false);
+      setSelectedLocalPath("");
     }
   };
 
@@ -591,6 +618,48 @@ export function ProjectsSection({
     }
   };
 
+  // 重命名目录显示名：保留其余字段（directoryId/path/kind/isActive/
+  // sortOrder/source），仅更新 name，不影响磁盘路径与排序。
+  const handleRenameDirectory = async (
+    directoryId: string,
+    newName: string
+  ): Promise<void> => {
+    const directory = workspaceDirectories.find(
+      (d) => d.directoryId === directoryId
+    );
+    if (!directory) {
+      return;
+    }
+
+    setIsSavingDirectory(true);
+    setDirectoryError(null);
+
+    try {
+      const directories = await window.snow.upsertWorkspaceDirectory({
+        directoryId: directory.directoryId,
+        name: newName,
+        path: directory.path,
+        kind: directory.kind,
+        isActive: directory.isActive,
+        sortOrder: directory.sortOrder,
+        source: directory.source,
+      });
+      setWorkspaceDirectories(directories);
+    } catch (error) {
+      setDirectoryError(
+        error instanceof Error
+          ? error.message
+          : t("sidebar.renameDirectoryError", {
+              defaultValue: "Failed to rename workspace directory",
+            })
+      );
+      // 向上抛出，让行内编辑保持错误可见（由列表在 finally 中退出编辑态）
+      throw error;
+    } finally {
+      setIsSavingDirectory(false);
+    }
+  };
+
   const handleShowDetails = (directoryId: string): void => {
     const directory = workspaceDirectories.find(
       (d) => d.directoryId === directoryId
@@ -666,14 +735,13 @@ export function ProjectsSection({
             {t("sidebar.projects", { defaultValue: "Projects" })}
           </span>
         </button>
-        <div className="section-actions" ref={addMenuRef}>
+        <div className="section-actions">
           {isLoadingDirectories || isSavingDirectory ? (
             <Loader2 className="spin" size={14} />
           ) : (
             <button
-              ref={addMenuTriggerRef}
               aria-expanded={isAddMenuOpen}
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               aria-label={t("sidebar.addDirectoryScheme", {
                 defaultValue: "Add directory",
               })}
@@ -681,93 +749,120 @@ export function ProjectsSection({
               onClick={() => {
                 setDirectoryError(null);
                 setAddDirectoryMode("");
-                setIsCreateProjectOpen(false);
-                setProjectNameInput("");
-                setIsAddMenuOpen((open) => !open);
+                setIsAddMenuOpen(true);
               }}
               type="button"
             >
               <Plus size={14} />
             </button>
           )}
-          {isAddMenuOpen
-            ? createPortal(
-                <div
-                  ref={addMenuPanelRef}
-                  className="chat-item-menu"
-                  style={
-                    addMenuPosition
-                      ? {
-                          top: addMenuPosition.top,
-                          left: addMenuPosition.left,
-                        }
-                      : undefined
-                  }
-                  role="menu"
-                >
-                  <button
-                    type="button"
-                    className="chat-item-menu-item"
-                    onClick={handleCreateProjectModeOpen}
-                    role="menuitem"
-                  >
-                    <FolderPlus size={13} />
-                    <span>
-                      {t("sidebar.createProject", {
-                        defaultValue: "Create project",
-                      })}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-item-menu-item"
-                    onClick={() => void handleAddDirectoryModeSelect("local")}
-                    role="menuitem"
-                  >
-                    <Folder size={13} />
-                    <span>
-                      {t("sidebar.addLocalDirectory", {
-                        defaultValue: "Add local directory",
-                      })}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-item-menu-item"
-                    onClick={() => void handleAddDirectoryModeSelect("ssh")}
-                    role="menuitem"
-                  >
-                    <Server size={13} />
-                    <span>
-                      {t("sidebar.addSshDirectory", {
-                        defaultValue: "Add SSH directory",
-                      })}
-                    </span>
-                  </button>
-                </div>,
-                document.body
-              )
-            : null}
         </div>
       </div>
-      {!isProjectsCollapsed && isCreateProjectOpen ? (
-        <div className="workspace-directory-create">
-          <span className="workspace-directory-create-title">
-            {t("sidebar.createProjectTitle", {
-              defaultValue: "Create a new project",
+      <FormDialog
+        closeLabel={t("sidebar.close", { defaultValue: "Close" })}
+        onCancel={() => setIsAddMenuOpen(false)}
+        open={isAddMenuOpen}
+        showFooter={false}
+        title={t("sidebar.chooseDirectoryScheme", {
+          defaultValue: "Choose add method",
+        })}
+      >
+        <div className="project-action-grid">
+          <button
+            className="project-action-card"
+            onClick={handleCreateProjectModeOpen}
+            type="button"
+          >
+            <span className="project-action-card-icon">
+              <FolderPlus size={20} />
+            </span>
+            <span className="project-action-card-content">
+              <strong>
+                {t("sidebar.createProject", { defaultValue: "Create project" })}
+              </strong>
+              <span>
+                {t("sidebar.createProjectDescription", {
+                  defaultValue: "Create a new local project folder",
+                })}
+              </span>
+            </span>
+          </button>
+          <button
+            className="project-action-card"
+            onClick={() => handleAddDirectoryModeSelect("local")}
+            type="button"
+          >
+            <span className="project-action-card-icon">
+              <Folder size={20} />
+            </span>
+            <span className="project-action-card-content">
+              <strong>
+                {t("sidebar.addLocalDirectory", {
+                  defaultValue: "Add local directory",
+                })}
+              </strong>
+              <span>
+                {t("sidebar.addLocalDirectoryActionDescription", {
+                  defaultValue: "Select or drop an existing local folder",
+                })}
+              </span>
+            </span>
+          </button>
+          <button
+            className="project-action-card"
+            onClick={() => handleAddDirectoryModeSelect("ssh")}
+            type="button"
+          >
+            <span className="project-action-card-icon">
+              <Server size={20} />
+            </span>
+            <span className="project-action-card-content">
+              <strong>
+                {t("sidebar.addSshDirectory", {
+                  defaultValue: "Add SSH directory",
+                })}
+              </strong>
+              <span>
+                {t("sidebar.addSshDirectoryActionDescription", {
+                  defaultValue: "Connect and add a remote server directory",
+                })}
+              </span>
+            </span>
+          </button>
+        </div>
+      </FormDialog>
+      <FormDialog
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        closeLabel={t("sidebar.close", { defaultValue: "Close" })}
+        confirmDisabled={!projectNameInput.trim()}
+        confirmLabel={t("sidebar.createProjectConfirm", {
+          defaultValue: "Create",
+        })}
+        initialFocusRef={createProjectInputRef}
+        isSubmitting={isSavingDirectory}
+        onCancel={handleCreateProjectCancel}
+        onConfirm={() => void handleCreateProjectConfirm()}
+        open={isCreateProjectOpen}
+        title={t("sidebar.createProjectTitle", {
+          defaultValue: "Create a new project",
+        })}
+      >
+        <label className="form-dialog-field">
+          <span className="form-dialog-label">
+            {t("sidebar.createProjectNameLabel", {
+              defaultValue: "Project name",
             })}
           </span>
           <input
             ref={createProjectInputRef}
-            className="workspace-directory-create-input"
+            className="form-dialog-input"
             disabled={isSavingDirectory}
             maxLength={120}
             onChange={(event) => setProjectNameInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
+                event.preventDefault();
                 void handleCreateProjectConfirm();
-              } else if (event.key === "Escape") {
-                handleCreateProjectCancel();
               }
             }}
             placeholder={t("sidebar.createProjectNamePlaceholder", {
@@ -775,31 +870,92 @@ export function ProjectsSection({
             })}
             value={projectNameInput}
           />
-          <div className="workspace-directory-create-actions">
-            <button
-              type="button"
-              className="workspace-directory-create-btn cancel"
-              disabled={isSavingDirectory}
-              onClick={handleCreateProjectCancel}
-            >
-              {t("common.cancel", { defaultValue: "Cancel" })}
-            </button>
-            <button
-              type="button"
-              className="workspace-directory-create-btn confirm"
-              disabled={isSavingDirectory || !projectNameInput.trim()}
-              onClick={() => void handleCreateProjectConfirm()}
-            >
-              {isSavingDirectory ? (
-                <Loader2 className="spin" size={12} />
-              ) : null}
-              {t("sidebar.createProjectConfirm", {
-                defaultValue: "Create",
+        </label>
+        {directoryError ? (
+          <span className="form-dialog-error">{directoryError}</span>
+        ) : null}
+      </FormDialog>
+      <FormDialog
+        cancelLabel={t("common.cancel", { defaultValue: "Cancel" })}
+        closeLabel={t("sidebar.close", { defaultValue: "Close" })}
+        confirmDisabled={!selectedLocalPath.trim()}
+        confirmLabel={t("sidebar.add", { defaultValue: "Add" })}
+        initialFocusRef={localPathInputRef}
+        isSubmitting={isSavingDirectory}
+        onCancel={handleAddLocalDirectoryCancel}
+        onConfirm={() => void handleAddLocalDirectoryConfirm()}
+        open={isAddLocalDialogOpen}
+        title={t("sidebar.addLocalDirectory", {
+          defaultValue: "Add local directory",
+        })}
+      >
+        <p className="form-dialog-description">
+          {t("sidebar.addLocalDirectoryDescription", {
+            defaultValue: "Select a local folder to add as a workspace directory.",
+          })}
+        </p>
+        <div
+          className={`form-dialog-drop-zone${
+            isDraggingLocalDirectory ? " drag-over" : ""
+          }`}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setIsDraggingLocalDirectory(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setIsDraggingLocalDirectory(false);
+            }
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+          }}
+          onDrop={(event) => void handleLocalDirectoryDrop(event)}
+        >
+          <FolderPlus size={22} />
+          <strong>
+            {t("sidebar.localDirectoryDropTitle", {
+              defaultValue: "Drop a folder here",
+            })}
+          </strong>
+          <span>
+            {t("sidebar.localDirectoryDropHint", {
+              defaultValue: "Or use Select folder below",
+            })}
+          </span>
+        </div>
+        <label className="form-dialog-field">
+          <span className="form-dialog-label">
+            {t("sidebar.localDirectoryPathLabel", {
+              defaultValue: "Folder path",
+            })}
+          </span>
+          <div className="form-dialog-input-row">
+            <input
+              ref={localPathInputRef}
+              className="form-dialog-input"
+              placeholder={t("sidebar.localDirectoryPathPlaceholder", {
+                defaultValue: "No folder selected",
               })}
+              readOnly
+              value={selectedLocalPath}
+            />
+            <button
+              className="form-dialog-button cancel form-dialog-browse-button"
+              disabled={isSavingDirectory}
+              onClick={() => void handleSelectLocalDirectory()}
+              type="button"
+            >
+              {t("sidebar.selectFolder", { defaultValue: "Select folder" })}
             </button>
           </div>
-        </div>
-      ) : null}
+        </label>
+        {directoryError ? (
+          <span className="form-dialog-error">{directoryError}</span>
+        ) : null}
+      </FormDialog>
+
       {!isProjectsCollapsed ? (
         <div className="workspace-directory-card">
           <span className="workspace-directory-label">
@@ -826,12 +982,13 @@ export function ProjectsSection({
             onDragOver={handleDirectoryDragOver}
             onDragStart={handleDirectoryDragStart}
             onDrop={handleDirectoryDrop}
+            onRename={handleRenameDirectory}
             onShowDetails={handleShowDetails}
             totalCount={workspaceDirectories.length}
             visibleDirectories={visibleDirectories}
             workspaceDirectories={workspaceDirectories}
           />
-          {directoryError ? (
+          {directoryError && !isCreateProjectOpen && !isAddLocalDialogOpen ? (
             <span className="workspace-directory-error">{directoryError}</span>
           ) : null}
         </div>

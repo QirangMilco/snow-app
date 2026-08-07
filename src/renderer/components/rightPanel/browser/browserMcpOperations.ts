@@ -1,8 +1,44 @@
 import { captureWebviewPage } from "./captureWebviewPage";
+import {
+  resolveAxRef,
+  serializeAxTree,
+  type AxNode,
+} from "./browserAxSnapshot";
 import type { BrowserMcpCommandArgs } from "./browserMcpController";
 
 const TEXT_PREVIEW_LENGTH = 160;
 const MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024;
+
+// 公共元素描述函数片段（normalize + describe）。定位脚本、fill 脚本与
+// CDP callFunctionOn 复用。注意：const 在同一作用域重复声明会抛
+// SyntaxError，因此每个脚本作用域只能注入一次。
+const DESCRIBE_ELEMENT_SCRIPT = `
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const describe = (element) => normalize(
+    element.innerText ||
+    element.textContent ||
+    element.value ||
+    element.getAttribute('aria-label') ||
+    element.getAttribute('title')
+  );`;
+
+// 路由 mock 规则(渲染进程侧累积,route 追加/覆盖,routeClear 清空;提交给主进程 Fetch 拦截)。
+// 按实例隔离:每个浏览器实例维护自己的规则,实例卸载时由
+// clearBrowserRouteRulesForInstance 清理,避免跨实例残留/误提交。
+type BrowserRouteRule = {
+  pattern: string;
+  status?: number;
+  body?: string;
+  contentType?: string;
+  headers?: Record<string, string>;
+};
+
+const browserRouteRulesByInstance = new Map<string, BrowserRouteRule[]>();
+
+/** 实例卸载时清理其累积的路由规则,防止残留规则影响其他实例。 */
+export const clearBrowserRouteRulesForInstance = (instanceId: string): void => {
+  browserRouteRulesByInstance.delete(instanceId);
+};
 
 // Electron webview console-message level: 0=verbose, 1=info, 2=warning, 3=error.
 const CONSOLE_LEVEL_MIN: Record<string, number> = {
@@ -60,14 +96,7 @@ const buildElementLocatorScript = (
     '[tabindex]:not([tabindex="-1"])',
     '[onclick]'
   ].join(',');
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const describe = (element) => normalize(
-    element.innerText ||
-    element.textContent ||
-    element.value ||
-    element.getAttribute('aria-label') ||
-    element.getAttribute('title')
-  );
+  ${DESCRIBE_ELEMENT_SCRIPT}
   const isVisible = (element) => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
@@ -138,6 +167,110 @@ const requiredString = (args: BrowserMcpCommandArgs, field: string): string => {
     throw new Error(`${field} is required`);
   }
   return value.trim();
+};
+
+/**
+ * 无障碍快照 ref 回指：uid → backendDOMNodeId → DOM.resolveNode → callFunctionOn
+ * 取元素中心坐标与可见性（页面上下文执行）。返回 objectId 供 type 复用。
+ */
+const resolveRefHandle = async (
+  webview: Electron.WebviewTag,
+  webContentsId: number,
+  ref: string
+): Promise<{
+  objectId: string;
+  info: {
+    x: number;
+    y: number;
+    visible: boolean;
+    tag: string;
+    viewportW: number;
+    viewportH: number;
+  };
+}> => {
+  const backend = resolveAxRef(ref);
+  if (backend === null) {
+    throw new Error(
+      `Ref ${ref} is not in the current snapshot. Capture a new accessibility snapshot (browser-devtools action=ax) first.`
+    );
+  }
+  const resolved = (await window.snow.browserCdpCommand(
+    webContentsId,
+    "DOM.resolveNode",
+    { backendNodeId: backend }
+  )) as { object?: { objectId?: string } };
+  const objectId = resolved?.object?.objectId;
+  if (!objectId) {
+    throw new Error(
+      `Element for ref ${ref} no longer exists in the DOM. Capture a new accessibility snapshot.`
+    );
+  }
+  const called = (await window.snow.browserCdpCommand(
+    webContentsId,
+    "Runtime.callFunctionOn",
+    {
+      objectId,
+      functionDeclaration: `function() {
+        // 视口外元素自动滚入可视区（selector/text 定位路径已内置
+        // scrollIntoView，这里对齐行为，避免 "outside the viewport" 误报）。
+        try {
+          this.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        } catch {
+          // 非布局元素（如 SVG 内部节点）可能不支持 scrollIntoView，忽略。
+        }
+        const r = this.getBoundingClientRect();
+        const style = getComputedStyle(this);
+        return {
+          x: Math.round(r.left + r.width / 2),
+          y: Math.round(r.top + r.height / 2),
+          visible: r.width > 0 && r.height > 0 &&
+            style.visibility !== 'hidden' && style.display !== 'none',
+          tag: this.tagName ? this.tagName.toLowerCase() : '',
+          viewportW: window.innerWidth,
+          viewportH: window.innerHeight,
+        };
+      }`,
+      returnByValue: true,
+    }
+  )) as {
+    result?: {
+      value?: {
+        x?: number;
+        y?: number;
+        visible?: boolean;
+        tag?: string;
+        viewportW?: number;
+        viewportH?: number;
+      };
+    };
+  };
+  const info = called?.result?.value;
+  if (!info || !info.visible) {
+    throw new Error(`Element for ref ${ref} is not visible on the page.`);
+  }
+  if (
+    typeof info.x !== "number" ||
+    typeof info.y !== "number" ||
+    info.x < 0 ||
+    info.y < 0 ||
+    info.x >= (info.viewportW ?? 0) ||
+    info.y >= (info.viewportH ?? 0)
+  ) {
+    throw new Error(
+      `Element for ref ${ref} is outside the browser viewport; scroll to it first.`
+    );
+  }
+  return {
+    objectId,
+    info: {
+      x: info.x,
+      y: info.y,
+      visible: true,
+      tag: info.tag ?? "",
+      viewportW: info.viewportW ?? 0,
+      viewportH: info.viewportH ?? 0,
+    },
+  };
 };
 
 const requiredRawString = (
@@ -269,18 +402,48 @@ const navigate = async (
   };
 };
 
+/**
+ * 三路定位（selector / text / ref）并执行 actionBody，返回元素中心坐标与描述。
+ * ref 走无障碍树确定性定位；selector/text 走 DOM 定位脚本（含 shadowRoot 遍历）。
+ */
+const locateElementTarget = async (
+  webview: Electron.WebviewTag,
+  args: BrowserMcpCommandArgs,
+  actionBody: string,
+  exact = false
+): Promise<{ x: number; y: number; element: unknown }> => {
+  const selector = optionalString(args, "selector");
+  const text = optionalString(args, "text");
+  const ref = optionalString(args, "ref");
+  if (ref) {
+    const { info } = await resolveRefHandle(
+      webview,
+      webview.getWebContentsId(),
+      ref
+    );
+    return { x: info.x, y: info.y, element: { tagName: info.tag, ref } };
+  }
+  const locateScript = buildElementLocatorScript(
+    selector ?? null,
+    text ?? null,
+    exact,
+    actionBody
+  );
+  return (await webview.executeJavaScript(locateScript)) as {
+    x: number;
+    y: number;
+    element: unknown;
+  };
+};
+
 const click = async (
   webview: Electron.WebviewTag,
   instanceId: string,
   args: BrowserMcpCommandArgs
 ): Promise<unknown> => {
-  const selector = optionalString(args, "selector");
-  const text = optionalString(args, "text");
-  const exact = args.exact === true;
-  const locateScript = buildElementLocatorScript(
-    selector ?? null,
-    text ?? null,
-    exact,
+  const target = await locateElementTarget(
+    webview,
+    args,
     `const rect = element.getBoundingClientRect();
     const x = Math.round(rect.left + rect.width / 2);
     const y = Math.round(rect.top + rect.height / 2);
@@ -296,13 +459,9 @@ const click = async (
         text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
         href: element.href || null,
       },
-    };`
+    };`,
+    args.exact === true
   );
-  const target = (await webview.executeJavaScript(locateScript)) as {
-    x: number;
-    y: number;
-    element: unknown;
-  };
   const metadata = await currentPageMetadata(webview, instanceId);
   webview.focus();
   await webview.sendInputEvent({ type: "mouseMove", x: target.x, y: target.y });
@@ -313,6 +472,9 @@ const click = async (
     button: "left",
     clickCount: 1,
   });
+  // 按下与抬起之间留出真实点击间隔：部分站点（如必应搜索结果）在
+  // mouseup 前有 JS 拦截逻辑，瞬时点击会被忽略。
+  await new Promise((resolve) => setTimeout(resolve, 50));
   await webview.sendInputEvent({
     type: "mouseUp",
     x: target.x,
@@ -346,6 +508,49 @@ const evaluate = async (
   };
 };
 
+/** 一次性设值逻辑（作用域内元素为 element）：原生 setter + input/change 事件
+ * （React 受控组件兼容，与 Playwright fill 同原理）。定位脚本与 ref 回指共用。
+ * 注意：本片段不再定义 describe —— selector/text 路径由定位脚本注入，
+ * ref 路径由调用方在 functionDeclaration 中注入 DESCRIBE_ELEMENT_SCRIPT。 */
+const buildFillBody = (value: string, submit: boolean): string => `const editable = element.matches(
+    'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [contenteditable=""]'
+  );
+  if (!editable) {
+    throw new Error('Target element is not editable (expected input, textarea, or contenteditable)');
+  }
+  const value = ${JSON.stringify(value)};
+  if (element.matches('[contenteditable="true"], [contenteditable=""]')) {
+    element.textContent = value;
+  } else {
+    const proto = element.tagName === 'TEXTAREA'
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+    if (setter) {
+      setter.call(element, value);
+    } else {
+      element.value = value;
+    }
+  }
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  if (${JSON.stringify(submit)}) {
+    const form = element.closest('form');
+    if (form) {
+      form.requestSubmit();
+    } else {
+      element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
+  }
+  element.focus();
+  return {
+    element: {
+      tagName: element.tagName.toLowerCase(),
+      id: element.id || null,
+      text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
+    },
+  };`;
+
 const type = async (
   webview: Electron.WebviewTag,
   instanceId: string,
@@ -353,28 +558,55 @@ const type = async (
 ): Promise<unknown> => {
   const selector = optionalString(args, "selector");
   const text = optionalString(args, "text");
+  const ref = optionalString(args, "ref");
   const value = requiredRawString(args, "value");
   const submit = args.submit === true;
   const delayMs = typeof args.delayMs === "number" ? args.delayMs : 0;
+  const webContentsId = webview.getWebContentsId();
 
-  // 逐键模式：定位并聚焦元素，用真实键盘事件逐字符输入（触发表单校验）。
+  // 逐键模式：聚焦元素，用真实键盘事件逐字符输入（触发表单校验）。
   if (delayMs > 0) {
-    const focusScript = buildElementLocatorScript(
-      selector ?? null,
-      text ?? null,
-      false,
-      `element.focus();
-      return {
-        element: {
-          tagName: element.tagName.toLowerCase(),
-          id: element.id || null,
-          text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
-        },
-      };`
-    );
-    const target = (await webview.executeJavaScript(focusScript)) as {
-      element: unknown;
-    };
+    let target: { element: unknown };
+    if (ref) {
+      const { objectId } = await resolveRefHandle(webview, webContentsId, ref);
+      const focused = (await window.snow.browserCdpCommand(
+        webContentsId,
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          functionDeclaration: `function() {
+            this.focus();
+            return {
+              element: {
+                tagName: this.tagName ? this.tagName.toLowerCase() : '',
+                id: this.id || null,
+                text: (this.innerText || this.textContent || this.value || '')
+                  .replace(/\\s+/g, ' ').trim().slice(0, ${TEXT_PREVIEW_LENGTH}),
+              },
+            };
+          }`,
+          returnByValue: true,
+        }
+      )) as { result?: { value?: { element?: unknown } } };
+      target = { element: focused?.result?.value?.element };
+    } else {
+      const focusScript = buildElementLocatorScript(
+        selector ?? null,
+        text ?? null,
+        false,
+        `element.focus();
+        return {
+          element: {
+            tagName: element.tagName.toLowerCase(),
+            id: element.id || null,
+            text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
+          },
+        };`
+      );
+      target = (await webview.executeJavaScript(focusScript)) as {
+        element: unknown;
+      };
+    }
     webview.focus();
     for (const char of value) {
       await webview.sendInputEvent({ type: "keyDown", keyCode: char });
@@ -394,50 +626,36 @@ const type = async (
     };
   }
 
-  // 默认一次性设值：原生 setter + input/change 事件（React 受控组件兼容），
-  // 与 Playwright fill 同原理。
+  // 默认一次性设值模式。
+  if (ref) {
+    const { objectId } = await resolveRefHandle(webview, webContentsId, ref);
+    const filled = (await window.snow.browserCdpCommand(
+      webContentsId,
+      "Runtime.callFunctionOn",
+      {
+        objectId,
+        functionDeclaration: `function() {
+          const element = this;
+          ${DESCRIBE_ELEMENT_SCRIPT}
+          ${buildFillBody(value, submit)}
+        }`,
+        returnByValue: true,
+      }
+    )) as { result?: { value?: { element?: unknown } } };
+    const result = filled?.result?.value;
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      success: true,
+      mode: "fill",
+      value,
+      element: result?.element,
+    };
+  }
   const fillScript = buildElementLocatorScript(
     selector ?? null,
     text ?? null,
     false,
-    `const editable = element.matches(
-      'input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"], [contenteditable=""]'
-    );
-    if (!editable) {
-      throw new Error('Target element is not editable (expected input, textarea, or contenteditable)');
-    }
-    const value = ${JSON.stringify(value)};
-    if (element.matches('[contenteditable="true"], [contenteditable=""]')) {
-      element.textContent = value;
-    } else {
-      const proto = element.tagName === 'TEXTAREA'
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      if (setter) {
-        setter.call(element, value);
-      } else {
-        element.value = value;
-      }
-    }
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-    if (${JSON.stringify(submit)}) {
-      const form = element.closest('form');
-      if (form) {
-        form.requestSubmit();
-      } else {
-        element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      }
-    }
-    element.focus();
-    return {
-      element: {
-        tagName: element.tagName.toLowerCase(),
-        id: element.id || null,
-        text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
-      },
-    };`
+    buildFillBody(value, submit)
   );
   const result = (await webview.executeJavaScript(fillScript)) as {
     element: unknown;
@@ -448,6 +666,138 @@ const type = async (
     mode: "fill",
     value,
     element: result.element,
+  };
+};
+
+const UPLOAD_MARKER = "data-snow-upload";
+
+const uploadFile = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  args: BrowserMcpCommandArgs
+): Promise<unknown> => {
+  const files = Array.isArray(args.files)
+    ? args.files.filter((item): item is string => typeof item === "string")
+    : [];
+  if (files.length === 0) {
+    throw new Error("files must be a non-empty string array");
+  }
+  const webContentsId = webview.getWebContentsId();
+  const ref = optionalString(args, "ref");
+
+  if (ref) {
+    const backend = resolveAxRef(ref);
+    if (backend === null) {
+      throw new Error(
+        `Ref ${ref} is not in the current snapshot. Capture a new accessibility snapshot (browser-devtools action=ax) first.`
+      );
+    }
+    await window.snow.browserCdpCommand(webContentsId, "DOM.setFileInputFiles", {
+      backendNodeId: backend,
+      files,
+    });
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      success: true,
+      uploaded: files.length,
+      target: { ref },
+    };
+  }
+
+  // selector/text：定位并打临时标记，再经 CDP DOM 查询后注入文件。
+  await locateElementTarget(
+    webview,
+    args,
+    `if (!element.matches('input[type="file"]')) {
+      throw new Error('Target element is not a file input');
+    }
+    element.setAttribute('${UPLOAD_MARKER}', '1');
+    return {
+      x: 0,
+      y: 0,
+      element: {
+        tagName: 'input',
+        id: element.id || null,
+        text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
+      },
+    };`
+  );
+  try {
+    const doc = (await window.snow.browserCdpCommand(
+      webContentsId,
+      "DOM.getDocument",
+      { depth: -1, pierce: true }
+    )) as { root?: { nodeId?: number } };
+    const rootNodeId = doc?.root?.nodeId;
+    if (typeof rootNodeId !== "number") {
+      throw new Error("Failed to resolve the page document");
+    }
+    const query = (await window.snow.browserCdpCommand(
+      webContentsId,
+      "DOM.querySelector",
+      { nodeId: rootNodeId, selector: `[${UPLOAD_MARKER}="1"]` }
+    )) as { nodeId?: number };
+    if (typeof query?.nodeId !== "number" || query.nodeId === 0) {
+      throw new Error("Failed to locate the file input element");
+    }
+    await window.snow.browserCdpCommand(webContentsId, "DOM.setFileInputFiles", {
+      nodeId: query.nodeId,
+      files,
+    });
+  } finally {
+    await webview
+      .executeJavaScript(
+        `document.querySelector('[${UPLOAD_MARKER}="1"]')?.removeAttribute('${UPLOAD_MARKER}')`
+      )
+      .catch(() => {});
+  }
+  return {
+    ...(await currentPageMetadata(webview, instanceId)),
+    success: true,
+    uploaded: files.length,
+  };
+};
+
+const historyNavigation = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  direction: "back" | "forward"
+): Promise<unknown> => {
+  const canGo =
+    direction === "back" ? webview.canGoBack() : webview.canGoForward();
+  if (!canGo) {
+    throw new Error(`Cannot go ${direction}: no history entry`);
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`browser-${direction} timed out waiting for navigation`));
+    }, 10_000);
+    const handle = (): void => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      webview.removeEventListener("did-navigate", handle as EventListener);
+      webview.removeEventListener(
+        "did-navigate-in-page",
+        handle as EventListener
+      );
+      webview.removeEventListener("did-stop-loading", handle as EventListener);
+    };
+    webview.addEventListener("did-navigate", handle as EventListener);
+    webview.addEventListener("did-navigate-in-page", handle as EventListener);
+    webview.addEventListener("did-stop-loading", handle as EventListener);
+    if (direction === "back") {
+      webview.goBack();
+    } else {
+      webview.goForward();
+    }
+  });
+  return {
+    ...(await currentPageMetadata(webview, instanceId)),
+    success: true,
   };
 };
 
@@ -491,6 +841,285 @@ const screenshot = async (
   };
 };
 
+const wait = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  args: BrowserMcpCommandArgs
+): Promise<unknown> => {
+  const metadata = await currentPageMetadata(webview, instanceId);
+
+  // 固定时长等待
+  if (typeof args.time === "number") {
+    const waitTime = Math.min(Math.max(args.time, 100), 30_000);
+    await new Promise((resolve) => setTimeout(resolve, waitTime));
+    return { ...metadata, condition: "time", waitedMs: waitTime, success: true };
+  }
+
+  // 文本出现/消失、元素出现/消失等待：轮询页面，100ms 间隔
+  const text = optionalString(args, "text");
+  const textGone = optionalString(args, "textGone");
+  const selector = optionalString(args, "selector");
+  const selectorGone = optionalString(args, "selectorGone");
+  const condition = text
+    ? "text"
+    : textGone
+      ? "textGone"
+      : selector
+        ? "selector"
+        : "selectorGone";
+  const expected = text ?? textGone ?? selector ?? selectorGone;
+  if (!expected) {
+    throw new Error(
+      "One of time, text, textGone, selector, or selectorGone is required for browser-wait"
+    );
+  }
+  const timeoutMs =
+    typeof args.timeoutMs === "number" ? args.timeoutMs : 30_000;
+  const pollInterval = 100;
+  const startedAt = Date.now();
+  // selector 条件直接复用定位脚本的校验逻辑：无效 CSS 选择器视为不满足，
+  // 最终以超时失败返回（并携带提示），不会抛出未包装的异常。
+  const selectorQuery = (sel: string): string => `(() => {
+    try {
+      const element = document.querySelector(${JSON.stringify(sel)});
+      return element !== null;
+    } catch {
+      return false;
+    }
+  })()`;
+  const isSelectorCondition =
+    condition === "selector" || condition === "selectorGone";
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let satisfied: boolean;
+    if (isSelectorCondition) {
+      const found = (await webview.executeJavaScript(
+        selectorQuery(expected)
+      )) as boolean;
+      satisfied = condition === "selector" ? found : !found;
+    } else {
+      const pageText = await webview.executeJavaScript(
+        "String(document.body?.innerText || '')"
+      );
+      const found = pageText.includes(expected);
+      satisfied = condition === "text" ? found : !found;
+    }
+    if (satisfied) {
+      return {
+        ...metadata,
+        condition,
+        value: expected,
+        waitedMs: Date.now() - startedAt,
+        success: true,
+      };
+    }
+    if (Date.now() - startedAt >= timeoutMs) {
+      return {
+        ...metadata,
+        condition,
+        value: expected,
+        waitedMs: Date.now() - startedAt,
+        success: false,
+        error: `Timed out waiting for ${condition}: "${expected}"${
+          isSelectorCondition && condition === "selector"
+            ? " (element not found or selector is invalid)"
+            : ""
+        }`,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+  }
+};
+
+const pressKey = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  args: BrowserMcpCommandArgs
+): Promise<unknown> => {
+  const key = requiredString(args, "key");
+  const metadata = await currentPageMetadata(webview, instanceId);
+  webview.focus();
+
+  // 支持 "Control+a" / "Shift+ArrowDown" 形式的组合键
+  const parts = key.split("+");
+  const mainKey = parts.pop();
+  if (!mainKey) {
+    throw new Error("key must not be empty for browser-press_key");
+  }
+  // 按下修饰键
+  for (const modifier of parts) {
+    await webview.sendInputEvent({ type: "keyDown", keyCode: modifier });
+  }
+  await webview.sendInputEvent({ type: "keyDown", keyCode: mainKey });
+  await webview.sendInputEvent({ type: "char", keyCode: mainKey });
+  await webview.sendInputEvent({ type: "keyUp", keyCode: mainKey });
+  // 释放修饰键
+  for (const modifier of [...parts].reverse()) {
+    await webview.sendInputEvent({ type: "keyUp", keyCode: modifier });
+  }
+
+  return { ...metadata, success: true, key };
+};
+
+const hover = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  args: BrowserMcpCommandArgs
+): Promise<unknown> => {
+  const selector = optionalString(args, "selector");
+  const text = optionalString(args, "text");
+  const exact = args.exact === true;
+  const locateScript = buildElementLocatorScript(
+    selector ?? null,
+    text ?? null,
+    exact,
+    `const rect = element.getBoundingClientRect();
+    const x = Math.round(rect.left + rect.width / 2);
+    const y = Math.round(rect.top + rect.height / 2);
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) {
+      throw new Error('Hoverable element is outside the browser viewport');
+    }
+    return {
+      x,
+      y,
+      element: {
+        tagName: element.tagName.toLowerCase(),
+        id: element.id || null,
+        text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
+        href: element.href || null,
+      },
+    };`
+  );
+  const target = (await webview.executeJavaScript(locateScript)) as {
+    x: number;
+    y: number;
+    element: unknown;
+  };
+  const metadata = await currentPageMetadata(webview, instanceId);
+  webview.focus();
+  await webview.sendInputEvent({ type: "mouseMove", x: target.x, y: target.y });
+  return {
+    ...metadata,
+    success: true,
+    element: target.element,
+    position: { x: target.x, y: target.y },
+  };
+};
+
+const navigateHistory = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  direction: "back" | "forward"
+): Promise<unknown> => {
+  const canGo =
+    direction === "back" ? webview.canGoBack() : webview.canGoForward();
+  if (!canGo) {
+    const metadata = await currentPageMetadata(webview, instanceId);
+    return {
+      ...metadata,
+      success: false,
+      error: `Cannot go ${direction}: no ${direction} history available`,
+    };
+  }
+  if (direction === "back") {
+    webview.goBack();
+  } else {
+    webview.goForward();
+  }
+  // 等待导航或 3 秒兜底
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      webview.removeEventListener(
+        "did-stop-loading",
+        finish as EventListener
+      );
+      resolve();
+    };
+    const timer = setTimeout(finish, 3000);
+    webview.addEventListener("did-stop-loading", finish as EventListener);
+  });
+  const metadata = await currentPageMetadata(webview, instanceId);
+  return { ...metadata, success: true, direction };
+};
+
+const selectOption = async (
+  webview: Electron.WebviewTag,
+  instanceId: string,
+  args: BrowserMcpCommandArgs
+): Promise<unknown> => {
+  const selector = optionalString(args, "selector");
+  const text = optionalString(args, "text");
+  const exact = args.exact === true;
+  const values = args.values;
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("values is required and must be a non-empty array");
+  }
+  const stringValues = values.map(String);
+
+  const selectScript = buildElementLocatorScript(
+    selector ?? null,
+    text ?? null,
+    exact,
+    `if (element.tagName !== 'SELECT') {
+      throw new Error('Target element is not a <select> element');
+    }
+    const values = ${JSON.stringify(stringValues)};
+    const multiple = element.multiple;
+    if (!multiple) {
+      element.value = values[0];
+      // 处理 value 未命中时按 option text 匹配
+      if (element.selectedIndex === -1) {
+        for (const option of element.options) {
+          if (option.text === values[0] || option.textContent === values[0]) {
+            option.selected = true;
+            element.value = option.value;
+            break;
+          }
+        }
+      }
+    } else {
+      for (const option of element.options) {
+        option.selected = values.includes(option.value) ||
+          values.includes(option.text) ||
+          values.includes(option.textContent);
+      }
+    }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+    const selectedOptions = Array.from(element.selectedOptions).map((option) => ({
+      value: option.value,
+      text: option.text,
+    }));
+    return {
+      element: {
+        tagName: element.tagName.toLowerCase(),
+        id: element.id || null,
+        text: describe(element).slice(0, ${TEXT_PREVIEW_LENGTH}),
+        multiple,
+      },
+      selectedOptions,
+    };`
+  );
+  const result = (await webview.executeJavaScript(selectScript)) as {
+    element: unknown;
+    selectedOptions: unknown;
+  };
+  const metadata = await currentPageMetadata(webview, instanceId);
+  return {
+    ...metadata,
+    success: true,
+    values: stringValues,
+    element: result.element,
+    selectedOptions: result.selectedOptions,
+  };
+};
+
 const devtools = async (
   webview: Electron.WebviewTag,
   instanceId: string,
@@ -498,8 +1127,46 @@ const devtools = async (
   consoleMessages: readonly unknown[]
 ): Promise<unknown> => {
   const action = typeof args.action === "string" ? args.action : "snapshot";
+  if (action === "ax") {
+    const verbose = args.verbose === true;
+    const maxNodes = typeof args.maxNodes === "number" ? args.maxNodes : 200;
+    const raw = (await window.snow.browserCdpCommand(
+      webview.getWebContentsId(),
+      "Accessibility.getFullAXTree",
+      {}
+    )) as { nodes?: AxNode[] };
+    const nodes = Array.isArray(raw?.nodes) ? raw.nodes : [];
+    if (nodes.length === 0) {
+      throw new Error(
+        "Accessibility tree is empty; ensure the page is loaded and the browser debugger is available (close page DevTools if open)"
+      );
+    }
+    const result = serializeAxTree(nodes, { verbose, maxNodes });
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      accessibility: result.tree,
+      stats: {
+        totalNodes: result.totalNodes,
+        emitted: result.emitted,
+        truncated: result.truncated,
+      },
+      note: "Elements are addressable via [uid=...] with browser-click ref=<uid> or browser-type ref=<uid>. Take a new snapshot after the page changes.",
+    };
+  }
+  if (action === "trace") {
+    const durationMs =
+      typeof args.durationMs === "number" ? args.durationMs : 3000;
+    const result = await window.snow.browserTrace(
+      webview.getWebContentsId(),
+      durationMs
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      trace: result,
+    };
+  }
   if (action === "open") {
-    webview.openDevTools();
+    await window.snow.openBrowserDevTools(webview.getWebContentsId());
     return {
       ...(await currentPageMetadata(webview, instanceId)),
       opened: true,
@@ -528,15 +1195,189 @@ const devtools = async (
   if (action === "network") {
     const filter = optionalString(args, "filter");
     const limit = typeof args.limit === "number" ? args.limit : 50;
+    const includeStatic = args.static === true;
     const requests = await window.snow.browserNetworkRequests(
       webview.getWebContentsId(),
       filter,
-      limit
+      limit,
+      includeStatic
+    );
+    // 为每条记录附加序号，便于用 network_detail 按 index 查询
+    const numbered = (requests as unknown[]).map((record, index) => ({
+      index: index + 1,
+      record,
+    }));
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      requests: numbered,
+      total: numbered.length,
+      static: includeStatic,
+      note: "Use action=networkDetails with a requestId to fetch full headers and bodies (CDP records).",
+    };
+  }
+  if (action === "network_detail") {
+    const requestId = args.requestId;
+    if (typeof requestId !== "number") {
+      throw new Error(
+        "requestId is required for browser-devtools network_detail"
+      );
+    }
+    const record = await window.snow.browserNetworkRequest(requestId);
+    if (!record) {
+      return {
+        ...(await currentPageMetadata(webview, instanceId)),
+        found: false,
+        requestId,
+        error: `No network record found with id ${requestId}`,
+      };
+    }
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      found: true,
+      requestId,
+      request: record,
+    };
+  }
+  if (action === "network_clear") {
+    const result = await window.snow.browserNetworkClear(
+      webview.getWebContentsId()
     );
     return {
       ...(await currentPageMetadata(webview, instanceId)),
-      requests,
-      total: requests.length,
+      cleared: result.cleared,
+      success: true,
+    };
+  }
+  if (action === "networkDetails") {
+    const requestId = requiredString(args, "requestId");
+    const maxBodyBytes =
+      typeof args.maxBodyBytes === "number" ? args.maxBodyBytes : undefined;
+    const details = await window.snow.browserNetworkDetails(
+      webview.getWebContentsId(),
+      requestId,
+      maxBodyBytes
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      details,
+    };
+  }
+  if (action === "networkState") {
+    const state = requiredString(args, "state");
+    if (state !== "online" && state !== "offline") {
+      throw new Error("state must be online or offline for browser-devtools networkState");
+    }
+    const result = await window.snow.browserNetworkState(
+      webview.getWebContentsId(),
+      state === "offline"
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      state: result.state,
+    };
+  }
+  if (action === "route") {
+    const pattern = requiredString(args, "pattern");
+    const rule: BrowserRouteRule = {
+      pattern,
+      status: typeof args.status === "number" ? args.status : undefined,
+      body: typeof args.body === "string" ? args.body : undefined,
+      contentType:
+        typeof args.contentType === "string" ? args.contentType : undefined,
+      headers:
+        args.headers !== null &&
+        typeof args.headers === "object" &&
+        !Array.isArray(args.headers)
+          ? (args.headers as Record<string, string>)
+          : undefined,
+    };
+    // 同一 pattern 覆盖，其余规则保留；全量提交给主进程。
+    const rules = browserRouteRulesByInstance.get(instanceId) ?? [];
+    const existingIndex = rules.findIndex((item) => item.pattern === pattern);
+    if (existingIndex >= 0) {
+      rules[existingIndex] = rule;
+    } else {
+      rules.push(rule);
+    }
+    browserRouteRulesByInstance.set(instanceId, rules);
+    const result = await window.snow.browserRouteSet(
+      webview.getWebContentsId(),
+      rules
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      active: result.active,
+      rule: { pattern },
+    };
+  }
+  if (action === "routeClear") {
+    browserRouteRulesByInstance.delete(instanceId);
+    const result = await window.snow.browserRouteClear(
+      webview.getWebContentsId()
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      active: result.active,
+    };
+  }
+  if (action === "storageSave") {
+    const fileName =
+      typeof args.fileName === "string" && args.fileName.trim()
+        ? args.fileName.trim()
+        : undefined;
+    const result = await window.snow.browserStorageSave(
+      webview.getWebContentsId(),
+      fileName
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      storage: result,
+    };
+  }
+  if (action === "storageRestore") {
+    const fileName = requiredString(args, "fileName");
+    const result = await window.snow.browserStorageRestore(
+      webview.getWebContentsId(),
+      fileName
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      storage: result,
+    };
+  }
+  if (action === "cookies") {
+    const domain = optionalString(args, "domain");
+    const showValues = args.showValues === true;
+    const cookies = await window.snow.browserCookies(
+      webview.getWebContentsId(),
+      domain,
+      showValues
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      cookies,
+      total: cookies.length,
+      masked: !showValues,
+      ...(showValues
+        ? {
+            note: "WARNING: this output contains plaintext cookie values (sensitive credentials).",
+          }
+        : {}),
+    };
+  }
+  if (action === "cookieDelete") {
+    const name = requiredString(args, "name");
+    const domain = requiredString(args, "domain");
+    const result = await window.snow.browserCookieDelete(
+      webview.getWebContentsId(),
+      name,
+      domain
+    );
+    return {
+      ...(await currentPageMetadata(webview, instanceId)),
+      deleted: result.deleted,
+      name,
+      domain,
     };
   }
   if (action === "dialog") {
@@ -618,8 +1459,26 @@ export const executeBrowserMcpOperation = async (
       return type(webview, instanceId, args);
     case "screenshot":
       return screenshot(webview, instanceId, args);
+    case "wait":
+      return wait(webview, instanceId, args);
+    case "press_key":
+      return pressKey(webview, instanceId, args);
+    case "hover":
+      return hover(webview, instanceId, args);
+    case "navigate_back":
+      return navigateHistory(webview, instanceId, "back");
+    case "navigate_forward":
+      return navigateHistory(webview, instanceId, "forward");
+    case "select_option":
+      return selectOption(webview, instanceId, args);
     case "devtools":
       return devtools(webview, instanceId, args, consoleMessages);
+    case "upload-file":
+      return uploadFile(webview, instanceId, args);
+    case "back":
+      return historyNavigation(webview, instanceId, "back");
+    case "forward":
+      return historyNavigation(webview, instanceId, "forward");
     default:
       throw new Error(`Unsupported browser operation: ${operation}`);
   }

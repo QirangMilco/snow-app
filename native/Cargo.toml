@@ -1,6 +1,6 @@
 [package]
 name = "snow_native"
-version = "0.1.19"
+version = "0.1.21"
 edition = "2021"
 license = "MIT"
 
@@ -43,7 +43,6 @@ encoding_rs = "0.8"
 pdf-extract = "0.12"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 oxc = { version = "0.82", features = ["semantic", "ast_visit"] }
-oxc_miette = { package = "oxc-miette", version = "2.7" }
 tree-sitter = "0.25"
 tree-sitter-python = "0.25"
 tree-sitter-rust = "0.23"

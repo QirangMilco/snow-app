@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Download } from "lucide-react";
 import "katex/dist/katex.min.css";
 import MarkdownWorker from "./markdownWorker?worker";
 import type {
@@ -14,6 +16,7 @@ import {
   watchThemeForMermaid,
 } from "./mermaidRenderer";
 import { rightPanelEvents } from "../../../rightPanel/rightPanelEvents";
+import { downloadImageSrc } from "../../../../utils/imageDownload";
 
 /**
  * Singleton Web Worker that performs markdown-it + highlight.js rendering off
@@ -245,6 +248,23 @@ export const MarkdownBlock = memo(
 
     const containerRef = useRef<HTMLDivElement | null>(null);
 
+    // Markdown 图片灯箱：点击图片在放大视图中查看（复用生图工具灯箱样式）。
+    const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
+    // Esc 关闭灯箱
+    useEffect(() => {
+      if (!lightboxSrc) {
+        return;
+      }
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          setLightboxSrc(null);
+        }
+      };
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }, [lightboxSrc]);
+
     // During streaming, skip all mermaid operations entirely — only the code
     // view is shown. Once streaming ends (`streaming` flips to false), both
     // phases fire in a single pass to render every diagram at once. This
@@ -298,6 +318,19 @@ export const MarkdownBlock = memo(
         if (onFileLinkClick && isFileLinkHref(href)) {
           e.preventDefault();
           onFileLinkClick(href);
+          return;
+        }
+      }
+
+      // --- Markdown 图片点击放大 ---
+      // 复用生图工具灯箱体验：点击图片在放大视图中查看（本地/远程图均已是
+      // img-proxy:// URL）。在链接处理之后执行，保证 a 内的图片仍优先走链接逻辑。
+      const image = target.closest("img") as HTMLImageElement | null;
+      if (image) {
+        const src = image.currentSrc || image.src;
+        if (src) {
+          e.preventDefault();
+          setLightboxSrc(src);
           return;
         }
       }
@@ -374,12 +407,58 @@ export const MarkdownBlock = memo(
     }, [onFileLinkClick]);
 
     return (
-      <div
-        className={className}
-        dangerouslySetInnerHTML={{ __html: html }}
-        onClick={handleClick}
-        ref={containerRef}
-      />
+      <>
+        <div
+          className={className}
+          dangerouslySetInnerHTML={{ __html: html }}
+          onClick={handleClick}
+          ref={containerRef}
+        />
+        {lightboxSrc
+          ? createPortal(
+              <div
+                className="tool-call-imagegen-lightbox markdown-image-lightbox"
+                onClick={() => setLightboxSrc(null)}
+                role="presentation"
+              >
+                <img
+                  src={lightboxSrc}
+                  alt=""
+                  draggable={false}
+                  onClick={(event) => event.stopPropagation()}
+                />
+                <div
+                  className="tool-call-imagegen-lightbox-toolbar"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    className="tool-call-imagegen-download"
+                    onClick={() => {
+                      void downloadImageSrc(lightboxSrc).catch((error) => {
+                        console.error("[markdown] save image failed:", error);
+                      });
+                    }}
+                    title="下载"
+                    aria-label="下载"
+                  >
+                    <Download size={13} aria-hidden="true" />
+                    下载
+                  </button>
+                  <button
+                    type="button"
+                    className="tool-call-imagegen-lightbox-close"
+                    onClick={() => setLightboxSrc(null)}
+                    aria-label="关闭"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )
+          : null}
+      </>
     );
   }
 );

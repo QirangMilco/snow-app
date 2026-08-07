@@ -62,6 +62,19 @@ export const registerBrowserMcpInstance = (
       if (focusedInstanceId === instanceId) {
         focusedInstanceId = getFallbackInstanceId();
       }
+      // 实例在就绪前被关闭(如 create 命令等待期间用户关掉 tab):
+      // 立即 reject 挂起的 waiter 并清掉其超时定时器,避免定时器
+      // 悬挂到超时(多实例反复 create/close 会累积残留定时器)。
+      const waiters = instanceWaiters.get(instanceId);
+      if (waiters) {
+        for (const waiter of waiters) {
+          clearTimeout(waiter.timer);
+          waiter.reject(
+            new Error(`Browser instance was closed before it became ready: ${instanceId}`)
+          );
+        }
+        instanceWaiters.delete(instanceId);
+      }
     }
   };
 };

@@ -426,6 +426,11 @@ export function ApiSettingsFormFields({
               min={0}
               disabled={disabled}
             />
+            <small className="api-settings-hint-text">
+              {t("settings.apiMaxTokensHint", {
+                defaultValue: "Leave empty to omit this parameter from requests.",
+              })}
+            </small>
           </label>
         </div>
       </div>

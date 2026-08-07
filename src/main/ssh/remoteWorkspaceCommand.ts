@@ -131,7 +131,7 @@ export const buildRemoteWorkspaceUri = (
     : `${normalizedWorkspacePath}/${relativePath}`;
 };
 
-const buildSshConnectParams = (workspacePath: string): SshConnectParams => {
+export const buildSshConnectParams = (workspacePath: string): SshConnectParams => {
   const parsed = parseSshUrl(workspacePath);
   const credential = getSshCredential(
     parsed.host,

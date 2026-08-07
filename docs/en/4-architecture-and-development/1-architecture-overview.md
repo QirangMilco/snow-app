@@ -7,7 +7,7 @@
 
 | Layer | Technology | Notes |
 |-------|------------|-------|
-| Renderer | React 18 + TypeScript + Vite | UI, state (React Hooks), i18n (zh-CN/en/zh-TW) |
+| Renderer | React 19 + TypeScript + Vite | UI, state (React Hooks), i18n (zh-CN/en/zh-TW) |
 | Main | Electron 37 + TypeScript | Windows/lifecycle, IPC, system integration (PTY/SSH/updater/tray) |
 | Native | Rust + napi-rs | AI engine, MCP tools, SQLite storage, codebase indexing |
 | Database | SQLite (rusqlite, WAL) | Single file `~/.snowapp/snowapp.db` |
@@ -55,7 +55,7 @@
 
 ```
 React component
-  → window.snow.conversationApi.listChatConversations(dirId)
+  → window.snow.listChatConversations(dirId)
     → src/preload/modules/conversationApi.ts  (ipcRenderer.invoke)
       → src/main/ipc/handlers/conversationHandlers.ts  (ipcMain.handle)
         → native.conversations.listChatConversations(dirId)   ← nativeBridge Proxy
@@ -66,9 +66,16 @@ React component
 
 ### 3.2 Preload bridge (contextBridge)
 
-`src/preload/index.ts` spreads all `modules/*Api.ts` and exposes them via
-`contextBridge.exposeInMainWorld("snow", api)`. Types live in
-`src/preload/types/`; renderer imports types from `@preload`.
+`src/preload/index.ts` spreads the methods from the `modules/*Api.ts` objects and exposes them
+via `contextBridge.exposeInMainWorld("snow", api)`. Type definitions live in
+`src/preload/types/`; the renderer imports types from `@preload`.
+
+The flat `window.snow` API is currently composed from 15 API objects:
+`apiConfigApi`, `codexApi`, `configApi`, `conversationApi`, `gitApi`,
+`imageLibraryApi`, `importConfigApi`, `memoApi`, `personalizationApi`,
+`pluginsApi`, `ptyApi`, `sshApi`, `systemApi`, `windowApi`, and `workspaceApi`.
+Methods live directly under `window.snow`; they are not nested under those
+API object names.
 
 ### 3.3 Main → Rust gate (key mechanism)
 
@@ -109,6 +116,7 @@ matching WebContents; renderer hooks like `useAgentLoop` consume them.
 | `terminal.rs` | PTY terminal support |
 | `checkpoint.rs` | File-change checkpoints |
 | `updater.rs` | App update checks |
+| `images.rs` | Image library (list / read data URL / delete with session-reference rewrite / custom save dir) |
 | `sphere_layout.rs` | Codebase 3D sphere layout (visualization) |
 
 > `scripts/build-native.cjs` runs cargo build, then copies the artifact to
@@ -117,10 +125,14 @@ matching WebContents; renderer hooks like `useAgentLoop` consume them.
 ### 4.2 MCP layer (native/src/mcp/)
 
 - **servers/** — built-in MCP servers (the AI agent's toolset):
-  `bash` (command execution, supports detach/background), `browser`, `grep`,
-  `filesystem`, `codelens` (code diagnostics), `config` (config read/write),
-  `skills`, `skills_installer`, `sub_agents`, `todo`, `app_control`,
-  `codebase`, `remote_workspace` (SSH).
+  `filesystem`, `bash` (command execution, supports detach/background), `todo`,
+  `grep`, `websearch`, `browser`, `user_interaction` (blocking questions),
+  `sub_agents`, `codebase`, `codelens` (code symbol location), `app_control`,
+  `config` (config read/write), `terminal` (persistent PTY sessions),
+  `imagegen` (image generation), `skills` (dynamically registered),
+  `remote_workspace` (SSH); `skills_config` is the internal delegation for the
+  `config` server's skills scope (not a standalone registered server). See
+  "3-reference/2-builtin-tools-reference" for the full tool list.
 - **external/** — external MCP client (connects to user-configured servers).
 - **protocol/** — MCP protocol (JSON-RPC) implementation.
 - **privacy_mask/** — privacy masking (sensitive info filtering).
@@ -139,6 +151,14 @@ tool-call normalization happen at this layer.
 - `paths.rs` — `~/.snowapp` path resolution
 - `services/` — domain-split data access layer (37 modules; see the storage-locations doc)
 
+### 4.5 Prompts & hooks (native/src/prompt/, native/src/hooks/)
+
+- `prompt/` — system prompts: `system_prompt.rs` (base),
+  `plan_mode_system_prompt.rs` (Plan Mode), `goal_mode_system_prompt.rs`
+  (Goal Mode), `common.rs` (shared fragments).
+- `hooks/` — lifecycle hook execution (`execute_hooks`: beforeRequest,
+  beforeCompress, etc.; configure via "5-configure-hooks-and-subagents").
+
 ## 5. Main Process Modules (src/main/)
 
 | Module | Responsibility |
@@ -148,11 +168,14 @@ tool-call normalization happen at this layer.
 | `app/sessionProxy.ts` | AI session proxy (streaming event relay) |
 | `app/mainWindow.ts` | Main window creation & lifecycle |
 | `app/windowState.ts` | Window state persistence (userData/window-state.json) |
+| `app/storageReady.ts` | Storage-ready Promise (storageReady gate) |
 | `app/tray.ts` | System tray |
 | `app/themeBgProtocol.ts` | Custom protocol: background images / stream cursors |
 | `app/imageProxyProtocol.ts` | Image proxy protocol |
 | `app/ensureBuiltinSkills.ts` | Sync built-in skills/docs to ~/.snow/ |
-| `ipc/handlers/` | 15 IPC handler groups (see below) |
+| `ipc/handlers/` | 19 IPC handler groups (see below) |
+| `native/` | Native binding load & storageReady gate (nativeBridge.ts) |
+| `notification/` | System notifications (notificationManager.ts) |
 | `pty/` | PTY session management (Windows ConPTY / POSIX) |
 | `ssh/` | SSH connections, remote workspaces, remote Git |
 | `plugins/` | Plugin runtime (isolated worker + permission args) |
@@ -160,12 +183,15 @@ tool-call normalization happen at this layer.
 | `settings/` | Settings read/write (API configs, MCP, sensitive commands) |
 | `updater/` | App updates (macOS/Windows) |
 | `codex/` | Codex compatibility layer (third-party config import) |
+| `importConfig/` | Third-party config import (reversible transaction + environment discovery) |
+| `types/` · `utils/` | Shared types & utility functions |
 
 ### IPC handlers (src/main/ipc/handlers/)
 
-`apiConfigHandlers` · `browserNetworkRecorder` · `chatHandlers` ·
-`codexHandlers` · `configHandlers` · `conversationHandlers` ·
-`gitHandlers` · `importConfigHandlers` · `memoHandlers` ·
+`apiConfigHandlers` · `browserNetworkRecorder` · `browserStorageState` ·
+`browserTrace` · `chatHandlers` · `codexHandlers` · `configHandlers` ·
+`conversationHandlers` · `gitHandlers` · `imageHandlers` ·
+`imageLibraryHandlers` · `importConfigHandlers` · `memoHandlers` ·
 `nativeHandlers` · `notificationHandlers` · `personalizationHandlers` ·
 `sshHandlers` · `windowHandlers` · `workspaceHandlers`
 

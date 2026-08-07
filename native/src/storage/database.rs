@@ -1,5 +1,6 @@
 use std::{
-    path::Path,
+    fs,
+    path::{Path, PathBuf},
     sync::{Mutex, OnceLock},
     time::Duration,
     time::{SystemTime, UNIX_EPOCH},
@@ -98,9 +99,274 @@ pub fn open_connection(database_path: impl AsRef<Path>) -> rusqlite::Result<Conn
 }
 
 pub fn ensure_database(database_path: &Path) -> Result<()> {
-    open_connection(database_path)
+    // First attempt: normal open + schema creation.
+    match open_connection(database_path)
         .and_then(|connection| create_schema(&connection))
-        .map_err(|error| database_error(database_path, "initialize", error))
+    {
+        Ok(()) => Ok(()),
+        Err(first_error) => {
+            // If the error looks like corruption, attempt recovery before
+            // surfacing the failure to the caller. This prevents a permanent
+            // "database disk image is malformed" brick on startup.
+            if is_corruption_error(&first_error) {
+                eprintln!(
+                    "Snow App database corruption detected ({}). Attempting recovery...",
+                    first_error
+                );
+                match recover_database(database_path) {
+                    Ok(()) => {
+                        eprintln!("Snow App database recovered successfully.");
+                        Ok(())
+                    }
+                    Err(recover_error) => {
+                        // Recovery failed — surface the original error so the
+                        // caller sees the root cause, but log the recovery
+                        // failure too.
+                        eprintln!(
+                            "Snow App database recovery failed: {}",
+                            recover_error
+                        );
+                        Err(database_error(database_path, "initialize", first_error))
+                    }
+                }
+            } else {
+                Err(database_error(database_path, "initialize", first_error))
+            }
+        }
+    }
+}
+
+/// Returns true when a rusqlite error indicates the database file is
+/// physically corrupted (b-tree page corruption, invalid page numbers, etc.).
+fn is_corruption_error(error: &rusqlite::Error) -> bool {
+    // Check SQLite primary error code first — more reliable than string matching.
+    if let rusqlite::Error::SqliteFailure(err_code, _) = error {
+        match err_code.code {
+            rusqlite::ErrorCode::DatabaseCorrupt => return true,
+            rusqlite::ErrorCode::NotADatabase => return true,
+            _ => {}
+        }
+    }
+    // Fall back to string matching for edge cases where the error code
+    // doesn't directly map but the message mentions corruption.
+    let message = error.to_string().to_lowercase();
+    message.contains("malformed") || message.contains("not a database")
+}
+
+/// Attempts to recover data from a corrupted SQLite database by dumping all
+/// recoverable rows into a new database file, then atomically replacing the
+/// corrupted file. The old file is preserved with a `.corrupt.bak` suffix.
+fn recover_database(database_path: &Path) -> Result<()> {
+    let parent = database_path
+        .parent()
+        .ok_or_else(|| Error::from_reason("Cannot determine database parent directory"))?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let backup_path = parent.join(format!(
+        "{}.corrupt.{timestamp}.bak",
+        database_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("snowapp.db")
+    ));
+
+    let recovered_path = parent.join(format!(
+        "{}.recovered",
+        database_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("snowapp.db")
+    ));
+
+    // Remove any stale recovered file from a previous failed attempt.
+    let _ = fs::remove_file(&recovered_path);
+
+    // Open the corrupted database in read-only mode and run the SQLite
+    // `.recover` equivalent: iterate every table, dump CREATE + INSERT
+    // statements into the new database.
+    let recovered_conn = open_connection(&recovered_path)
+        .map_err(|e| Error::from_reason(format!("Failed to create recovered database: {e}")))?;
+
+    // Step 1: Use the corrupt database's schema. We open a separate read-only
+    // connection to iterate tables and copy data row by row, tolerating
+    // per-row errors (corrupted rows are simply skipped).
+    let read_only_conn = Connection::open_with_flags(
+        database_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| {
+        Error::from_reason(format!("Failed to open corrupted database read-only: {e}"))
+    })?;
+
+    // Set a busy timeout so we don't fail if another connection holds a lock.
+    let _ = read_only_conn.busy_timeout(Duration::from_secs(5));
+
+    // Build the schema in the recovered database first (using our own
+    // create_schema, which is idempotent with CREATE TABLE IF NOT EXISTS).
+    create_schema(&recovered_conn).map_err(|e| {
+        Error::from_reason(format!("Failed to create schema in recovered database: {e}"))
+    })?;
+
+    // Copy data from each table.
+    let table_names: Vec<String> = read_only_conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .map_err(|e| Error::from_reason(format!("Failed to list tables: {e}")))?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|e| Error::from_reason(format!("Failed to query table names: {e}")))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    for table_name in &table_names {
+        // Skip internal tables.
+        if table_name.starts_with("sqlite_") {
+            continue;
+        }
+
+        // Read column names for this table from the corrupted database.
+        let columns_result: rusqlite::Result<Vec<String>> = read_only_conn
+            .prepare(&format!("SELECT * FROM \"{table_name}\" LIMIT 0"))
+            .and_then(|stmt| {
+                let count = stmt.column_count();
+                Ok((0..count)
+                    .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+                    .collect())
+            });
+
+        let columns = match columns_result {
+            Ok(cols) if !cols.is_empty() => cols,
+            _ => continue, // Can't determine columns, skip this table.
+        };
+
+        let column_list = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // Read all rows from the corrupted database, tolerating errors.
+        let select_result = read_only_conn.prepare(&format!("SELECT {column_list} FROM \"{table_name}\""));
+        
+        if let Ok(mut select_stmt) = select_result {
+            // We iterate rows, skipping any that trigger corruption errors.
+            let column_count = columns.len();
+            let mut recovered_count = 0u64;
+            let mut skipped_count = 0u64;
+
+            // Use query_map for clean rows, but fall back to manual iteration
+            // so we can continue past errors.
+            let rows_result = select_stmt.query([]);
+
+            if let Ok(mut rows) = rows_result {
+                loop {
+                    match rows.next() {
+                        Ok(Some(row)) => {
+                            // Read each column value, trying multiple types
+                            // to handle diverse column types gracefully.
+                            let mut values: Vec<String> = Vec::with_capacity(column_count);
+                            for i in 0..column_count {
+                                let cell = row.get::<_, rusqlite::types::Value>(i);
+                                let formatted = match cell {
+                                    Ok(rusqlite::types::Value::Null) | Err(_) => "NULL".to_string(),
+                                    Ok(rusqlite::types::Value::Integer(v)) => v.to_string(),
+                                    Ok(rusqlite::types::Value::Real(v)) => v.to_string(),
+                                    Ok(rusqlite::types::Value::Text(s)) => {
+                                        format!("'{}'", s.replace('\'', "''"))
+                                    }
+                                    Ok(rusqlite::types::Value::Blob(bytes)) => {
+                                        let hex: String =
+                                            bytes.iter().map(|b| format!("{b:02x}")).collect();
+                                        format!("X'{hex}'")
+                                    }
+                                };
+                                values.push(formatted);
+                            }
+
+                            let value_list = values.join(", ");
+                            let insert_sql = format!(
+                                "INSERT OR IGNORE INTO \"{table_name}\" ({column_list}) VALUES ({value_list})"
+                            );
+
+                            if let Err(e) = recovered_conn.execute(&insert_sql, []) {
+                                eprintln!(
+                                    "Recovery: failed to insert row into {table_name}: {e}"
+                                );
+                                skipped_count += 1;
+                            } else {
+                                recovered_count += 1;
+                            }
+                        }
+                        Ok(None) => break, // End of cursor.
+                        Err(e) => {
+                            // Row read error — likely corruption. Log and
+                            // try to continue to the next row.
+                            eprintln!(
+                                "Recovery: skipping corrupted row in {table_name}: {e}"
+                            );
+                            skipped_count += 1;
+                            // If the error is fatal (cursor is dead), break.
+                            if e.to_string().to_lowercase().contains("malformed") {
+                                break;
+                            }
+                            // For non-fatal errors, the cursor may still be
+                            // usable — but rusqlite doesn't let us resume
+                            // easily, so break to avoid an infinite loop.
+                            break;
+                        }
+                    }
+                }
+
+                eprintln!(
+                    "Recovery: table '{table_name}' — {recovered_count} rows recovered, {skipped_count} skipped"
+                );
+            }
+        }
+    }
+
+    // Run post-schema migrations on the recovered database to ensure it has
+    // all columns/indexes the current schema expects.
+    migrations::run_post_schema_migrations(&recovered_conn).map_err(|e| {
+        Error::from_reason(format!("Failed to run migrations on recovered database: {e}"))
+    })?;
+
+    let _ = recovered_conn.pragma_update(None, "user_version", 26);
+    drop(recovered_conn);
+    drop(read_only_conn);
+
+    // Remove WAL/SHM sidecar files of the corrupted database.
+    let wal_path = PathBuf::from(format!("{}-wal", database_path.display()));
+    let shm_path = PathBuf::from(format!("{}-shm", database_path.display()));
+    let _ = fs::remove_file(&wal_path);
+    let _ = fs::remove_file(&shm_path);
+
+    // Atomically replace the corrupted database with the recovered one.
+    // First, rename the corrupted file to a backup.
+    fs::rename(database_path, &backup_path).map_err(|e| {
+        Error::from_reason(format!(
+            "Failed to back up corrupted database to '{}': {e}",
+            backup_path.display()
+        ))
+    })?;
+
+    // Then move the recovered file into place.
+    fs::rename(&recovered_path, database_path).map_err(|e| {
+        // If the rename fails, try to restore the backup so we don't leave
+        // the user with no database at all.
+        let _ = fs::rename(&backup_path, database_path);
+        Error::from_reason(format!(
+            "Failed to move recovered database into place: {e}"
+        ))
+    })?;
+
+    eprintln!(
+        "Recovery complete. Corrupted database backed up to '{}'",
+        backup_path.display()
+    );
+
+    Ok(())
 }
 
 fn create_schema(connection: &Connection) -> rusqlite::Result<()> {

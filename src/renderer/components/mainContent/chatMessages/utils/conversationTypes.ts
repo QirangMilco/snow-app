@@ -48,6 +48,11 @@ export type HookExecutionRecord = {
   blockMessage?: string | null;
   /** Timestamp (epoch ms) when the hook execution completed. */
   timestamp: number;
+  /** When the hook is bound to a specific tool call (e.g. beforeSubAgentStart
+   *  while a sub-agent activation runs, onSubAgentComplete when it finishes),
+   *  the tool call's interactionId.  The renderer uses this to attach the
+   *  hook record to the matching tool card instead of the message footer. */
+  toolCallInteractionId?: string;
   /** When true, the hook returned a decision JSON and the user must
    *  approve or reject the action before the AI loop can continue. */
   pendingDecision?: boolean;

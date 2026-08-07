@@ -7,10 +7,13 @@ import {
   FolderOpen,
   Loader2,
   MessageSquareText,
+  Monitor,
   Plug,
   Puzzle,
   RefreshCw,
+  Server,
   Sparkles,
+  Terminal,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,11 +25,13 @@ import type {
   ImportProvider,
   ImportSource as DiscoveredImportSource,
 } from "../../../preload";
+import type { WorkspaceDirectoryRecord } from "../../../preload";
 import { useI18n } from "../../i18n";
 import { AutoDismissNotice } from "../AutoDismissNotice";
 import { PluginsSettingsPanel } from "./PluginsSettingsPanel";
 
 type ImportSettingsPanelProps = {
+  activeDirectory?: WorkspaceDirectoryRecord | null;
   onClose?: () => void;
 };
 
@@ -191,6 +196,14 @@ const summaryFor = (
   ];
 };
 
+type EnvironmentKind = "local" | "wsl" | "ssh";
+
+const environmentIcon = (kind: EnvironmentKind): typeof Plug => {
+  if (kind === "wsl") return Terminal;
+  if (kind === "ssh") return Server;
+  return Monitor;
+};
+
 function CandidateRow({
   candidate,
   checked,
@@ -207,6 +220,7 @@ function CandidateRow({
     .map((source) => sourceLabels[source.provider])
     .join(", ");
   const reason = candidate.unsupportedReason;
+  const environmentLabel = candidate.environmentLabel ?? "";
   return (
     <div
       className={`import-candidate-row ${checked ? "selected" : ""} ${
@@ -231,7 +245,10 @@ function CandidateRow({
       <div className="import-candidate-main">
         <strong title={candidate.logicalId}>{candidate.logicalId}</strong>
         <span title={candidate.originPath}>{candidate.originPath}</span>
-        <small>{sourceText}</small>
+        <small>
+          {sourceText}
+          {environmentLabel ? ` · ${environmentLabel}` : ""}
+        </small>
       </div>
       <span
         className={`import-candidate-status import-candidate-status-${candidate.status}`}
@@ -246,9 +263,11 @@ function CandidateRow({
 }
 
 export function ImportSettingsPanel({
+  activeDirectory,
   onClose,
 }: ImportSettingsPanelProps): React.JSX.Element {
   const { t } = useI18n();
+  const activeDirectoryId = activeDirectory?.directoryId;
   const [activeTab, setActiveTab] = useState<ThirdPartyTab>("import");
   const [activeSource, setActiveSource] = useState<ImportProvider>("codex");
   const [discovery, setDiscovery] = useState<ImportDiscovery | null>(null);
@@ -263,7 +282,7 @@ export function ImportSettingsPanel({
     setError("");
     setLastResult(null);
     try {
-      const next = await window.snow.discoverImportCandidates();
+      const next = await window.snow.discoverImportCandidates(activeDirectoryId);
       setDiscovery(next);
       setSelectedIds(new Set());
     } catch (loadError) {
@@ -277,7 +296,7 @@ export function ImportSettingsPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [t]);
+  }, [activeDirectoryId, t]);
 
   // Discover once on mount. Re-running the full provider scan on every tab
   // switch back to "import" was expensive (it walks every workspace project
@@ -345,10 +364,11 @@ export function ImportSettingsPanel({
     try {
       const result = await window.snow.commitImportSelection({
         candidateIds: [...selectedIds],
+        ...(activeDirectoryId ? { activeDirectoryId } : {}),
       });
       setLastResult(result);
       setSelectedIds(new Set());
-      const refreshed = await window.snow.discoverImportCandidates();
+      const refreshed = await window.snow.discoverImportCandidates(activeDirectoryId);
       setDiscovery(refreshed);
     } catch (commitError) {
       setError(
@@ -623,6 +643,32 @@ export function ImportSettingsPanel({
                       </span>
                     </div>
                     <div className="import-settings-path-list">
+                      {source?.environments && source.environments.length > 1 ? (
+                        <div className="import-settings-environments">
+                          {source.environments.map((environment) => {
+                            const EnvIcon = environmentIcon(
+                              environment.kind as EnvironmentKind
+                            );
+                            return (
+                              <div
+                                className="import-settings-environment-row"
+                                key={environment.environmentId}
+                              >
+                                <EnvIcon size={13} aria-hidden="true" />
+                                <span className="import-settings-environment-label">
+                                  {environment.label}
+                                </span>
+                                <code title={environment.home}>
+                                  {environment.home}
+                                </code>
+                                {environment.found ? (
+                                  <CheckCircle2 size={12} aria-hidden="true" />
+                                ) : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                       <div className="import-settings-path-row">
                         <FolderOpen size={14} aria-hidden="true" />
                         <span>

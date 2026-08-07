@@ -21,6 +21,13 @@ pub struct ConversationContextRequest<'a> {
     pub max_context_tokens: Option<i32>,
     pub directory_id: Option<&'a str>,
     pub context_compaction: bool,
+    /// Internal auto-compaction resume mode: the latest `context_compaction`
+    /// boundary message already persisted in the database is the current
+    /// context (loaded by `load_context_messages`), so the caller-supplied
+    /// `messages` are treated as a placeholder and never sent to the API nor
+    /// persisted as normal user messages. Prevents the compaction handoff
+    /// from being injected twice into the resume request.
+    pub resume_after_compaction: bool,
     /// When true, skip loading conversation history and injecting the built-in
     /// system prompt. Used by lightweight single-shot completions such as the
     /// AI commit-message generator.

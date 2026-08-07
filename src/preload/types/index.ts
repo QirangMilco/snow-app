@@ -15,3 +15,4 @@ export type * from "./codex";
 export type * from "./importConfig";
 export type * from "./plugins";
 export type * from "./imageLibrary";
+export type * from "./ide";

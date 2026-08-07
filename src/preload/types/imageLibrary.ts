@@ -12,3 +12,10 @@ export type ImageLibraryRecord = {
   provider: string;
   createdAt: string;
 };
+
+/** 图库目录迁移进度 */
+export type ImageLibraryMigrationProgress = {
+  copied: number;
+  total: number;
+  done: boolean;
+};

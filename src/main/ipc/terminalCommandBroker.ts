@@ -5,6 +5,7 @@ import type {
   TerminalCommandRequest,
   TerminalCommandResponse,
 } from "../native/types";
+import { safeSend } from "../utils/safeSend";
 
 const TERMINAL_COMMAND_CHANNEL = "terminal:command";
 const TERMINAL_COMMAND_RESPONSE_CHANNEL = "terminal:command-response";
@@ -68,7 +69,7 @@ export const dispatchTerminalCommand = async (
     }, TERMINAL_COMMAND_TIMEOUT_MS);
 
     pendingCommands.set(commandId, { resolve, reject, timer });
-    renderer.send(TERMINAL_COMMAND_CHANNEL, request);
+    safeSend(renderer, TERMINAL_COMMAND_CHANNEL, request);
   });
 };
 

@@ -1,38 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-/// Severity levels for diagnostics, compatible with LSP convention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DiagnosticSeverity {
-    Error,
-    Warning,
-    Info,
-    Hint,
-}
-
-impl DiagnosticSeverity {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DiagnosticSeverity::Error => "error",
-            DiagnosticSeverity::Warning => "warning",
-            DiagnosticSeverity::Info => "info",
-            DiagnosticSeverity::Hint => "hint",
-        }
-    }
-}
-
-/// A single diagnostic item produced by the analyzer.
-#[derive(Debug, Clone, Serialize)]
-pub struct DiagnosticItem {
-    pub severity: String,
-    pub message: String,
-    pub start_line: u32,
-    pub end_line: u32,
-    pub start_column: u32,
-    pub end_column: u32,
-    pub source: String,
-    pub code: Option<String>,
-}
+use serde::Serialize;
 
 /// A symbol definition or reference location.
 #[derive(Debug, Clone, Serialize)]
@@ -122,7 +88,6 @@ impl SymbolKind {
 pub struct AnalyzedFile {
     pub file_path: String,
     pub source_text: String,
-    pub diagnostics: Vec<DiagnosticItem>,
     pub symbols: Vec<SymbolInfo>,
     pub references: Vec<(String, ReferenceInfo)>,
     pub unresolved_references: Vec<(String, ReferenceInfo)>,

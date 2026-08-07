@@ -426,6 +426,12 @@ export type WorkspaceDirectoryRecord = WorkspaceDirectoryInput & {
   updatedAt: string;
 };
 
+export type IdeInfo = {
+  id: string;
+  name: string;
+  executable: string;
+};
+
 export type FileSearchResult = {
   path: string;
   relativePath: string;
@@ -689,6 +695,13 @@ export type ImageLibraryRecord = {
   createdAt: string;
 };
 
+/** 图库目录迁移进度 */
+export type ImageLibraryMigrationProgress = {
+  copied: number;
+  total: number;
+  done: boolean;
+};
+
 export type UserMessageSummary = {
   id: string;
   content: string;
@@ -733,6 +746,13 @@ export type ResponsesApiRequest = {
   directoryId?: string;
   checkpointId?: string;
   contextCompaction?: boolean;
+  /**
+   * Internal auto-compaction resume mode: the compaction handoff is already
+   * persisted as the latest `context_compaction` boundary, so `messages` is a
+   * placeholder that must not be re-injected into the payload nor persisted
+   * as normal user messages.
+   */
+  resumeAfterCompaction?: boolean;
   subAgentToolsJson?: string;
   subAgentConfigProfile?: string;
   skipContext?: boolean;
@@ -1020,12 +1040,6 @@ export type NativeBridge = {
   ) => Promise<void>;
   getYoloMode: () => Promise<boolean>;
   setYoloMode: (enabled: boolean) => Promise<void>;
-  getPlanMode: () => Promise<boolean>;
-  setPlanMode: (enabled: boolean) => Promise<void>;
-  getGoalMode: () => Promise<boolean>;
-  setGoalMode: (enabled: boolean) => Promise<void>;
-  getGoalModeTokenBudget: () => Promise<number>;
-  setGoalModeTokenBudget: (budget: number) => Promise<void>;
   getConversationModes: (
     conversationId: string
   ) => Promise<ConversationModesResult>;
@@ -1128,6 +1142,8 @@ export type NativeBridge = {
   listWorkspaceDirectories: () => Promise<WorkspaceDirectoryRecord[]>;
   upsertWorkspaceDirectory: (item: WorkspaceDirectoryInput) => Promise<void>;
   activateWorkspaceDirectory: (directoryId: string) => Promise<void>;
+  listInstalledIdes: () => Promise<IdeInfo[]>;
+  openInIde: (ideId: string, projectPath: string) => Promise<void>;
   reorderWorkspaceDirectories: (
     items: WorkspaceDirectoryInput[]
   ) => Promise<void>;
@@ -1419,6 +1435,10 @@ export type NativeBridge = {
     repoPath: string,
     hash: string
   ) => Promise<GitCommitFile[]>;
+  getCommitDiff: (
+    repoPath: string,
+    hash: string
+  ) => Promise<GitDiffResult>;
   discoverGitRepos: (rootPath: string) => Promise<GitRepoInfo[]>;
   startGitWatch: (
     repoPath: string,
@@ -1507,4 +1527,12 @@ export type NativeBridge = {
   deleteImageLibraryImage: (id: string) => Promise<void>;
   countConversationImages: (conversationIds: string[]) => Promise<number>;
   deleteConversationImages: (conversationIds: string[]) => Promise<number>;
+  /** 准备图库迁移：校验目标目录并写入迁移日志；返回待迁移图片数量（0 表示无需迁移） */
+  prepareImageLibraryMigration: (targetDir: string) => Promise<number>;
+  /** 复制下一批图库文件并返回迁移进度 */
+  migrateImageLibraryChunk: () => Promise<ImageLibraryMigrationProgress>;
+  /** 提交迁移：写入新目录设置并清理旧根目录文件 */
+  commitImageLibraryMigration: () => Promise<void>;
+  /** 回滚迁移：删除已复制到新目录的文件并移除日志（幂等） */
+  rollbackImageLibraryMigration: () => Promise<void>;
 };

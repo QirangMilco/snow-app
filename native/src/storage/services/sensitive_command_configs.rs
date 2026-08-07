@@ -14,7 +14,10 @@ struct PresetSensitiveCommand {
 }
 
 const PRESET_SENSITIVE_COMMANDS: &[PresetSensitiveCommand] = &[
-    PresetSensitiveCommand { command_id: "rm", pattern: "rm ", description: "Delete files or directories (rm, rm -rf, etc.)", enabled: true },
+    // rm 必须是独立命令词（前一个字符不是 `-` 或词字符），且后跟至少一个
+    // 参数，才可能产生删除行为。旧规则 "rm " 无词边界，会误匹配 arm64、
+    // warm、--rm、--format 等任意包含 rm 的子串。
+    PresetSensitiveCommand { command_id: "rm", pattern: r"(?:^|[^-\w])rm\s+\S", description: "Delete files or directories (rm, rm -rf, etc.)", enabled: true },
     PresetSensitiveCommand { command_id: "rmdir", pattern: "rmdir ", description: "Remove directories", enabled: true },
     PresetSensitiveCommand { command_id: "unlink", pattern: "unlink ", description: "Delete files using unlink command", enabled: true },
     PresetSensitiveCommand { command_id: "mv-to-trash", pattern: "mv * /tmp", description: "Move files to trash/tmp (potential data loss)", enabled: false },
@@ -94,6 +97,19 @@ pub fn delete_sensitive_command_config(
 }
 
 fn seed_defaults_with_connection(connection: &Connection) -> rusqlite::Result<()> {
+    // 迁移：旧版内置 rm 规则的正则 "rm " 无词边界，会误匹配 arm64、warm、
+    // --rm、--format 等任意包含 "rm " 的子串。仅当该预设行仍保留旧 pattern
+    // （即用户未手动编辑过 pattern）时才升级，用户自定义的 pattern 不受影响。
+    connection.execute(
+        "UPDATE sensitive_command_configs
+            SET pattern = ?2,
+                updated_at = datetime('now', 'localtime')
+          WHERE command_id = ?1
+            AND is_preset = 1
+            AND pattern = ?3",
+        params!["rm", r"(?:^|[^-\w])rm\s+\S", "rm "],
+    )?;
+
     for (index, command) in PRESET_SENSITIVE_COMMANDS.iter().enumerate() {
         connection.execute(
             "INSERT OR IGNORE INTO sensitive_command_configs (

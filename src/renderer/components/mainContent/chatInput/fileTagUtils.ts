@@ -47,6 +47,20 @@ export type TextSnippetTag = {
   charCount: number;
 };
 
+export type ReviewTag = {
+  /** 完整 review prompt（编码时以 base64 存入标签，避免 diff 中必然
+   *  出现的 `@@` hunk 头破坏标签终止符） */
+  prompt: string;
+  /** 摘要标签，用于 chip 显示 */
+  summary: string;
+  /** 字符数 */
+  charCount: number;
+  /** 当前分支（可选，用于 chip title） */
+  branch?: string;
+  /** 仓库路径（可选） */
+  repoPath?: string;
+};
+
 /**
  * 自定义剪贴板 MIME 类型：应用内复制/剪切选区时携带编辑区的完整
  * 编码内容（含 @@file:...@@ 等 chip 标签），粘贴时优先解析该格式，
@@ -60,7 +74,8 @@ export type ContentSegment =
   | { type: "image"; tag: ImageTag }
   | { type: "commit"; tag: CommitTag }
   | { type: "change"; tag: ChangeTag }
-  | { type: "text-snippet"; tag: TextSnippetTag };
+  | { type: "text-snippet"; tag: TextSnippetTag }
+  | { type: "review"; tag: ReviewTag };
 
 /**
  * 将行号数组格式化为紧凑的字符串表示，连续区间合并为范围。
@@ -165,6 +180,45 @@ export const encodeTextSnippetTag = (tag: TextSnippetTag): string =>
   })}@@`;
 
 /**
+ * UTF-8 字符串转 base64。btoa 只能处理 Latin-1 字符，中文等多字节
+ * 文本需先用 TextEncoder 转为字节再编码。
+ */
+const utf8ToBase64 = (str: string): string => {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
+/** base64 还原为 UTF-8 字符串（与 utf8ToBase64 互逆）。 */
+const base64ToUtf8 = (base64: string): string => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new TextDecoder().decode(bytes);
+};
+
+/**
+ * 将 Review 生成的完整审查提示词编码为 review 标签。
+ *
+ * prompt 字段使用 base64 编码：git diff 的 hunk 头（`@@ -1,5 +1,5 @@`）
+ * 几乎必然包含 `@@`，直接 JSON 内嵌会被解析器误判为标签终止符；
+ * base64 字符集不含 `@@`，可安全承载任意内容。
+ */
+export const encodeReviewTag = (tag: ReviewTag): string =>
+  `@@review:${JSON.stringify({
+    prompt: utf8ToBase64(tag.prompt),
+    summary: tag.summary,
+    charCount: tag.charCount,
+    branch: tag.branch,
+    repoPath: tag.repoPath,
+  })}@@`;
+
+/**
  * 根据原始文本生成一个简短的摘要标签，用于 chip 显示。
  *
  * 跳过过短或纯符号的行（如 "{", "}", ">", "<?"），从多行累积
@@ -207,7 +261,7 @@ export const buildTextSnippetSummary = (text: string, maxLen = 30): string => {
 
 export const parseContentSegments = (content: string): ContentSegment[] => {
   const segments: ContentSegment[] = [];
-  const regex = /@@(file|dir|image|commit|change|text-snippet):(.+?)@@/g;
+  const regex = /@@(file|dir|image|commit|change|text-snippet|review):(.+?)@@/g;
   let lastIndex = 0;
   let imageCounter = 0;
   let match: RegExpExecArray | null;
@@ -231,6 +285,26 @@ export const parseContentSegments = (content: string): ContentSegment[] => {
             content: data.content ?? "",
             summary: data.summary ?? "text",
             charCount: typeof data.charCount === "number" ? data.charCount : (data.content ?? "").length,
+          },
+        });
+      } catch {
+        segments.push({ type: "text", content: match[0] });
+      }
+    } else if (kind === "review") {
+      try {
+        const data = JSON.parse(value) as Partial<ReviewTag>;
+        const prompt = data.prompt ? base64ToUtf8(data.prompt) : "";
+        segments.push({
+          type: "review",
+          tag: {
+            prompt,
+            summary: data.summary ?? "review",
+            charCount:
+              typeof data.charCount === "number"
+                ? data.charCount
+                : prompt.length,
+            branch: data.branch,
+            repoPath: data.repoPath,
           },
         });
       } catch {
@@ -425,6 +499,24 @@ export const createTextSnippetChipHtml = (tag: TextSnippetTag): string => {
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
 
+export const createReviewChipHtml = (tag: ReviewTag): string => {
+  const reviewData = escapeHtml(
+    JSON.stringify({
+      prompt: utf8ToBase64(tag.prompt),
+      summary: tag.summary,
+      charCount: tag.charCount,
+      branch: tag.branch,
+      repoPath: tag.repoPath,
+    })
+  );
+  const displayName = `${tag.summary} (${tag.charCount} chars)`;
+  return `<span class="file-chip review-chip" contenteditable="false" data-review-tag="true" data-review-data="${reviewData}" title="${escapeHtml(
+    displayName
+  )}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></svg></span><span class="file-chip-name">${escapeHtml(
+    tag.summary
+  )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
+};
+
 /**
  * 将内容片段列表渲染为可插入编辑区的 HTML：纯文本做 HTML 转义
  * （换行转为 <br>），各类标签转换为对应 chip。用于剪贴板粘贴、
@@ -448,6 +540,9 @@ export const buildSegmentsHtml = (segments: ContentSegment[]): string =>
       if (segment.type === "text-snippet") {
         return createTextSnippetChipHtml(segment.tag);
       }
+      if (segment.type === "review") {
+        return createReviewChipHtml(segment.tag);
+      }
       return createChipHtml(segment.tag);
     })
     .join("");
@@ -458,6 +553,7 @@ type ChipSerializers = {
   commit: (tag: CommitTag) => string;
   change: (tag: ChangeTag) => string;
   textSnippet: (tag: TextSnippetTag) => string;
+  review: (tag: ReviewTag) => string;
 };
 
 const readEditableContentWith = (
@@ -532,6 +628,25 @@ const readEditableContentWith = (
         } catch {
           // Ignore malformed text-snippet data
         }
+      } else if (elem.dataset.reviewTag === "true") {
+        try {
+          const data = JSON.parse(
+            elem.dataset.reviewData || "{}"
+          ) as Partial<ReviewTag>;
+          const prompt = data.prompt ? base64ToUtf8(data.prompt) : "";
+          result += serializers.review({
+            prompt,
+            summary: data.summary ?? "review",
+            charCount:
+              typeof data.charCount === "number"
+                ? data.charCount
+                : prompt.length,
+            branch: data.branch,
+            repoPath: data.repoPath,
+          });
+        } catch {
+          // Ignore malformed review data
+        }
       } else if (elem.tagName === "BR") {
         result += "\n";
       } else {
@@ -558,6 +673,7 @@ export const readEditableContent = (el: HTMLElement): string =>
     commit: encodeCommitTag,
     change: encodeChangeTag,
     textSnippet: encodeTextSnippetTag,
+    review: encodeReviewTag,
   });
 
 /**
@@ -578,6 +694,7 @@ export const readEditableContentAsPlainText = (el: HTMLElement): string =>
     commit: (tag) => tag.shortHash,
     change: (tag) => tag.path,
     textSnippet: (tag) => tag.content,
+    review: (tag) => tag.summary,
   });
 
 export const insertHtmlAtSelection = (html: string): void => {

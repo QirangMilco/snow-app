@@ -11,7 +11,10 @@ import {
   focusBrowserMcpInstance,
   registerBrowserMcpInstance,
 } from "./browser/browserMcpController";
-import { executeBrowserMcpOperation } from "./browser/browserMcpOperations";
+import {
+  clearBrowserRouteRulesForInstance,
+  executeBrowserMcpOperation,
+} from "./browser/browserMcpOperations";
 
 export type BrowserPanelContentProps = {
   instanceId: string;
@@ -67,6 +70,11 @@ export const BrowserPanelContent = ({
 }: BrowserPanelContentProps): React.JSX.Element => {
   const webviewRef = useRef<Electron.WebviewTag | null>(null);
   const consoleMessagesRef = useRef<unknown[]>([]);
+  // onTitleChange 由 RightPanel 内联传入,每次父组件 render 都是新引用。
+  // 通过 ref 持有,事件监听 effect 只需依赖 instanceId,监听器只绑定一次,
+  // 避免多个浏览器实例时每次父组件重渲染都反复卸载/重建 webview 监听器。
+  const onTitleChangeRef = useRef(onTitleChange);
+  onTitleChangeRef.current = onTitleChange;
   const { homepage, loaded, setHomepage } = useBrowserHomepage();
   // When an explicit initialUrl is provided, use it immediately. Otherwise,
   // leave the address bar and webview src empty until the homepage has been
@@ -133,7 +141,11 @@ export const BrowserPanelContent = ({
           return result;
         })
     );
-    return unregister;
+    return () => {
+      unregister();
+      // 实例卸载时清理其累积的路由 mock 规则,避免残留规则影响其他实例。
+      clearBrowserRouteRulesForInstance(instanceId);
+    };
   }, [instanceId]);
 
   useEffect(() => {
@@ -178,8 +190,8 @@ export const BrowserPanelContent = ({
     const handlePageTitleUpdated = (
       e: Electron.PageTitleUpdatedEvent
     ): void => {
-      if (onTitleChange && e.title) {
-        onTitleChange(e.title);
+      if (onTitleChangeRef.current && e.title) {
+        onTitleChangeRef.current(e.title);
       }
     };
 
@@ -276,8 +288,33 @@ export const BrowserPanelContent = ({
       webview.removeEventListener("found-in-page", handleFoundInPage);
       webview.removeEventListener("console-message", handleConsoleMessage);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onTitleChange]);
+  }, [instanceId]);
+
+  // 非激活 tab 的 webview 静音,避免多个浏览器实例时后台页面持续播放
+  // 音频/占用音频设备(对齐 Chrome 后台标签页行为);激活时恢复声音。
+  // 注意:webview 方法(含 setAudioMuted)要求 guest 已触发 dom-ready,
+  // 新 tab 挂载时 guest 可能尚未就绪,直接调用会抛
+  // "The WebView must be attached to the DOM and the dom-ready event
+  // emitted before this method can be called" 并中断渲染;因此先尝试
+  // 一次,失败则由 dom-ready 事件补一次。
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+    const applyMuted = (): void => {
+      try {
+        webview.setAudioMuted(!isActive);
+      } catch {
+        // guest 尚未就绪(dom-ready 未触发),等待 dom-ready 后重试。
+      }
+    };
+    applyMuted();
+    webview.addEventListener("dom-ready", applyMuted);
+    return () => {
+      webview.removeEventListener("dom-ready", applyMuted);
+    };
+  }, [instanceId, isActive]);
 
   const handleNavigate = (rawInput?: string): void => {
     const input = (rawInput ?? addressInput).trim();
@@ -375,7 +412,15 @@ export const BrowserPanelContent = ({
   };
 
   const handleOpenDevTools = (): void => {
-    webviewRef.current?.openDevTools();
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+    void window.snow
+      .openBrowserDevTools(webview.getWebContentsId())
+      .catch((error) => {
+        console.error("Failed to open browser DevTools:", error);
+      });
   };
 
   const handleOpenFind = (): void => {

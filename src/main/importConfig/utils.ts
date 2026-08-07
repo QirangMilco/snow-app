@@ -16,6 +16,25 @@ export type ImportedMcp = {
   scope: ImportScope;
   projectId?: string;
   input: McpServerConfigInput;
+  /** Provider home of the environment this server was declared in. */
+  originPath?: string;
+  environmentId?: string;
+  environmentLabel?: string;
+};
+
+/**
+ * An MCP server that was declared in an environment whose stdio commands
+ * cannot run on this machine (e.g. an SSH remote host). Surfaced as an
+ * unsupported import candidate so the user can see why it was skipped.
+ */
+export type UnsupportedImportedMcp = {
+  name: string;
+  scope: ImportScope;
+  projectId?: string;
+  reason: string;
+  originPath: string;
+  environmentId?: string;
+  environmentLabel?: string;
 };
 
 export const asStringArray = (value: unknown): string[] =>

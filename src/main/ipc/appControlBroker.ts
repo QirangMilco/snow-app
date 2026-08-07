@@ -1,6 +1,7 @@
 import type { WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import type { AppControlCommand } from "../native/types";
+import { safeSend } from "../utils/safeSend";
 
 const APP_CONTROL_CHANNEL = "app-control:request";
 const APP_CONTROL_RESPONSE_CHANNEL = "app-control:response";
@@ -73,7 +74,7 @@ export const dispatchAppControl = async (
     });
 
     try {
-      source.send(APP_CONTROL_CHANNEL, request);
+      safeSend(source, APP_CONTROL_CHANNEL, request);
     } catch (error) {
       pendingRequests.delete(requestId);
       reject(error instanceof Error ? error : new Error(String(error)));

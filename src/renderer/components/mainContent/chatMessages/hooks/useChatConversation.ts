@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatInputSendOptions } from "../../chatInput/types";
 import type { ApiConfigRecord } from "../../../../../preload";
 
@@ -199,16 +199,64 @@ export const useChatConversation = (
   const yoloModeRef = useRef(yoloMode);
   const planModeRef = useRef(planMode);
   const goalModeRef = useRef(goalMode);
-  // Global Plan/Goal Mode defaults from persisted settings. Mutated ONLY by
-  // explicit user toggles (setPlanMode/setGoalMode/setGoalModeTokenBudget)
-  // and the initial settings load — never by conversation switches. This is
-  // what makes per-conversation isolation real: switching chats restores the
-  // target session's own mode and never touches these defaults.
+  // Neutral Plan/Goal Mode defaults for cold (never-toggled) conversations.
+  // Plan/Goal Mode is strictly per-conversation: toggles write only the
+  // active session's ref and its per-conversation DB record, never this
+  // value — so cold conversations always start disabled and never inherit
+  // another conversation's (or another project's) mode.
   const globalModeDefaultsRef = useRef<GlobalModeDefaults>({
     planMode: false,
     goalMode: false,
     goalModeTokenBudget: 2000000,
   });
+
+  // --- 项目切换：清理跨项目残留的会话状态 ---
+  // ChatConversationProvider 跨项目常驻挂载（只有 directoryId prop 变化），
+  // 而 PENDING_SESSION_KEY 是全局共享的"新对话"槽位：A 项目新对话里开过
+  // Goal 模式的 pending 会话若不清除，切到 B 项目后仍会以 Goal 模式运行。
+  // 此处丢弃旧项目的 pending 会话（未在后台流式运行时）并把显示的 Plan/
+  // Goal 模式重置为中性默认值，保证新项目的新对话从干净状态开始。真实
+  // 会话（有独立 conversationId）的模式由各自的 session ref 恢复，不受影响。
+  const lastDirectoryIdRef = useRef(directoryId);
+  useEffect(() => {
+    if (lastDirectoryIdRef.current === directoryId) return;
+    lastDirectoryIdRef.current = directoryId;
+
+    const pendingRef = sessionsRefData.current.get(PENDING_SESSION_KEY);
+    const pendingStreaming = pendingRef?.isSending === true;
+    if (pendingRef && !pendingStreaming) {
+      sessionsRefData.current.delete(PENDING_SESSION_KEY);
+      setSessions((prev) => {
+        const next = { ...prev };
+        delete next[PENDING_SESSION_KEY];
+        return next;
+      });
+    }
+
+    // 仅当显示的槽位是共享 pending 新对话时才重置显示模式；若当前显示的
+    // 是某个真实会话（属于旧项目，用户切换项目后仍停留在该会话视图），
+    // 保留其会话级模式，待用户选择新项目的会话时再按新会话恢复。
+    if (
+      activeConversationIdRef.current === undefined &&
+      !sessionsRefData.current.has(PENDING_SESSION_KEY)
+    ) {
+      planModeRef.current = false;
+      setPlanModeState(false);
+      goalModeRef.current = false;
+      setGoalModeState(false);
+      setGoalModeTokenBudgetState(2000000);
+    }
+  }, [
+    directoryId,
+    sessionsRefData,
+    setSessions,
+    activeConversationIdRef,
+    planModeRef,
+    setPlanModeState,
+    goalModeRef,
+    setGoalModeState,
+    setGoalModeTokenBudgetState,
+  ]);
   const alwaysApprovedToolsRef = useRef(new Set<string>());
   const pendingToolAuthorizationRef = useRef(
     new Map<
@@ -495,7 +543,14 @@ export const useChatConversation = (
     }
     controller.paused = true;
     ctx.updateSessionField(key, "isPaused", true);
-  }, [ctx]);
+    // 依赖只取 ctx 上的稳定引用（ref 对象 / useCallback 回调），避免 ctx
+    // 每次渲染重建导致 onPause 引用变化，击穿 StreamMetrics 的 memo 保护。
+  }, [
+    ctx.activeConversationIdRef,
+    ctx.sessionsRefData,
+    ctx.pauseControllerRef,
+    ctx.updateSessionField,
+  ]);
 
   const handleResume = useCallback((): void => {
     const key = ctx.activeConversationIdRef.current ?? PENDING_SESSION_KEY;
@@ -510,7 +565,11 @@ export const useChatConversation = (
     if (resolve) {
       resolve();
     }
-  }, [ctx]);
+  }, [
+    ctx.activeConversationIdRef,
+    ctx.pauseControllerRef,
+    ctx.updateSessionField,
+  ]);
 
   // 重命名会话后同步更新内存 session 的 summary，使 TopBar 标题即时刷新。
   // 会话尚未加载过（session 不存在）时 updateSessionField 安全地不执行任何操作。

@@ -477,48 +477,6 @@ pub async fn delete_theme_stream_cursor_svg(svg_path: String) -> napi::Result<()
         .map_err(map_spawn_error)?
 }
 
-#[napi]
-pub async fn get_plan_mode() -> napi::Result<bool> {
-    tokio::task::spawn_blocking(crate::storage::get_plan_mode)
-        .await
-        .map_err(map_spawn_error)?
-}
-
-#[napi]
-pub async fn set_plan_mode(enabled: bool) -> napi::Result<()> {
-    tokio::task::spawn_blocking(move || crate::storage::set_plan_mode(enabled))
-        .await
-        .map_err(map_spawn_error)?
-}
-
-#[napi]
-pub async fn get_goal_mode() -> napi::Result<bool> {
-    tokio::task::spawn_blocking(crate::storage::get_goal_mode)
-        .await
-        .map_err(map_spawn_error)?
-}
-
-#[napi]
-pub async fn set_goal_mode(enabled: bool) -> napi::Result<()> {
-    tokio::task::spawn_blocking(move || crate::storage::set_goal_mode(enabled))
-        .await
-        .map_err(map_spawn_error)?
-}
-
-#[napi]
-pub async fn get_goal_mode_token_budget() -> napi::Result<i64> {
-    tokio::task::spawn_blocking(crate::storage::get_goal_mode_token_budget)
-        .await
-        .map_err(map_spawn_error)?
-}
-
-#[napi]
-pub async fn set_goal_mode_token_budget(budget: i64) -> napi::Result<()> {
-    tokio::task::spawn_blocking(move || crate::storage::set_goal_mode_token_budget(budget))
-        .await
-        .map_err(map_spawn_error)?
-}
-
 #[napi(object)]
 pub struct ConversationModesResult {
     /// Whether Plan Mode is enabled (true) or disabled (false) for this

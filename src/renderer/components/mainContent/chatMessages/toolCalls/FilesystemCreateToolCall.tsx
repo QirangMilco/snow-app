@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import type { ToolCallInfo } from "../utils/conversationTypes";
 import { ToolCallNode } from "./shared/ToolCallNode";
-import { getFileName, getToolDisplayName } from "./shared/formatters";
+import { getFileName } from "./shared/formatters";
 import { MiniDiffViewer } from "./shared/MiniDiffViewer";
 import { getFileTypeIcon } from "../../../../utils/fileIcons";
 import {
@@ -88,7 +88,6 @@ export const FilesystemCreateToolCall = ({
 
   const hasError = parsedResult.type === "error";
 
-  const toolName = getToolDisplayName("create");
   const filePath = parsedArgs?.filePath ?? "create";
   const fileName = getFileName(filePath);
 
@@ -119,7 +118,6 @@ export const FilesystemCreateToolCall = ({
   return (
     <ToolCallNode
       toolName={toolCall.name}
-      badgeName={toolName}
       category="create"
       displayName={
         <>

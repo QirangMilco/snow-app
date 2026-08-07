@@ -14,16 +14,16 @@ common interactions.
 │ ・Projects    │ ・AI chat (conversation)     │ ・File viewer │
 │ ・Sessions    │ ・Terminal / SSH / Git /      │ ・MD preview  │
 │ ・Memos       │   Browser / Codebase         │ ・Diff preview│
-│ ・Scheduled   │ ・Input box (/ @ images)     │ ・Git panel   │
-│   tasks       │                              │              │
-│ ・Settings    │                              │              │
+│ ・Scheduled   │ ・Scheduled tasks /          │ ・Git panel   │
+│   tasks       │   Image library             │              │
+│ ・Settings    │ ・Input box (/ @ images)     │              │
 └──────────────┴──────────────────────────────┴──────────────┘
 ```
 
 | Area | Contents |
 | --- | --- |
 | Sidebar | Workspace directories (local & SSH), session list, memos, scheduled tasks, settings |
-| Main area | Current view: AI chat, terminal, Git, browser, codebase, etc. |
+| Main area | Current view: AI chat, terminal, Git, browser, codebase, image library, etc. |
 | Right panel | File viewer (Markdown render preview, images, Office docs), diff preview, Git panel — multi-tab |
 | Top bar | View switching, API profile switching (`Alt+P`, macOS `Ctrl+P`), settings |
 
@@ -92,15 +92,27 @@ Type `/` to open the command panel:
 
 - Type `@` to open the **file mention** panel: search and pick a workspace
   file; the AI reads it automatically;
-- **Paste images** directly (clipboard or drag & drop): thumbnails appear as
-  chips in the input box (hover to preview, click to zoom); the AI understands
-  them with a vision model, and they can also be used for **image-to-image
-  editing** (see [9-image-generation](9-image-generation.md)). When the main
-  model does not support vision, images are first textified by a separate
-  vision model and each one gets a `[Reference image #N ...]` block (just a
-  relative path under the upload/ directory) — the AI reads the **original
-  image** by reference for image-to-image, so it is never downgraded to
-  text-to-image.
+- **Path navigation**: the panel lets you **browse into folders** like a file
+  manager —
+  - Click a folder entry (or select it and press `→` / `Enter`) to enter it;
+    the `@` query in the input updates to `relative/path/` automatically;
+  - A **breadcrumb bar** at the top shows the workspace name and each path
+    segment — click any segment to jump back;
+  - Press `←` to go up one level;
+  - You can also type a path directly: `src/` lists the contents of `src`,
+    while `src/renderer/App` filters file names inside `renderer`;
+  - To reference a whole folder (let the AI read the entire directory), check
+    it (`Space`) and press `Enter` to insert in batch, or drag the folder
+    entry into the input.
+- **Images** can be **pasted** (`Ctrl+V`) or **dragged in from the file
+  manager** (single or multiple at once): thumbnails appear as chips in the
+  input box (hover to preview, click to zoom); the AI understands them with a
+  vision model, and they can also be used for **image-to-image editing** (see
+  [9-image-generation](9-image-generation.md)). When the main model does not
+  support vision, images are first textified by a separate vision model and
+  each one gets a `[Reference image #N ...]` block (just a relative path under
+  the upload/ directory) — the AI reads the **original image** by reference
+  for image-to-image, so it is never downgraded to text-to-image.
 
 ### 3.3 Other
 
@@ -136,6 +148,7 @@ When the AI calls tools, cards appear in the conversation:
 | Tool family | Shown content |
 | --- | --- |
 | `bash-terminal-execute` | Command, colored stdout/stderr streams, interactive input |
+| `terminal-*` | Persistent terminal session view (live output, can be operated in sync) |
 | `filesystem-*` | Read contents/image previews, edit diff summaries (open full diff in the right panel) |
 | `grep-search` / `websearch-*` | Query and matched results |
 | `browser-*` | Opened page, screenshots, console/network info |

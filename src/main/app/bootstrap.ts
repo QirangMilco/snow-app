@@ -28,6 +28,7 @@ import {
   initBrowserDialogHandler,
   initBrowserNetworkRecorder,
 } from "../ipc/handlers/browserNetworkRecorder";
+import { installWebviewContextMenu } from "../utils/webviewContextMenu";
 
 export const bootstrapApplication = (): void => {
   // ─── Chromium 启动加速开关（必须在 whenReady 之前）─────────────────────
@@ -93,9 +94,9 @@ export const bootstrapApplication = (): void => {
     // 注册 theme-bg:// 自定义协议处理器，使渲染进程能加载本地背景图。
     // 必须在 createWindow 之前调用，确保窗口加载时协议已就绪。
     registerThemeBgProtocol();
-    // 注册 img-proxy:// 协议处理器，代理渲染进程请求的外部 http(s) 图片，
-    // 使 markdown 图片能绕过 CSP 限制安全加载。
-    registerImageProxyProtocol();
+    // 注册 img-proxy:// 协议处理器：代理外部 http(s) 图片，并直接读取本地
+    // image/、upload/ 图片文件返回，使 markdown 图片能绕过 CSP 限制安全加载。
+    registerImageProxyProtocol(native);
 
     if (isMacOS && app.dock) {
       app.dock.setIcon(nativeImage.createFromPath(APP_ICON_PATH));
@@ -129,6 +130,8 @@ export const bootstrapApplication = (): void => {
     // 需在 app ready 且 defaultSession 可用后初始化。
     initBrowserNetworkRecorder();
     initBrowserDialogHandler();
+    // 浏览器右键菜单：Electron webview 默认无右键菜单，需主进程手动弹出。
+    installWebviewContextMenu();
 
     // 渲染进程保存代理设置后通知主进程重新应用会话代理。
     ipcMain.handle("proxy-browser-settings:apply", () =>

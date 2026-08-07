@@ -37,39 +37,78 @@ impl StdioMcpClient {
         };
 
         let client_info = ClientInfo::default();
-        let running = match client_info
-            .clone()
-            .serve_with_lifecycle(spawn_transport(config).await?, auto_lifecycle)
-            .await
-        {
-            Ok(running) => running,
-            Err(error) if super::should_retry_with_legacy_handshake(&error) => {
+
+        // 旧 SDK 服务器（如 fastmcp 构建的 firecrawl-mcp）对带 `_meta` 的
+        // `server/discover` 探测会静默不响应——既不返回 JSON-RPC 错误也不
+        // 关闭连接，导致 Auto 协商无限挂起。加超时：超时视为服务器不支持
+        // 2026-07-28 无状态协议，回退 legacy initialize 握手重连。
+        const DISCOVER_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let auto_result = tokio::time::timeout(
+            DISCOVER_PROBE_TIMEOUT,
+            client_info
+                .clone()
+                .serve_with_lifecycle(spawn_transport(config).await?, auto_lifecycle),
+        )
+        .await;
+
+        match auto_result {
+            Ok(Ok(running)) => Ok(Self { client: running }),
+            Ok(Err(error)) if super::should_retry_with_legacy_handshake(&error) => {
                 // 旧子进程的管道已随 transport 关闭，重新 spawn 一个，
                 // 改用 legacy 握手重连一次。
-                match client_info
-                    .serve_with_lifecycle(
-                        spawn_transport(config).await?,
-                        ClientLifecycleMode::Initialize,
-                    )
-                    .await
-                {
-                    Ok(running) => running,
+                match Self::connect_legacy(config).await {
+                    Ok(client) => Ok(client),
                     // 重试失败时保留原始 Auto 错误（含版本协商诊断信息）
-                    Err(_) => {
-                        return Err(Error::from_reason(format!(
-                            "Failed to initialize external MCP stdio server {}: {error}",
-                            config.name
-                        )))
-                    }
+                    Err(_) => Err(Error::from_reason(format!(
+                        "Failed to initialize external MCP stdio server {}: {error}",
+                        config.name
+                    ))),
                 }
             }
-            Err(error) => {
-                return Err(Error::from_reason(format!(
+            Ok(Err(error)) => Err(Error::from_reason(format!(
+                "Failed to initialize external MCP stdio server {}: {error}",
+                config.name
+            ))),
+            Err(_elapsed) => {
+                // server/discover 探测超时：服务器静默不响应（如 fastmcp 构建的
+                // firecrawl-mcp）。超时的 future 被 drop 时子进程随之终止，
+                // connect_legacy 会重新 spawn 一个进程。
+                match Self::connect_legacy(config).await {
+                    Ok(client) => Ok(client),
+                    Err(_) => Err(Error::from_reason(format!(
+                        "Failed to initialize external MCP stdio server {}: Auto negotiate timed out (no response to server/discover), legacy initialize handshake also failed",
+                        config.name
+                    ))),
+                }
+            }
+        }
+    }
+
+    /// 旧版本回退：直接以 legacy `initialize` 握手建立连接，跳过
+    /// Auto 模式对 2026-07-28 无状态协议的 `server/discover` 探测。
+    /// 当 Auto 协商降级后的连接不稳定（如旧 SDK 服务器调用时报
+    /// Transport closed）时，用本方法重连可绕过协商探测路径。
+    pub(super) async fn connect_legacy(config: &McpServerConfigRecord) -> Result<Self> {
+        if config.command.trim().is_empty() {
+            return Err(Error::from_reason(format!(
+                "External MCP server {} has no command",
+                config.name
+            )));
+        }
+
+        let client_info = ClientInfo::default();
+        let running = client_info
+            .serve_with_lifecycle(
+                spawn_transport(config).await?,
+                ClientLifecycleMode::Initialize,
+            )
+            .await
+            .map_err(|error| {
+                Error::from_reason(format!(
                     "Failed to initialize external MCP stdio server {}: {error}",
                     config.name
-                )))
-            }
-        };
+                ))
+            })?;
 
         Ok(Self { client: running })
     }
@@ -159,7 +198,7 @@ async fn spawn_transport(
 
     // Use the builder so we can pipe stderr for diagnostics while keeping
     // stdin/stdout piped (the defaults).
-    let (transport, _stderr_opt) = rmcp::transport::TokioChildProcess::builder(command)
+    let (transport, stderr_opt) = rmcp::transport::TokioChildProcess::builder(command)
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| {
@@ -168,6 +207,27 @@ async fn spawn_transport(
                 config.name
             ))
         })?;
+
+    // 排空子进程 stderr：不读取的话，管道缓冲（约 64KB）写满后子进程会
+    // 阻塞，且服务器启动/调用失败的诊断日志会丢失。这里把 stderr 转发
+    // 到应用日志，方便排查 spawn/握手/调用失败（如 issue #51 场景）。
+    if let Some(stderr) = stderr_opt {
+        let server_name = config.name.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut reader = stderr;
+            let mut buffer = vec![0u8; 4096];
+            loop {
+                match reader.read(&mut buffer).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        let text = String::from_utf8_lossy(&buffer[..n]);
+                        eprintln!("[External MCP {} stderr] {}", server_name, text.trim_end());
+                    }
+                }
+            }
+        });
+    }
 
     Ok(transport)
 }

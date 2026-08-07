@@ -189,7 +189,7 @@ export const BashToolCall = ({
     update();
     const interval = setInterval(update, 200);
     return () => clearInterval(interval);
-  }, [isRunning, startedAt, timeoutMs, isInteractive]);
+  }, [isRunning, startedAt, timeoutMs, isInteractive, parsedArgs?.detach]);
 
   const countdownSeconds =
     remainingMs !== null ? Math.ceil(remainingMs / 1000) : null;
@@ -242,34 +242,66 @@ export const BashToolCall = ({
     [handleSendInput]
   );
 
-  // Manual termination: lets the user stop a long-running command (e.g.
-  // `npm run dev`, which never exits on its own) without waiting for the
-  // timeout. The Rust backend races this cancellation against the child
-  // process wait and kills the whole process tree.
-  //
-  // `isKilling` stays true until the tool call actually leaves the
-  // "running" status (the agent loop flips it once the backend confirms
-  // the kill), so the user always sees a persistent "Stopping…" state
-  // instead of the button silently reverting while the process is still
-  // being torn down.
+  // Manual and automatic termination share one guarded path. The backend
+  // performs the actual process-tree kill; this state only prevents duplicate
+  // IPC requests and keeps the button in its stopping state until the tool
+  // execution has reached a terminal status.
   const [isKilling, setIsKilling] = useState(false);
+  const isKillRequestedRef = useRef(false);
   useEffect(() => {
-    if (!isRunning && isKilling) {
+    if (!isRunning) {
+      isKillRequestedRef.current = false;
       setIsKilling(false);
     }
-  }, [isRunning, isKilling]);
-  const handleKill = useCallback(() => {
-    if (!toolExecutionId || isKilling) {
+  }, [isRunning]);
+
+  const handleKill = useCallback(async () => {
+    if (!toolExecutionId || isKillRequestedRef.current) {
       return;
     }
+    isKillRequestedRef.current = true;
     setIsKilling(true);
-    void window.snow.abortToolExecution(toolExecutionId).catch(() => {
-      // IPC failure (the command may have finished right between render
-      // and click): reset so the user can retry; otherwise the agent
-      // loop will surface the actual outcome.
+    try {
+      const accepted = await window.snow.abortToolExecution(toolExecutionId);
+      if (!accepted) {
+        // The execution may have completed between render and the click. Do
+        // not leave the UI permanently stuck in "Stopping…" when there is no
+        // longer a cancellation token to signal.
+        isKillRequestedRef.current = false;
+        setIsKilling(false);
+      }
+    } catch {
+      // IPC failure is retryable. The agent loop will still surface the actual
+      // tool result if the process finished concurrently.
+      isKillRequestedRef.current = false;
       setIsKilling(false);
-    });
-  }, [toolExecutionId, isKilling]);
+    }
+  }, [toolExecutionId]);
+
+  // Renderer-side watchdog: the Rust timeout remains authoritative, but this
+  // fail-safe sends the same highest-priority kill request when the countdown
+  // reaches zero. It covers a delayed/stalled backend timeout path without
+  // creating a second termination implementation.
+  useEffect(() => {
+    if (
+      !isRunning ||
+      remainingMs !== 0 ||
+      isInteractive ||
+      parsedArgs?.detach ||
+      !toolExecutionId ||
+      isKillRequestedRef.current
+    ) {
+      return;
+    }
+    void handleKill();
+  }, [
+    handleKill,
+    isInteractive,
+    isRunning,
+    parsedArgs?.detach,
+    remainingMs,
+    toolExecutionId,
+  ]);
 
   const output = useMemo(() => {
     if (parsedResult.type === "success") {

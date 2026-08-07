@@ -6,6 +6,7 @@ import {
   FileText,
   GitCommitHorizontal,
   GitCompare,
+  ScanSearch,
 } from "lucide-react";
 import { UserMessageActions } from "./UserMessageActions";
 import { HookExecutionUI } from "../toolCalls/HookExecutionUI";
@@ -287,6 +288,30 @@ export const UserMessage = memo(
                       size={12}
                       className="user-message-file-chip-icon"
                       style={{ color: "#6c757d" }}
+                    />
+                    <span className="user-message-file-chip-name">
+                      {segment.tag.summary}
+                    </span>
+                  </span>
+                );
+              }
+
+              if (segment.type === "review") {
+                const reviewTitle = `${segment.tag.summary} (${segment.tag.charCount} chars)`;
+                return (
+                  <span
+                    className="user-message-file-chip review-chip"
+                    key={index}
+                    title={reviewTitle}
+                    onMouseMove={(event) =>
+                      handleTextSnippetChipMouseMove(event, segment.tag.prompt)
+                    }
+                    onMouseLeave={scheduleHideTextSnippetPreview}
+                  >
+                    <ScanSearch
+                      size={12}
+                      className="user-message-file-chip-icon"
+                      style={{ color: "#2ea043" }}
                     />
                     <span className="user-message-file-chip-name">
                       {segment.tag.summary}

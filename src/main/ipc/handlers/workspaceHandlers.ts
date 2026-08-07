@@ -10,18 +10,15 @@ import {
   normalizeWorkspaceDirectoryList,
 } from "../../settings/workspaceDirectories";
 import { startDirectoryWatch, stopDirectoryWatch } from "../../utils/fsWatcher";
+import { safeSend } from "../../utils/safeSend";
 
 const AGENT_SEARCH_PROGRESS_CHANNEL =
   "workspace-directories:search-files-by-agent:progress";
 
 const broadcastDirectoryListChanged = (): void => {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (
-      !window.isDestroyed() &&
-      window.webContents &&
-      !window.webContents.isDestroyed()
-    ) {
-      window.webContents.send("workspace-directory-list:changed");
+    if (!window.isDestroyed() && window.webContents) {
+      safeSend(window.webContents, "workspace-directory-list:changed");
     }
   }
 };
@@ -255,10 +252,7 @@ export const registerWorkspaceHandlers = (native: NativeBridge): void => {
         query.trim(),
         workspacePath.trim(),
         (chunk: FileSearchAgentProgress) => {
-          if (event.sender.isDestroyed()) {
-            return;
-          }
-          event.sender.send(AGENT_SEARCH_PROGRESS_CHANNEL, {
+          safeSend(event.sender, AGENT_SEARCH_PROGRESS_CHANNEL, {
             streamId: normalizedStreamId,
             chunk,
           });

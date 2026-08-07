@@ -182,9 +182,14 @@ export const RightPanel = forwardRef<RightPanelRef, RightPanelProps>(
     );
 
     const handleOpenTerminalTab = useCallback(
-      (cwd: string, requestedTabId?: string, shellPath?: string): string => {
+      (
+        cwd: string,
+        requestedTabId?: string,
+        shellPath?: string,
+        sessionId?: string
+      ): string => {
         const tabId = requestedTabId ?? `terminal-${Date.now()}`;
-        const terminalData: TerminalTabData = { cwd, shellPath };
+        const terminalData: TerminalTabData = { cwd, shellPath, sessionId };
         setTabs((prev) => [
           ...prev,
           {
@@ -813,6 +818,7 @@ export const RightPanel = forwardRef<RightPanelRef, RightPanelProps>(
               tabId={tab.id}
               cwd={(tab.data as TerminalTabData).cwd}
               shellPath={(tab.data as TerminalTabData).shellPath}
+              sessionId={(tab.data as TerminalTabData).sessionId}
               isActive={activeTabId === tab.id}
               onTitleChange={(title) =>
                 handleTerminalTitleChange(tab.id, title)

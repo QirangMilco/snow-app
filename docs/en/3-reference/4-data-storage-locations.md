@@ -49,6 +49,7 @@ All business data (conversations, messages, configs, usage, memos, plugins, etc.
 | `usage_records` | Usage stats (token consumption, ...) |
 | `app_logs` | App logs (shown in the Settings "System Logs" page) |
 | `memos` | Memos |
+| `image_library` | Image library index (relative path, file name, source & created-at; image files default to `~/.snowapp/image/`, customizable via `image_library_dir`) |
 | `codebase_embed_sessions` | Codebase embedding session state |
 | `codebase_embeddings_*` | Per-project vector index (dynamically created per project) |
 
@@ -62,6 +63,7 @@ All business data (conversations, messages, configs, usage, memos, plugins, etc.
 | `~/.snowapp/backgrounds/` | User-selected theme background images (copied then referenced) |
 | `~/.snowapp/stream-cursors/` | Custom streaming-cursor SVGs |
 | `~/.snowapp/upload/<YYYY-MM-DD>/` | Inline chat images (base64 persisted as `<hash>.<ext>`; messages store relative paths `upload/<date>/<file>`, see `api/conversation/images.rs`) |
+| `~/.snowapp/image/` | Default image-library root (AI-generated/imported images land here, `services/image_library.rs`; a custom save dir can be set in Settings) |
 | `~/.snowapp/workspace/` | Built-in default workspace (`source=builtin`, used when no directories are added) |
 
 ---
@@ -86,17 +88,31 @@ Shared global directory with the Snow CLI (`SNOW_CLI_CONFIG_DIR` in `snowCli/pat
 | Path | Contents |
 |------|----------|
 | `~/.snow/settings.json` | Global settings (MCP, proxy, ...; overridden by project-level file) |
-| `~/.snow/ROLE.md` | Global role definition (`personalizationHandlers.ts`) |
+| `~/.snow/config.json` | AI config (`snowcfg` object: baseUrl, apiKey, models, maxTokens, chatThinking, ...) |
+| `~/.snow/proxy-config.json` | Proxy & network settings (enabled, host/port, searchEngine, browserPath, browserDebugPort) |
+| `~/.snow/active-profile.json` | Active API profile (activeProfile) |
+| `~/.snow/custom-headers.json` | Custom request-header schemes (active, schemes; may contain sensitive headers) |
+| `~/.snow/system-prompt.json` | System prompt templates (active, prompts) |
+| `~/.snow/theme.json` | Theme settings (theme, simpleMode, diffOpacity, toolIcons, customColors, ...) |
+| `~/.snow/language.json` | UI language (language) |
+| `~/.snow/permissions.json` | Always-approved tool allowlist (alwaysApprovedTools) |
+| `~/.snow/lsp-config.json` | LSP code-diagnostics config (schemaVersion, servers) |
+| `~/.snow/buddy.json` | Buddy companion config (version, companion, muted) |
+| `~/.snow/ROLE.md` | Global role definition (`personalizationHandlers.ts`; read/written by the config tool's `personalization` scope) |
 | `~/.snow/skills/` | Global skills (built-in skills are synced here, `ensureBuiltinSkills.ts`) |
+| `~/.snow/skills-registry.json` | Skills registry (installation sources/locations) |
 | `~/.snow/docs/` | Synced copy of built-in docs (fully re-synced on version change) |
 | `~/.snow/plugin-marketplaces/` | Plugin marketplace cache |
 | `~/.snow/plugins/marketplaces/` | Plugin bodies installed from marketplaces |
 | `~/.snow/codex-plugins.json` | Codex-compatible plugin manifest |
+| `~/.snow/log/` | App file logs (read by the config tool's `logs` scope by date, e.g. `2026-08-03-error.log`) |
+| `~/.snow/.config-backups/` | Pre-write auto backups from the config tool (temporary safety net, removed after a successful write, max 10 per file) |
 
 ### 2.3 Others
 
 - `app.getPath("logs")/updater.log` — updater log (macOS update flow)
-- `logs:list` / `logs:clear` IPC — read/clear the `app_logs` table in the database
+- Settings "System Logs" page — reads the `app_logs` table (`logs:list` / `logs:clear` IPC)
+- The AI `config` tool's `logs` scope — reads file logs under `~/.snow/log/` (two log sources coexist with the database `app_logs` table)
 
 ---
 
@@ -126,7 +142,8 @@ Shared global directory with the Snow CLI (`SNOW_CLI_CONFIG_DIR` in `snowCli/pat
 
 ## Backup & Migration Tips
 
-- **Full backup**: copy `~/.snowapp/` (includes `snowapp.db`, `upload/`, `backgrounds/`, `checkpoints/`) plus `~/.snow/` to cover almost everything.
-- **Chat images**: backing up only the database loses inline images — also include `~/.snowapp/upload/`.
+- **Full backup**: copy `~/.snowapp/` (incl. `snowapp.db`, `upload/`, `image/`, `backgrounds/`, `checkpoints/`) plus `~/.snow/` to cover most data.
+- **Chat images**: backing up only the database loses inline images — include `~/.snowapp/upload/`.
+- **Image library**: AI-generated images live in `~/.snowapp/image/` (or a custom dir); deleting a conversation with "don't keep images" cascades their deletion, so back up first.
 - **Plugin data**: plugin-owned data lives in `<userData>/plugins/`; include it too.
 - **Cross-platform**: paths are hardcoded relative to the home directory; simply copy the three directories. Note that Windows backslashes in inline-image references are normalized to forward slashes.

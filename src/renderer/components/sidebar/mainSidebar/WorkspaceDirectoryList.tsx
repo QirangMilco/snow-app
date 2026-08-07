@@ -1,16 +1,10 @@
-import {
-  Folder,
-  FolderOpen,
-  GripVertical,
-  Loader2,
-  Server,
-} from "lucide-react";
-import { useState } from "react";
-import type { DragEvent, RefObject } from "react";
+import { Loader2 } from "lucide-react";
+import { useRef, useState } from "react";
+import type { RefObject } from "react";
 
 import { useI18n } from "../../../i18n";
 import type { WorkspaceDirectoryRecord } from "../../../../preload";
-import { WorkspaceDirectoryMenu } from "./WorkspaceDirectoryMenu";
+import { WorkspaceDirectoryRow } from "./WorkspaceDirectoryRow";
 
 type WorkspaceDirectoryListProps = {
   activeDirectoryId?: string;
@@ -27,24 +21,12 @@ type WorkspaceDirectoryListProps = {
   onDragOver: (directoryId: string) => void;
   onDragStart: (directoryId: string) => void;
   onDrop: (directoryId: string) => void;
+  /** 重命名目录显示名；返回 Promise 时提交期间保持编辑态直到完成 */
+  onRename?: (directoryId: string, newName: string) => void | Promise<void>;
   onShowDetails?: (directoryId: string) => void;
   totalCount: number;
   visibleDirectories: WorkspaceDirectoryRecord[];
   workspaceDirectories: WorkspaceDirectoryRecord[];
-};
-
-const getDirectoryIcon = (
-  directory: WorkspaceDirectoryRecord
-): React.JSX.Element => {
-  if (directory.isActive) {
-    return <FolderOpen className="list-icon" size={15} />;
-  }
-
-  if (directory.kind === "ssh") {
-    return <Server className="list-icon" size={15} />;
-  }
-
-  return <Folder className="list-icon" size={15} />;
 };
 
 export function WorkspaceDirectoryList({
@@ -62,44 +44,63 @@ export function WorkspaceDirectoryList({
   onDragOver,
   onDragStart,
   onDrop,
+  onRename,
   onShowDetails,
   totalCount,
   visibleDirectories,
   workspaceDirectories,
 }: WorkspaceDirectoryListProps): React.JSX.Element {
   const { t } = useI18n();
-  const [menuOpenDirectoryId, setMenuOpenDirectoryId] = useState<string | null>(
+  // 行内重命名编辑态：单例管理，保证同时只编辑一行
+  const [editingDirectoryId, setEditingDirectoryId] = useState<string | null>(
     null
   );
+  const [editingValue, setEditingValue] = useState("");
+  // 防重复提交：Enter 触发提交后 input 失焦会再次触发 onBlur
+  const isSubmittingRef = useRef(false);
 
-  const handleDragStart = (
-    event: DragEvent<HTMLDivElement>,
-    directoryId: string
-  ): void => {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", directoryId);
-    onDragStart(directoryId);
+  const handleRenameStart = (directory: WorkspaceDirectoryRecord): void => {
+    isSubmittingRef.current = false;
+    setEditingValue(directory.name);
+    setEditingDirectoryId(directory.directoryId);
   };
 
-  const handleDragOver = (
-    event: DragEvent<HTMLDivElement>,
-    directoryId: string
-  ): void => {
-    if (isActionLocked || draggedDirectoryId === directoryId) {
+  const handleRenameSubmit = (): void => {
+    if (isSubmittingRef.current || !editingDirectoryId) {
+      return;
+    }
+    const directory = workspaceDirectories.find(
+      (item) => item.directoryId === editingDirectoryId
+    );
+    if (!directory) {
+      setEditingDirectoryId(null);
+      setEditingValue("");
       return;
     }
 
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    onDragOver(directoryId);
+    const trimmed = editingValue.trim();
+    if (!trimmed || trimmed === directory.name) {
+      setEditingDirectoryId(null);
+      setEditingValue("");
+      return;
+    }
+
+    isSubmittingRef.current = true;
+    void (async (): Promise<void> => {
+      try {
+        await onRename?.(directory.directoryId, trimmed);
+      } finally {
+        isSubmittingRef.current = false;
+        setEditingDirectoryId(null);
+        setEditingValue("");
+      }
+    })();
   };
 
-  const handleDrop = (
-    event: DragEvent<HTMLDivElement>,
-    directoryId: string
-  ): void => {
-    event.preventDefault();
-    onDrop(directoryId);
+  const handleRenameCancel = (): void => {
+    isSubmittingRef.current = false;
+    setEditingDirectoryId(null);
+    setEditingValue("");
   };
 
   return (
@@ -121,87 +122,31 @@ export function WorkspaceDirectoryList({
         </span>
       ) : (
         <>
-          {visibleDirectories.map((directory, index) => {
-            const isDragging = draggedDirectoryId === directory.directoryId;
-            const isDragOver = dragOverDirectoryId === directory.directoryId;
-            const isMenuOpen = menuOpenDirectoryId === directory.directoryId;
-
-            return (
-              <div
-                className={`workspace-directory-row${
-                  isDragging ? " dragging" : ""
-                }${isDragOver ? " drag-over" : ""}${
-                  isMenuOpen ? " menu-open" : ""
-                }`}
-                draggable={!isActionLocked}
-                key={directory.directoryId}
-                onDragEnd={onDragEnd}
-                onDragOver={(event) =>
-                  handleDragOver(event, directory.directoryId)
-                }
-                onDragStart={(event) =>
-                  handleDragStart(event, directory.directoryId)
-                }
-                onDrop={(event) => handleDrop(event, directory.directoryId)}
-              >
-                <button
-                  className={`list-item${
-                    directory.directoryId === activeDirectoryId ? " active" : ""
-                  }`}
-                  disabled={isActionLocked}
-                  onClick={() => onActivate(directory.directoryId)}
-                  onDoubleClick={() => onShowDetails?.(directory.directoryId)}
-                  title={directory.path}
-                  type="button"
-                >
-                  <span
-                    className="workspace-directory-guide"
-                    aria-hidden="true"
-                  >
-                    <span className="workspace-directory-guide-dot" />
-                  </span>
-                  <span
-                    aria-label={t("sidebar.dragDirectory", {
-                      defaultValue: "Drag to reorder",
-                    })}
-                    className="workspace-directory-drag-handle"
-                    role="img"
-                  >
-                    <GripVertical size={13} />
-                  </span>
-                  {getDirectoryIcon(directory)}
-                  <span className="list-label">{directory.name}</span>
-                  <span className="list-meta">
-                    {directory.kind === "ssh"
-                      ? t("sidebar.directoryKindSsh", {
-                          defaultValue: "SSH",
-                        })
-                      : t("sidebar.directoryKindLocal", {
-                          defaultValue: "Local",
-                        })}
-                  </span>
-                  <span className="workspace-directory-index">
-                    {index + 1}/{totalCount}
-                  </span>
-                </button>
-                <WorkspaceDirectoryMenu
-                  canDelete={directory.source !== "builtin"}
-                  disabled={isActionLocked}
-                  onDelete={() => onDelete(directory.directoryId)}
-                  onOpenChange={(isOpen) =>
-                    setMenuOpenDirectoryId(
-                      isOpen ? directory.directoryId : null
-                    )
-                  }
-                  onShowDetails={
-                    onShowDetails
-                      ? () => onShowDetails(directory.directoryId)
-                      : undefined
-                  }
-                />
-              </div>
-            );
-          })}
+          {visibleDirectories.map((directory, index) => (
+            <WorkspaceDirectoryRow
+              activeDirectoryId={activeDirectoryId}
+              directory={directory}
+              draggedDirectoryId={draggedDirectoryId}
+              dragOverDirectoryId={dragOverDirectoryId}
+              editingValue={editingValue}
+              index={index}
+              isActionLocked={isActionLocked}
+              isEditing={editingDirectoryId === directory.directoryId}
+              key={directory.directoryId}
+              onActivate={onActivate}
+              onDelete={onDelete}
+              onDragEnd={onDragEnd}
+              onDragOver={onDragOver}
+              onDragStart={onDragStart}
+              onDrop={onDrop}
+              onEditingValueChange={setEditingValue}
+              onRenameCancel={handleRenameCancel}
+              onRenameStart={handleRenameStart}
+              onRenameSubmit={handleRenameSubmit}
+              onShowDetails={onShowDetails}
+              totalCount={totalCount}
+            />
+          ))}
           {hasMoreDirectories ? (
             <div
               aria-hidden="true"

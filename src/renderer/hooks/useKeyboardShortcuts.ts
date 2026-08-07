@@ -27,8 +27,13 @@ import {
  * foregroundOnly 语义说明：
  * - 渲染进程 keydown 监听天然仅在应用聚焦时触发（失焦时浏览器不接收键盘事件）
  * - 因此无论 foregroundOnly 开/关，行为一致（仅应用聚焦时生效）
- * - 这是渲染进程方案的固有限制，未来可用 globalShortcut 增强
+ * 这是渲染进程方案的固有限制，未来可用 globalShortcut 增强
  */
+
+/** 命令面板 / 文件提及面板是否处于打开状态（渲染在 DOM 中即视为打开）。 */
+const isEscapePanelOpen = (): boolean =>
+  document.querySelector("[data-esc-panel]") !== null;
+
 export const useKeyboardShortcuts = (): void => {
   const { settings, getHandler, getScopedHandlers } =
     useKeyboardShortcutsSettings();
@@ -72,6 +77,12 @@ export const useKeyboardShortcuts = (): void => {
         if (!config.enabled) continue;
 
         if (!matchKey(event, config.key)) continue;
+
+        // 命令面板 / 文件提及面板打开时，ESC 仅用于关闭面板，
+        // 不触发 cancelSession（避免误中断正在运行的会话）。
+        if (action === "cancelSession" && isEscapePanelOpen()) {
+          continue;
+        }
 
         // 作用域接管：逆序查找第一个声明要拦截的局部处理器
         const scopedHandlers = currentGetScopedHandlers(action);

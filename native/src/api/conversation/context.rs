@@ -54,7 +54,16 @@ pub struct PreparedConversationRequest {
 pub fn prepare_context_request(
     request: ConversationContextRequest<'_>,
 ) -> Result<PreparedConversationRequest> {
-    let mut current_messages = if request.context_compaction {
+    let mut current_messages = if request.resume_after_compaction {
+        // Resume after auto-compaction: the handoff is already persisted as
+        // the latest `context_compaction` boundary message and will be loaded
+        // by `load_context_messages` below. The caller's placeholder message
+        // must NOT be injected here — re-adding the same summary would
+        // duplicate the handoff in the request payload and cause a redundant
+        // copy to be persisted as a normal user message by
+        // `store_chat_exchange`.
+        Vec::new()
+    } else if request.context_compaction {
         let handoff_prompt = if request.goal_mode {
             "Create a durable context handoff for the next assistant. You are in Goal Mode and the context window was exceeded, so this handoff MUST preserve the goal so work continues seamlessly.\n\nOutput ONLY the handoff document in Markdown. It MUST include ALL of the following sections:\n\n## Original Goal\nReproduce the user's original goal verbatim. This is the single most important piece of information — do not paraphrase or abbreviate it.\n\n## Success Criteria\nList every success criterion that defines goal completion. Mark each as [MET], [UNMET], or [UNCERTAIN] with brief evidence.\n\n## Completed Work\nBullet list of changes made so far, with exact file paths and function/symbol names.\n\n## Current State\nWhat the codebase looks like right now after your changes. What builds, what does not, what tests pass or fail.\n\n## Pending Tasks\nWhat remains to be done to achieve the goal, ordered by priority.\n\n## Key Decisions & Constraints\nArchitecture choices, constraints discovered, non-regression boundaries that must be respected.\n\n## Token Budget Status\nHow much of the token budget has been consumed (estimate), and how much remains.\n\n## Next Steps\nThe concrete next 1-3 actions the next assistant should take to continue toward the goal.\n\nRules:\n- Do NOT call tools.\n- Do NOT address the user conversationally.\n- Do NOT declare the goal complete — only the next assistant can do that after verifying.\n- Be concise but never omit information required to continue the work correctly."
         } else {
@@ -74,7 +83,7 @@ pub fn prepare_context_request(
     for message in &mut current_messages {
         message.content = persist_inline_images_to_disk(&message.content, request.database_path)?;
     }
-    if current_messages.is_empty() {
+    if current_messages.is_empty() && !request.resume_after_compaction {
         return Err(Error::from_reason("Chat message content is required"));
     }
 
@@ -144,23 +153,17 @@ pub fn prepare_context_request(
         )
     } else if request.goal_mode {
         // Per-conversation budget isolation: the conversation's own override
-        // wins, then the global default budget, then the built-in default.
+        // wins; conversations without one use the built-in default. The
+        // formerly-global budget setting is no longer written by the UI
+        // (Plan/Goal Mode toggles are strictly per-conversation), so it must
+        // not leak into conversations that never set a budget of their own.
         let goal_token_budget = if !conversation_id.is_empty() {
             get_conversation_modes(request.database_path, &conversation_id)
                 .ok()
                 .and_then(|modes| modes.goal_mode_token_budget)
-                .or_else(|| {
-                    crate::storage::services::system_settings::get_goal_mode_token_budget(
-                        request.database_path,
-                    )
-                    .ok()
-                })
                 .unwrap_or(2000000)
         } else {
-            crate::storage::services::system_settings::get_goal_mode_token_budget(
-                request.database_path,
-            )
-            .unwrap_or(2000000)
+            2000000
         };
         build_goal_mode_system_prompt(
             request.database_path,

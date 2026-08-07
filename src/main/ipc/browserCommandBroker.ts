@@ -5,6 +5,7 @@ import type {
   BrowserCommandRequest,
   BrowserCommandResponse,
 } from "../native/types";
+import { safeSend } from "../utils/safeSend";
 
 const BROWSER_COMMAND_CHANNEL = "browser:command";
 const BROWSER_COMMAND_RESPONSE_CHANNEL = "browser:command-response";
@@ -68,7 +69,7 @@ export const dispatchBrowserCommand = async (
     }, BROWSER_COMMAND_TIMEOUT_MS);
 
     pendingCommands.set(commandId, { resolve, reject, timer });
-    renderer.send(BROWSER_COMMAND_CHANNEL, request);
+    safeSend(renderer, BROWSER_COMMAND_CHANNEL, request);
   });
 };
 

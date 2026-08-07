@@ -173,7 +173,7 @@ export function McpSettingsEditor({
           <div className="mcp-editor-json-hint">
             {t("settings.mcpJsonHint", {
               defaultValue:
-                "Edit the server configuration as JSON. name, command (stdio) or url (http) are required.",
+                'Edit the server configuration as JSON, e.g. {"context7": {"url": "https://mcp.context7.com/mcp"}}. type (http/stdio) is inferred from url or command when omitted.',
             })}
           </div>
         </div>

@@ -33,6 +33,10 @@ export type AiResponseProps = {
   streamTtftMs?: number;
   showActions?: boolean;
   toolCalls?: ToolCallInfo[];
+  /** Hook execution records bound to tool calls in this message (via
+   *  toolCallInteractionId).  Rendered attached to the matching tool card
+   *  instead of the message footer. */
+  hookExecutions?: HookExecutionRecord[];
   pendingToolAuthorizations?: ToolCallInfo[];
   onApproveToolAuthorization?: (toolCall: ToolCallInfo) => void;
   onApproveToolAuthorizationAlways?: (toolCall: ToolCallInfo) => void;

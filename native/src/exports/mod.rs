@@ -3,6 +3,7 @@ pub(crate) mod checkpoint;
 mod codebase;
 mod engine;
 mod git;
+mod ide;
 mod images;
 mod sample;
 mod sphere_layout;

@@ -12,10 +12,16 @@ import { useI18n } from "../../../../i18n";
 import { useChatConversationContext } from "../components/ChatConversationContext";
 import type { ToolCallInfo } from "../utils/conversationTypes";
 import type { ChatConversationMessage } from "../utils/conversationTypes";
+import type { HookExecutionRecord } from "../utils/conversationTypes";
 import { ToolCallNode } from "./shared/ToolCallNode";
+import { HookExecutionUI } from "./HookExecutionUI";
 
 type SubAgentToolCallProps = {
   toolCall: ToolCallInfo;
+  /** Hook execution records bound to this tool call (matched by
+   *  toolCallInteractionId). beforeSubAgentStart renders as a "pre" step,
+   *  onSubAgentComplete as a "post" step inside the card. */
+  hookExecutions?: HookExecutionRecord[];
 };
 
 type ParsedSubAgentArgs = {
@@ -167,6 +173,7 @@ const extractSubAgentToolCalls = (
 
 export const SubAgentToolCall = ({
   toolCall,
+  hookExecutions,
 }: SubAgentToolCallProps): React.JSX.Element => {
   const { t } = useI18n();
   const {
@@ -244,6 +251,30 @@ export const SubAgentToolCall = ({
   ).length;
   const totalCount = toolCallEntries.length;
 
+  // Hooks bound to this tool call (recorded with toolCallInteractionId).
+  // beforeSubAgentStart runs before the sub-agent session is created →
+  // rendered at the top of the card; onSubAgentComplete runs when the
+  // sub-agent finishes → rendered at the bottom.  The executedActions /
+  // pendingDecision filter mirrors HookExecutionUI's own visibility rule.
+  const preHooks = useMemo(
+    () =>
+      (hookExecutions ?? []).filter(
+        (record) =>
+          record.hookType === "beforeSubAgentStart" &&
+          (record.executedActions > 0 || record.pendingDecision)
+      ),
+    [hookExecutions]
+  );
+  const postHooks = useMemo(
+    () =>
+      (hookExecutions ?? []).filter(
+        (record) =>
+          record.hookType === "onSubAgentComplete" &&
+          (record.executedActions > 0 || record.pendingDecision)
+      ),
+    [hookExecutions]
+  );
+
   const effectiveStatus = isError ? "error" : toolCall.status;
 
   const agentName =
@@ -312,6 +343,14 @@ export const SubAgentToolCall = ({
       className="tool-call-sub-agent"
     >
       <div className="tool-call-body tool-call-sub-agent-body">
+        {/* Pre-step: beforeSubAgentStart hook ran before the sub-agent session
+            was created — show it at the top of the card. */}
+        {preHooks.length > 0 ? (
+          <div className="tool-call-sub-agent-hooks tool-call-sub-agent-hooks--pre">
+            <HookExecutionUI executions={preHooks} />
+          </div>
+        ) : null}
+
         {/* Agent identity row */}
         <div className="tool-call-sub-agent-identity">
           <span className="tool-call-sub-agent-identity-badge">
@@ -424,6 +463,14 @@ export const SubAgentToolCall = ({
             </span>
             <pre className="tool-call-section-pre">{parsedResult.text}</pre>
           </section>
+        ) : null}
+
+        {/* Post-step: onSubAgentComplete hook ran when the sub-agent finished
+            — show it at the bottom of the card, before the jump button. */}
+        {postHooks.length > 0 ? (
+          <div className="tool-call-sub-agent-hooks tool-call-sub-agent-hooks--post">
+            <HookExecutionUI executions={postHooks} />
+          </div>
         ) : null}
 
         {/* Jump to sub-agent conversation - available even while running */}

@@ -1,5 +1,51 @@
 # Release Notes
 
+## v0.1.21
+
+## New Features
+
+- **AI Code Review (`/review`)**: Review selected Git changes (staged, unstaged, or commits) with a read-only prompt. The prompt is base64-tagged (`@@review:...@@`) and rendered as a chip; Rust expands it for generation and session titles. Added `git:commit-diff` IPC backed by Rust and SSH.
+- **Workspace Directory Management**: Right-click a workspace directory to rename or set it as the active directory (inline rename with Enter/Esc/on-blur commit). Directory add and project creation now use a generic FormDialog with drag-and-drop folder support.
+- **IDE Detection**: Installed IDEs are detected on Windows/Linux/macOS and offered in an "Open with" submenu with real brand icons (VS Code, Cursor, JetBrains, …) and a lucide fallback.
+- **SSH Improvements**: Connection errors are classified (network/timeout/auth/sftp/invalid/unknown) and localized; hosts can be imported from `~/.ssh/config` (with `~`/`%d` expansion) to prefill the connect wizard.
+- **Terminal Session Identity**: Local processes (one-shot commands and persistent tabs) inherit the Snow session identity via `SNOW_SESSION_ID`, `TRELLIS_CONTEXT_ID`, `SNOW_CWD`, `SNOW_PLATFORM`, without overriding inherited values.
+- **Tool Call Rendering**: Dedicated cards for skill / config / app-control / dbx tool calls; tool-name badges use stable category-based lucide icons and localized names (46 new i18n keys); DBX double-prefix normalization; ImageGen gallery drops columns in narrow containers.
+- **Markdown Image Lightbox**: Clicking an image in a markdown reply opens a zoomed lightbox with download.
+- **Database Recovery**: Corrupted SQLite databases are detected and automatically recovered at startup.
+- **MCP**: JSON draft editing refactored to single-entry `{name: {...}}` mapping with lenient parsing (container + legacy formats); external tool calls retry once via a legacy initialize handshake on "Transport closed"; stdio stderr is forwarded to app logs.
+- **Config Server**: New `personalization` scope for `~/.snow/ROLE.md`; config writes are pre-backed up and cleaned after success; `config-delete` requires explicit user confirmation.
+- **Session Isolation**: Plan/Goal mode is strictly per-session — the global mode settings chain was removed entirely.
+- **Agent Loop**: Compaction only runs when the loop will continue; `resume_after_compaction` prevents duplicate handoff after compaction; codelens refocused on symbol navigation (diagnose tool and semantic analyzers removed).
+- **Hooks**: Sub-agent lifecycle hooks are bound to the tool card; execution results fill the chat width with structured action details and localized labels.
+
+## Improvements
+
+- **ImageGen**: Remote-URL results are downloaded and persisted to the image library; `n` accepts 1-8 via internal fan-out; per-request `prompts` / `requestImages`; gallery migration is staged (prepare/chunk/commit) with crash recovery and rollback.
+- **Browser Automation**: Accessibility-tree snapshots (`action=ax`), network debugging (`networkDetails` / `networkState` / `route`), encrypted login-state save/restore, performance traces, and new interaction tools (`wait`, `press_key`, `select_option`, `hover`, `upload-file`, back/forward).
+- **Browser**: MCP tool names unified with upstream style (`press_key`, `select_option`); `browser-wait` gains `selector`/`selectorGone`; `ref` targeting auto scrolls into view; click uses a real 50 ms press interval; webview context menu; detached DevTools windows are branded with the Snow icon and lifecycle-managed.
+- Token tooltips show compact K/M/B units; Mermaid rendering recovers from import failures and retries on the next batch; conversation summaries follow the chat thinking configuration for reasoning effort; checkpoint diffs are cached to avoid repeated file reads.
+
+## Bug Fixes
+
+- `safeSend` IPC avoids renderer frame-release races; the window self-heals after a renderer crash.
+- ESC no longer accidentally cancels the session when a command/file panel is open.
+- Fixed `browser-type` selector syntax error; `openSettings` now accepts `imagegen-settings` / `image-library` pages.
+- Completed 63 missing i18n keys across all locales.
+
+## v0.1.20
+
+## New Features
+
+- **Browser MCP Tools**: Added `wait`, `press_key`, `hover`, `navigate_back`, `navigate_forward`, and `select_option` tools. DevTools extended with `network_detail` and `network_clear` actions, plus optional static resource filtering for network listings.
+- **Multi-Environment Import Discovery**: Configuration and skill discovery now works across WSL distributions and SSH remote hosts. Unsupported stdio MCP servers are surfaced as candidates with reasons, remote skills are downloaded via SFTP, and per-environment source details are shown in the import settings UI.
+
+## Improvements
+
+- **Git Graph**: Commit graph now shows full decoration with ref badges and a visual HEAD marker with glow effect. Branch creation dropdown restructured.
+- **Bash Kill Safety**: Cancellation and timeout branches now use `biased` select to guarantee stop requests aren't lost; Windows `taskkill` is bounded with immediate stream draining. UI guards against duplicate kill IPC calls and adds a renderer-side timeout watchdog.
+- **Chat Auto-Scroll**: Scroll-state decoupled from geometric pinning to maintain follow mode during rapid content growth; wheel events intercepted early to honor user intent.
+- **max_tokens Handling**: Updated `max_tokens` handling in Anthropic payload and file search agent; added hints in API settings.
+
 ## v0.1.19
 
 ## Bug Fixes
@@ -17,7 +63,6 @@
 - Input box supports dragging and dropping images and files from external sources
 - Added copy function to configuration file
 - Optimized UI display of some components
-
 
 ## v0.1.17
 
@@ -105,9 +150,29 @@
   refuses to enable a channel that has no API key or model (with a
   localized hint) — matching the backend rule that only fully configured
   channels expose the generation tool to the agent.
+- **Composer Drag-and-Drop Images**: The input box now accepts images dragged
+  in from the file manager (single or multiple at once), inserting them as
+  image chips exactly like pasting — previously the drop handlers only
+  understood the app-internal `application/json` drag payloads (file / commit
+  / change tags) and silently ignored external files (no drop cursor, no
+  insertion).
+- **Path-Aware `@` File Mentions**: The `@` file panel now supports browsing
+  into folders like a file manager — clicking a folder entry (or `→` / `Enter`)
+  navigates into it and rewrites the `@` query to the relative path; a
+  breadcrumb bar (workspace root → path segments) lets you jump back, `←` goes
+  up one level, and typing paths directly (`src/`, `src/renderer/App`) browses
+  or filters inside the target directory.
 
 ## Bug Fixes
 
+- **Markdown Images with Local Paths**: When the model referenced generated
+  images by local relative paths (`image/...` library paths or `upload/...`
+  paths) inside the Markdown reply body, the renderer tried to load them as
+  relative URLs and showed broken-image icons. Local paths (backslash /
+  URL-encoded variants normalized, `..` traversal and absolute paths
+  rejected) are now rewritten to `img-proxy://` protocol URLs together with
+  external images, and the main process serves them straight from disk —
+  no IPC round-trips or data-URL caches in the renderer.
 - **i18n Placeholder Syntax**: `settings.imagegenChannelCount` and
   `settings.imageLibraryCount` used the single-brace `{count}` placeholder
   format, so the channel count and image-library count rendered literally

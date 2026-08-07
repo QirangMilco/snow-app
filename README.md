@@ -22,9 +22,17 @@ Snow App is a developer-focused desktop application that integrates AI-powered c
 - **Integrated Terminal** - Full PTY-based terminal emulation powered by node-pty and xterm.js
 - **SSH Management** - Connect to and manage remote servers via SSH with credential persistence
 - **Git Panel** - Visual Git diff viewer and repository management
-- **Browser Panel** - Built-in browser with proxy support for web inspection
+- **Browser Panel** - Built-in browser with proxy support, network inspection, login-state management, and AI-driven automation
 - **MCP Support** - Model Context Protocol integration for extensible AI tooling
+- **AI Image Generation** - Built-in text-to-image / image editing (OpenAI / Gemini multi-channel); generated images are persisted into an image library
+- **Skills System** - Install / enable / manage AI skills (SKILL.md) that dynamically extend the agent
+- **Hooks** - Lifecycle hooks that run custom commands or prompts before/after events like requests and compression
+- **Sub-Agents** - Independent AI execution loops for parallel, complex multi-step tasks
+- **Codebase Semantic Search** - Embedding-index-based code search plus multi-language code symbol location (codelens)
+- **Plan / Goal Modes** - Plan-first and autonomous long-running task execution modes
+- **Interactive Terminal Sessions** - The AI can drive persistent PTY sessions for long-running and interactive commands
 - **Codebase Explorer** - Project file tree with workspace directory management
+- **Config Import** - Import MCP servers, skills, plugins, and prompts from Codex / WSL / SSH environments
 - **i18n** - Multi-language support with a locale system
 - **Settings Management** - Granular configuration for API keys, custom headers, proxy, sensitive commands, and more
 - **Cross-Platform** - Runs on macOS, Windows, and Linux
@@ -35,13 +43,13 @@ Snow App is a developer-focused desktop application that integrates AI-powered c
 | --------- | --------------------------------------------- |
 | Shell     | Electron 37                                   |
 | Frontend  | React 19, TypeScript 5.9                      |
-| Bundler   | electron-vite (Vite 4)                        |
+| Bundler   | electron-vite 4 (Vite 7)                        |
 | Native    | Rust 2021 Edition (napi-rs 3)                 |
 | Packaging | electron-builder 26                           |
 | Terminal  | node-pty, xterm.js 6                          |
 | SSH       | ssh2                                          |
 | Storage   | rusqlite (SQLite, bundled)                    |
-| AI/HTTP   | async-openai, reqwest                         |
+| AI/HTTP   | reqwest (multi-provider protocol adapters and streaming HTTP) |
 | Markdown  | markdown-it, streaming-markdown, highlight.js |
 | Icons     | lucide-react                                  |
 
@@ -54,25 +62,32 @@ snow-app/
 │   │   ├── app/         # Application bootstrap & window management
 │   │   ├── codex/       # Codex compatibility import layer
 │   │   │   └── importer.ts # Manual settings import for MCP, Skills, Plugins, and prompts
+│   │   ├── importConfig/ # Third-party config import (reversible transaction + environment discovery)
 │   │   ├── ipc/         # IPC handler registration
-│   │   ├── native/      # Rust native bridge
+│   │   ├── native/      # Rust native bridge (storageReady gate)
+│   │   ├── notification/ # System notifications
+│   │   ├── plugins/     # Plugin runtime (isolated workers)
 │   │   ├── pty/         # PTY & terminal management
 │   │   ├── settings/    # Configuration stores
 │   │   ├── snowCli/     # CLI path & profile management
 │   │   ├── ssh/         # SSH connection management
+│   │   ├── types/       # Shared types
+│   │   ├── updater/     # App updates
 │   │   └── utils/       # Shared utilities
-│   ├── preload/         # Electron preload script
-│   └── renderer/        # React frontend
-│       ├── components/  # UI components (sidebar, main content, right panel)
-│       ├── hooks/       # Custom React hooks
-│       ├── i18n/        # Internationalization
-│       └── utils/       # Frontend utilities
+│   ├── preload/         # Electron preload script (window.snow.* allowlist)
+│   ├── renderer/        # React frontend
+│   │   ├── components/  # UI components (sidebar, main content, right panel)
+│   │   ├── hooks/       # Custom React hooks
+│   │   ├── i18n/        # Internationalization
+│   │   └── utils/       # Frontend utilities
+│   └── shared/          # Code shared between main & renderer
 ├── native/              # Rust native module
 │   └── src/
 │       ├── api/         # AI API integration
 │       ├── exports/     # napi-rs export bindings
-│       ├── mcp/         # MCP protocol implementation
-│       ├── prompt/      # System prompt handling
+│       ├── hooks/       # Lifecycle hook execution
+│       ├── mcp/         # MCP protocol implementation (built-in servers + external client)
+│       ├── prompt/      # System prompt handling (incl. Plan/Goal modes)
 │       └── storage/     # SQLite persistence
 ├── scripts/             # Build & utility scripts
 ├── resources/           # App icons & static assets
@@ -150,7 +165,7 @@ Runs both TypeScript type checking (`tsc --noEmit`) and Rust checking (`cargo ch
 
 The Rust native module (`snow_native`) is compiled to a Node addon (`.node`) via napi-rs. It provides:
 
-- **AI API streaming** - Async streaming responses via async-openai with bring-your-own-transport (BYOT)
+- **AI API streaming** - Async streaming via reqwest and provider adapters for OpenAI Chat/Responses, Anthropic, and Gemini protocols
 - **SQLite storage** - Embedded database via rusqlite for settings and chat history
 - **File watching** - File system monitoring via the `notify` crate
 - **HTTP client** - Full-featured HTTP client via reqwest with compression support

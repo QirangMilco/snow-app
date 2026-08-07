@@ -60,6 +60,52 @@ const SKIP_DIRS: &[&str] = &[
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 static CHECKPOINT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+/// 进程内 diff 缓存上限：超过后整体清空（LRU 之外的简单防膨胀手段，
+/// diff 成本远低于全量重算，清空后逐次重建即可）。
+const DIFF_CACHE_MAX_ENTRIES: usize = 2048;
+
+struct CachedCheckpointDiff {
+    /// original 状态摘要（object_id / git head+path / missing），作为失效依据之一
+    original_digest: String,
+    current_mtime_ms: u64,
+    current_size: u64,
+    content: String,
+    is_binary: bool,
+}
+
+/// 进程内 diff 缓存：key = "{checkpoint_id}:{path}"。
+/// 命中条件：original 摘要一致 + 磁盘文件 mtime/size 未变。
+/// 工具高频循环下，list_checkpoint_diffs 对未变化文件直接复用已生成的
+/// unified diff，避免反复读文件 + TextDiff 全量计算（P0-4 性能优化）。
+static DIFF_CACHE: OnceLock<Mutex<HashMap<String, CachedCheckpointDiff>>> =
+    OnceLock::new();
+
+fn diff_cache() -> MutexGuard<'static, HashMap<String, CachedCheckpointDiff>> {
+    DIFF_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn mtime_ms(meta: &fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn original_digest(original: &OriginalState, git: Option<&GitBaseline>, path: &str) -> String {
+    match original {
+        OriginalState::Missing => "missing".to_string(),
+        OriginalState::Object { object_id } => format!("obj:{object_id}"),
+        OriginalState::Git => format!(
+            "git:{}:{path}",
+            git.map(|baseline| baseline.head.as_str()).unwrap_or("?")
+        ),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct CheckpointManifest {
     version: u32,
@@ -1277,17 +1323,55 @@ pub fn list_checkpoint_diffs(
         )? else {
             continue;
         };
-        let original_content = read_original_content(
-            &entry.original,
-            manifest.git.as_ref(),
-            &entry.path,
-        )?;
-        let current_content = read_current_content(&current)?;
-        let (content, is_binary) = build_unified_diff(
-            &entry.path,
-            original_content.as_deref(),
-            current_content.as_deref(),
-        );
+
+        // 进程内 diff 缓存：original 摘要 + 磁盘 mtime/size 均未变时直接
+        // 复用上次生成的 unified diff，避免高频工具循环下反复读文件与
+        // TextDiff 全量计算（P0-4 性能优化）。
+        let cache_key = format!("{}:{}", checkpoint_id, entry.path);
+        let digest = original_digest(&entry.original, manifest.git.as_ref(), &entry.path);
+        let cached = {
+            let cache = diff_cache();
+            let meta = fs::metadata(&current).ok();
+            cache.get(&cache_key).and_then(|cached_entry| {
+                let meta = meta.as_ref()?;
+                (cached_entry.original_digest == digest
+                    && cached_entry.current_mtime_ms == mtime_ms(meta)
+                    && cached_entry.current_size == meta.len())
+                .then_some((cached_entry.content.clone(), cached_entry.is_binary))
+            })
+        };
+        let (content, is_binary) = match cached {
+            Some((content, is_binary)) => (content, is_binary),
+            None => {
+                let original_content = read_original_content(
+                    &entry.original,
+                    manifest.git.as_ref(),
+                    &entry.path,
+                )?;
+                let current_content = read_current_content(&current)?;
+                let (content, is_binary) = build_unified_diff(
+                    &entry.path,
+                    original_content.as_deref(),
+                    current_content.as_deref(),
+                );
+                let meta = fs::metadata(&current).ok();
+                let mut cache = diff_cache();
+                if cache.len() >= DIFF_CACHE_MAX_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(
+                    cache_key,
+                    CachedCheckpointDiff {
+                        original_digest: digest,
+                        current_mtime_ms: meta.as_ref().map(mtime_ms).unwrap_or(0),
+                        current_size: meta.as_ref().map(|meta| meta.len()).unwrap_or(0),
+                        content: content.clone(),
+                        is_binary,
+                    },
+                );
+                (content, is_binary)
+            }
+        };
         diffs.push(CheckpointFileDiff {
             path: entry.path,
             change_type,
@@ -1359,13 +1443,30 @@ fn build_unified_diff(
         return (String::new(), true);
     }
 
+    // 行尾归一化后再做行级 diff：Windows 下工具/编辑器常把文件落盘为
+    // CRLF，而 original 来自 git/checkpoint 对象（LF）。直接按字节对比
+    // 会让每个 CRLF 文件呈现"整文件改动"的数万行假 diff（仓库
+    // .gitattributes 注释记载过同类现象）。仅当文本确实含 \r 时才替换，
+    // LF-only 文件走零拷贝路径。此处仅归一化展示用的 diff，不修改任何
+    // 落盘内容。
+    let original_text = if original_text.contains('\r') {
+        std::borrow::Cow::Owned(original_text.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(original_text)
+    };
+    let current_text = if current_text.contains('\r') {
+        std::borrow::Cow::Owned(current_text.replace("\r\n", "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(current_text)
+    };
+
     let original_header = original
         .map(|_| format!("a/{relative}"))
         .unwrap_or_else(|| "/dev/null".to_string());
     let current_header = current
         .map(|_| format!("b/{relative}"))
         .unwrap_or_else(|| "/dev/null".to_string());
-    let content = TextDiff::from_lines(original_text, current_text)
+    let content = TextDiff::from_lines(&original_text, &current_text)
         .unified_diff()
         .context_radius(3)
         .header(&original_header, &current_header)
@@ -1557,5 +1658,44 @@ mod tests {
         assert!(future.exists());
 
         fs::remove_dir_all(pending.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn crlf_and_lf_content_produce_identical_diff() {
+        // 行尾归一化：磁盘 CRLF 与 git/checkpoint 的 LF 内容一致时，
+        // 展示 diff 应完全相同，不得出现"整文件改动"的数万行假 diff。
+        let lf = Some(b"line1\nline2\nline3\n".as_slice());
+        let crlf = Some(b"line1\r\nline2\r\nline3\r\n".as_slice());
+        let (lf_diff, lf_binary) = build_unified_diff("test.txt", lf, lf);
+        let (crlf_diff, crlf_binary) = build_unified_diff("test.txt", lf, crlf);
+        assert!(!lf_binary);
+        assert!(!crlf_binary);
+        assert_eq!(lf_diff, crlf_diff);
+        // 归一化后不得出现以 +/- 开头的假变更行
+        assert!(
+            crlf_diff
+                .lines()
+                .all(|line| !line.starts_with('+') && !line.starts_with('-'))
+        );
+    }
+
+    #[test]
+    fn real_content_change_reports_diff_lines() {
+        let original = Some(b"alpha\nbeta\ngamma\n".as_slice());
+        let current = Some(b"alpha\nBETA\ngamma\n".as_slice());
+        let (diff, is_binary) = build_unified_diff("test.txt", original, current);
+        assert!(!is_binary);
+        assert!(diff.lines().any(|line| line == "-beta"));
+        assert!(diff.lines().any(|line| line == "+BETA"));
+    }
+
+    #[test]
+    fn nul_bytes_are_marked_binary() {
+        let (_, is_binary) = build_unified_diff(
+            "bin.dat",
+            Some(b"a\0b".as_slice()),
+            Some(b"a\0c".as_slice()),
+        );
+        assert!(is_binary);
     }
 }
