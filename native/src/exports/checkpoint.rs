@@ -82,6 +82,27 @@ pub async fn list_checkpoint_diffs(
     .map_err(map_spawn_error)?
 }
 
+/// Remove orphaned pending worktree snapshots under
+/// `<app-storage>/checkpoints/pending/`.
+///
+/// Pending snapshots are transient captures created before each terminal
+/// command and normally removed automatically; if the app crashed or was
+/// force-killed they can be left behind and accumulate disk usage.
+/// `olderThanSecs` is the minimum age (in seconds) for a snapshot to be
+/// removed — pass `0` to clear all leftovers (safe at startup, since no
+/// terminal command can be running then). Returns the number of snapshots
+/// removed.
+#[napi]
+pub async fn cleanup_pending_checkpoints(older_than_secs: f64) -> napi::Result<u32> {
+    let older_than_secs = older_than_secs.max(0.0) as u64;
+    tokio::task::spawn_blocking(move || {
+        crate::storage::services::checkpoint::cleanup_pending_checkpoints(older_than_secs)
+            .map(|count| count as u32)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
 /// Convert a tokio JoinError into a napi Error.
 fn map_spawn_error(e: tokio::task::JoinError) -> Error {
     Error::new(

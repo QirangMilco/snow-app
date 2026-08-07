@@ -7,6 +7,12 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+# 测试专用:启用 napi 的 noop 模式,让测试二进制无需链接 Node.js 符号
+# (否则 `cargo test` 会因 undefined symbol `_napi_*` 链接失败)。
+# 用法: cargo test --features test-napi
+test-napi = ["napi/noop"]
+
 [dependencies]
 chrono = "0.4.38"
 blake3 = "1"

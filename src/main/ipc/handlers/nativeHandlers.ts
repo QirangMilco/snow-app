@@ -945,6 +945,17 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
       );
     }
   );
+  ipcMain.handle(
+    "checkpoint:cleanup-pending",
+    (_event, olderThanSecs: unknown) => {
+      if (typeof olderThanSecs !== "number" || !Number.isFinite(olderThanSecs)) {
+        throw new Error(
+          "olderThanSecs must be a finite number to clean up pending checkpoints"
+        );
+      }
+      return native.cleanupPendingCheckpoints(olderThanSecs);
+    }
+  );
 
   ipcMain.handle(
     "usage:list-records",

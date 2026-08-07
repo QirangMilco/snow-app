@@ -135,6 +135,77 @@ fn generate_checkpoint_id() -> String {
     format!("cp-{}-{}-{}", now.as_secs(), now.subsec_nanos(), count)
 }
 
+/// Parse the leading seconds timestamp from a pending snapshot directory name
+/// produced by `generate_checkpoint_id` (`cp-<secs>-<nanos>-<count>`).
+fn parse_pending_timestamp(dir_name: &str) -> Option<u64> {
+    let name = dir_name.strip_prefix("cp-")?;
+    let secs = name.split('-').next()?;
+    secs.parse().ok()
+}
+
+/// Remove pending snapshot directories older than `older_than_secs` under
+/// `pending_root`. `now_secs` is injected for testability.
+///
+/// Directories whose names cannot be parsed as checkpoint snapshots are left
+/// untouched (conservative); a single failed removal (e.g. a locked file on
+/// Windows) is skipped without aborting the rest.
+fn cleanup_orphaned_pending_snapshots_in_dir(
+    pending_root: &Path,
+    older_than_secs: u64,
+    now_secs: u64,
+) -> Result<usize> {
+    let entries = match fs::read_dir(pending_root) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(0), // pending dir does not exist: nothing to clean
+    };
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(created_secs) = parse_pending_timestamp(name) else {
+            continue; // not a snapshot we generated — leave it alone
+        };
+        if now_secs.saturating_sub(created_secs) <= older_than_secs {
+            continue; // still within the retention window
+        }
+        if fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// Remove orphaned pending worktree snapshots under
+/// `<app-storage>/checkpoints/pending/`. Pending snapshots are transient
+/// captures created before each terminal command and normally removed by
+/// `CheckpointWorktreeCapture`'s `Drop`; if the process crashed or was
+/// force-killed they linger forever and accumulate disk usage. The caller
+/// must hold the checkpoint lock.
+fn cleanup_orphaned_pending_snapshots(older_than_secs: u64) -> Result<usize> {
+    let pending_root = checkpoint_root()?.join(PENDING_DIR_NAME);
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    cleanup_orphaned_pending_snapshots_in_dir(&pending_root, older_than_secs, now_secs)
+}
+
+/// Clean up orphaned pending worktree snapshots, holding the checkpoint lock.
+///
+/// `older_than_secs` is the minimum age in seconds for a snapshot to be
+/// removed; pass `0` to clear every leftover (safe at startup because no
+/// terminal command can be running then). Returns the number of snapshots
+/// removed.
+pub fn cleanup_pending_checkpoints(older_than_secs: u64) -> Result<usize> {
+    let _guard = checkpoint_guard()?;
+    cleanup_orphaned_pending_snapshots(older_than_secs)
+}
+
 fn to_forward_slashes(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -793,6 +864,9 @@ pub fn capture_checkpoint_worktree_before(
         return Ok(None);
     }
     let _guard = checkpoint_guard()?;
+    // 防御复发:清理上次崩溃/强杀残留的孤儿 pending 快照。正常生命周期内
+    // pending 目录从创建到删除只持续一次命令的时长,超过 24h 的必为孤儿。
+    let _ = cleanup_orphaned_pending_snapshots(24 * 3600);
     let root = canonical_work_dir(&work_dir)?;
     let pending_dir = checkpoint_root()?
         .join(PENDING_DIR_NAME)
@@ -1367,4 +1441,121 @@ fn files_are_different(a: &Path, b: &Path) -> bool {
     };
 
     content_a != content_b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_pending_root(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "snow-checkpoint-pending-test-{}-{}",
+            std::process::id(),
+            tag
+        ));
+        let pending = base.join(PENDING_DIR_NAME);
+        fs::create_dir_all(&pending).unwrap();
+        pending
+    }
+
+    #[test]
+    fn parse_pending_timestamp_accepts_generated_names() {
+        let id = generate_checkpoint_id();
+        let secs = parse_pending_timestamp(&id).expect("generated id should parse");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(now.saturating_sub(secs) < 5);
+    }
+
+    #[test]
+    fn parse_pending_timestamp_rejects_unknown_names() {
+        assert_eq!(parse_pending_timestamp(""), None);
+        assert_eq!(parse_pending_timestamp("pending"), None);
+        assert_eq!(parse_pending_timestamp("cp-"), None);
+        assert_eq!(parse_pending_timestamp("cp-abc-1-0"), None);
+        assert_eq!(parse_pending_timestamp("manifest-123456-1-0"), None);
+        // 首段可解析的数字即认可(cp- 前缀是 checkpoint 系统专用命名空间)。
+        assert_eq!(parse_pending_timestamp("cp-123"), Some(123));
+    }
+
+    #[test]
+    fn cleanup_removes_only_expired_snapshots() {
+        let pending = temp_pending_root("expired");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let old = pending.join(format!("cp-{}-0-0", now - 7 * 86400));
+        let fresh = pending.join(format!("cp-{}-0-0", now - 3600));
+        let unknown = pending.join("random-dir");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&fresh).unwrap();
+        fs::create_dir_all(&unknown).unwrap();
+        fs::write(pending.join("cp-standalone-file"), b"x").unwrap();
+
+        let removed =
+            cleanup_orphaned_pending_snapshots_in_dir(&pending, 24 * 3600, now).unwrap();
+        assert_eq!(removed, 1, "only the 7-day-old snapshot should be removed");
+        assert!(!old.exists());
+        assert!(fresh.exists(), "snapshot within retention window must survive");
+        assert!(unknown.exists(), "non-snapshot directory must survive");
+        assert!(
+            pending.join("cp-standalone-file").exists(),
+            "plain file must survive"
+        );
+
+        fs::remove_dir_all(pending.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn cleanup_with_zero_threshold_removes_everything_parseable() {
+        let pending = temp_pending_root("zero");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let a = pending.join(format!("cp-{}-0-0", now - 10));
+        let b = pending.join(format!("cp-{}-0-0", now - 86400));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+
+        let removed = cleanup_orphaned_pending_snapshots_in_dir(&pending, 0, now).unwrap();
+        assert_eq!(removed, 2);
+        assert!(!a.exists());
+        assert!(!b.exists());
+
+        fs::remove_dir_all(pending.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn cleanup_missing_pending_dir_is_noop() {
+        let base = std::env::temp_dir().join(format!(
+            "snow-checkpoint-pending-test-{}-missing",
+            std::process::id()
+        ));
+        let pending = base.join(PENDING_DIR_NAME);
+        let removed = cleanup_orphaned_pending_snapshots_in_dir(&pending, 0, 12345).unwrap();
+        assert_eq!(removed, 0);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cleanup_future_timestamps_are_never_removed() {
+        let pending = temp_pending_root("future");
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // 时钟回拨或异常时间戳:now.saturating_sub(created) 为 0,永不删除。
+        let future = pending.join(format!("cp-{}-0-0", now + 86400));
+        fs::create_dir_all(&future).unwrap();
+
+        let removed = cleanup_orphaned_pending_snapshots_in_dir(&pending, 0, now).unwrap();
+        assert_eq!(removed, 0);
+        assert!(future.exists());
+
+        fs::remove_dir_all(pending.parent().unwrap()).unwrap();
+    }
 }

@@ -670,6 +670,8 @@ export const systemApi = {
       workDir,
       includeAll ?? false
     ),
+  cleanupPendingCheckpoints: (olderThanSecs: number): Promise<number> =>
+    ipcRenderer.invoke("checkpoint:cleanup-pending", olderThanSecs),
   writeLog: (level: string, entry: unknown): Promise<void> =>
     ipcRenderer.invoke("debug:write-log", level, entry),
   sum: (a: number, b: number): Promise<number> =>

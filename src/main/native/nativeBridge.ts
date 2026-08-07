@@ -798,6 +798,8 @@ export const loadNativeBridge = (): NativeBridge => {
         Promise.reject(
           new Error("Rust native bridge is required to list checkpoint diffs")
         ),
+      // 清理是 best-effort:无 native 桥时没有可清理的残留,返回 0 而非报错。
+      cleanupPendingCheckpoints: () => Promise.resolve(0),
       appendToolMessage: () =>
         Promise.reject(
           new Error("Rust native bridge is required to append a tool message")

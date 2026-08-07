@@ -1444,6 +1444,7 @@ export type NativeBridge = {
   createCheckpoint: (workDir: string) => Promise<string>;
   restoreCheckpoint: (checkpointId: string, workDir: string) => Promise<void>;
   deleteCheckpoint: (checkpointId: string) => Promise<void>;
+  cleanupPendingCheckpoints: (olderThanSecs: number) => Promise<number>;
   listCheckpointChanges: (
     checkpointId: string,
     workDir: string
