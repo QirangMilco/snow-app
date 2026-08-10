@@ -1,21 +1,26 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import { homedir } from "node:os";
-import type { NativeBridge } from "../../native/types";
+import type { NativeBridge, RemoteDraftInput } from "../../native/types";
 import {
   connectSsh,
   disconnectSsh,
   executeSshCommand,
   listSshDirectory,
   parseSshUrl,
+  probeSshCapabilities,
   isSshPath,
   readSshFile,
+  readSshFileWithVersion,
+  resolveSshWorkspaceRoot,
   writeSshFile,
   deleteSshFile,
   renameSshFile,
   deleteSshDirectory,
   statSshEntry,
   type SshConnectParams,
+  type SshFileVersion,
 } from "../../ssh/sshManager";
+import { sshConnectionManager } from "../../ssh/sshConnectionManager";
 import { processFileContent } from "../../utils/fileReader";
 import {
   saveSshCredentialWithPlainSecret,
@@ -292,7 +297,169 @@ export const registerSshHandlers = (_native: NativeBridge): void => {
     if (typeof obj.passphrase === "string" && obj.passphrase) {
       result.passphrase = obj.passphrase;
     }
+    if (obj.hostKeyPolicy === "replace") {
+      result.hostKeyPolicy = "replace";
+    }
     return result;
+  };
+
+  const normalizeSshFileVersion = (value: unknown): SshFileVersion => {
+    if (typeof value !== "object" || value === null) {
+      throw new Error("Remote file version must be an object");
+    }
+    const input = value as Record<string, unknown>;
+    if (typeof input.exists !== "boolean") {
+      throw new Error("Remote file version must include exists");
+    }
+    if (!input.exists) {
+      return { exists: false };
+    }
+    if (
+      typeof input.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/i.test(input.sha256) ||
+      typeof input.size !== "number" ||
+      !Number.isSafeInteger(input.size) ||
+      input.size < 0 ||
+      typeof input.mtime !== "number" ||
+      !Number.isFinite(input.mtime) ||
+      input.mtime < 0
+    ) {
+      throw new Error("Remote file version is invalid");
+    }
+    return {
+      exists: true,
+      sha256: input.sha256,
+      size: input.size,
+      mtime: input.mtime,
+    };
+  };
+
+  const normalizeProfileId = (value: unknown): string => {
+    if (typeof value !== "string" || !value.trim().startsWith("ssh-profile:")) {
+      throw new Error("SSH profile ID is required");
+    }
+    return value.trim();
+  };
+
+  const normalizeRemoteDraftInput = (value: unknown): RemoteDraftInput => {
+    if (typeof value !== "object" || value === null) {
+      throw new Error("Remote draft must be an object");
+    }
+    const input = value as Record<string, unknown>;
+    const profileId = normalizeProfileId(input.profileId);
+    const workspaceId =
+      typeof input.workspaceId === "string" ? input.workspaceId.trim() : "";
+    const remotePath =
+      typeof input.remotePath === "string" ? input.remotePath.trim() : "";
+    const baseVersionJson =
+      typeof input.baseVersionJson === "string" ? input.baseVersionJson : "";
+    const content = typeof input.content === "string" ? input.content : null;
+    const status = input.status;
+    if (!workspaceId || !remotePath || content === null) {
+      throw new Error("Remote draft workspace, path, and content are required");
+    }
+    if (status !== "pending" && status !== "conflict") {
+      throw new Error("Remote draft status is invalid");
+    }
+    try {
+      JSON.parse(baseVersionJson);
+    } catch {
+      throw new Error("Remote draft base version must be JSON");
+    }
+    return {
+      profileId,
+      workspaceId,
+      remotePath,
+      baseVersionJson,
+      content,
+      status,
+    };
+  };
+
+  sshConnectionManager.subscribe((state) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send("ssh:profile-state", state);
+      }
+    }
+  });
+
+  ipcMain.handle("ssh:profiles:connect", async (_event, params: unknown) =>
+    sshConnectionManager.acquire(normalizeSshConnectParams(params))
+  );
+  ipcMain.handle("ssh:profiles:get", (_event, profileId: unknown) =>
+    sshConnectionManager.get(normalizeProfileId(profileId))
+  );
+  ipcMain.handle("ssh:profiles:release", (_event, profileId: unknown) => {
+    sshConnectionManager.release(normalizeProfileId(profileId));
+  });
+  ipcMain.handle(
+    "ssh:drafts:list",
+    (_event, workspaceId: unknown, profileId: unknown) => {
+      if (typeof workspaceId !== "string" || !workspaceId.trim()) {
+        throw new Error("Remote draft workspace ID is required");
+      }
+      return _native.listRemoteDrafts(
+        workspaceId.trim(),
+        profileId === undefined || profileId === null
+          ? undefined
+          : normalizeProfileId(profileId)
+      );
+    }
+  );
+  ipcMain.handle("ssh:drafts:upsert", (_event, draft: unknown) =>
+    _native.upsertRemoteDraft(normalizeRemoteDraftInput(draft))
+  );
+  ipcMain.handle(
+    "ssh:drafts:delete",
+    (_event, profileId: unknown, workspaceId: unknown, remotePath: unknown) => {
+      if (typeof workspaceId !== "string" || !workspaceId.trim()) {
+        throw new Error("Remote draft workspace ID is required");
+      }
+      if (typeof remotePath !== "string" || !remotePath.trim()) {
+        throw new Error("Remote draft path is required");
+      }
+      return _native.deleteRemoteDraft(
+        normalizeProfileId(profileId),
+        workspaceId.trim(),
+        remotePath.trim()
+      );
+    }
+  );
+
+  const normalizeSshFileWriteOptions = async (
+    sessionId: string,
+    value: unknown
+  ): Promise<{ expectedVersion: SshFileVersion; workspaceRoot: string }> => {
+    if (typeof value !== "object" || value === null) {
+      throw new Error("Atomic remote file save requires write options");
+    }
+    const input = value as Record<string, unknown>;
+    if (input.workspaceRoot !== undefined) {
+      throw new Error("Atomic remote file save does not accept workspaceRoot");
+    }
+    if (typeof input.workspaceId !== "string" || !input.workspaceId.trim()) {
+      throw new Error("Atomic remote file save requires a workspace ID");
+    }
+    if (input.expectedVersion === undefined) {
+      throw new Error(
+        "Atomic remote file save requires an expected file version"
+      );
+    }
+    const workspaceId = input.workspaceId.trim();
+    const workspaces = await _native.listWorkspaceDirectories();
+    const workspace = workspaces.find(
+      (directory) => directory.directoryId === workspaceId
+    );
+    if (!workspace || workspace.kind !== "ssh") {
+      throw new Error(
+        "Atomic remote file save workspace is not an SSH workspace"
+      );
+    }
+    return {
+      workspaceRoot: resolveSshWorkspaceRoot(sessionId, workspace.path),
+      expectedVersion: normalizeSshFileVersion(input.expectedVersion),
+    };
   };
 
   ipcMain.handle("ssh:connect", async (_event, params: unknown) => {
@@ -337,6 +504,16 @@ export const registerSshHandlers = (_native: NativeBridge): void => {
         throw new Error("Remote command is required");
       }
       return executeSshCommand(sessionId.trim(), command);
+    }
+  );
+
+  ipcMain.handle(
+    "ssh:probe-capabilities",
+    async (_event, sessionId: unknown) => {
+      if (typeof sessionId !== "string" || !sessionId.trim()) {
+        throw new Error("SSH session ID is required");
+      }
+      return probeSshCapabilities(sessionId.trim());
     }
   );
 
@@ -428,8 +605,14 @@ export const registerSshHandlers = (_native: NativeBridge): void => {
       if (typeof remotePath !== "string" || !remotePath.trim()) {
         throw new Error("Remote file path is required");
       }
-      const buffer = await readSshFile(sessionId.trim(), remotePath.trim());
-      return processFileContent(remotePath.trim(), buffer);
+      const file = await readSshFileWithVersion(
+        sessionId.trim(),
+        remotePath.trim()
+      );
+      return {
+        ...processFileContent(remotePath.trim(), file.content),
+        remoteVersion: file.version,
+      };
     }
   );
 
@@ -439,7 +622,8 @@ export const registerSshHandlers = (_native: NativeBridge): void => {
       _event,
       sessionId: unknown,
       remotePath: unknown,
-      content: unknown
+      content: unknown,
+      options: unknown
     ) => {
       if (typeof sessionId !== "string" || !sessionId.trim()) {
         throw new Error("SSH session ID is required");
@@ -450,7 +634,12 @@ export const registerSshHandlers = (_native: NativeBridge): void => {
       if (typeof content !== "string") {
         throw new Error("File content must be a string");
       }
-      return writeSshFile(sessionId.trim(), remotePath.trim(), content);
+      return writeSshFile(
+        sessionId.trim(),
+        remotePath.trim(),
+        content,
+        await normalizeSshFileWriteOptions(sessionId.trim(), options)
+      );
     }
   );
 

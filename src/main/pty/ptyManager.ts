@@ -1,13 +1,32 @@
 import { type WebContents } from "electron";
 import { createRequire } from "node:module";
-import { chmodSync, existsSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { tmpdir } from "node:os";
 import type { IPty } from "node-pty";
 
-import { isSshPath, parseSshUrl } from "../ssh/sshManager";
+import {
+  connectSsh,
+  disconnectSsh,
+  isSshPath,
+  parseSshUrl,
+  type SshConnectParams,
+} from "../ssh/sshManager";
 import { getDecryptedSecret, getSshCredential } from "../ssh/sshCredentials";
+import {
+  formatSshKnownHost,
+  getSshHostKey,
+  type SshHostKeyRecord,
+} from "../ssh/sshHostKeys";
 import { ensureConptyDll } from "./conptyDllHelper";
 import { buildPtyEnvironment } from "./ptyEnvironment";
+import { native } from "../native/nativeBridge";
 
 const require2 = createRequire(import.meta.url);
 
@@ -27,6 +46,8 @@ export type PtySessionOptions = {
   cols: number;
   rows: number;
   shellPath?: string;
+  /** Internal-only validated command used to attach an existing Remote Job. */
+  remoteCommand?: string;
   sessionId?: string;
 };
 
@@ -45,10 +66,9 @@ const generatePtyId = (): string =>
   `pty-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
- * Windows 默认 shell 选择：优先 PowerShell 7 (pwsh.exe) —— 其自带的
- * PSReadLine 在 ConPTY 下 Ctrl+C 行为正确（仅取消当前行/中断，不会
- * 退出 shell），与 Windows Terminal 体验一致；其次 Windows PowerShell；
- * 最后回退 COMSPEC (cmd.exe)。
+ * Windows 兜底 shell：当 native detect_terminals() 未检测到任何终端时使用
+ * （正常情况不会走到这里——detect 顺序与 Rust 侧完全一致：PowerShell Core →
+ * PowerShell → CMD → Git Bash → COMSPEC）。优先级 pwsh > powershell > cmd。
  */
 const getShell = (): string => {
   if (process.platform === "win32") {
@@ -166,13 +186,121 @@ const conptyDllAvailable = ensureConptyDll();
 type SshSpawnConfig = {
   shell: string;
   args: string[];
+  /** True only after a host key has passed the application's verifier. */
+  hostKeyVerified: boolean;
+  dispose: () => void;
   /** Plaintext password to auto-inject when SSH prompts. Undefined = no injection. */
   password?: string;
   /** Plaintext passphrase for private key, auto-injected on prompt. */
   passphrase?: string;
 };
 
-const buildSshSpawnConfig = (cwd: string): SshSpawnConfig | null => {
+const buildSshConnectParams = (
+  host: string,
+  port: number,
+  username: string
+): SshConnectParams | null => {
+  const credential = getSshCredential(host, port, username);
+  if (!credential) {
+    return null;
+  }
+
+  const params: SshConnectParams = {
+    host,
+    port,
+    username,
+    authMethod: credential.authMethod,
+  };
+  if (credential.privateKeyPath) {
+    params.privateKeyPath = credential.privateKeyPath;
+  }
+  if (credential.encryptedSecret) {
+    const secret = getDecryptedSecret(host, port, username);
+    if (secret) {
+      if (credential.authMethod === "password") {
+        params.password = secret;
+      } else {
+        params.passphrase = secret;
+      }
+    }
+  }
+  return params;
+};
+
+const resolveVerifiedSshHostKey = async (params: {
+  host: string;
+  port: number;
+  username: string;
+}): Promise<SshHostKeyRecord> => {
+  const existing = getSshHostKey(params.host, params.port);
+  if (existing && formatSshKnownHost(existing)) {
+    return existing;
+  }
+
+  // Fingerprint-only records from earlier versions must be upgraded through
+  // the same ssh2 host verifier before the system SSH client can use them.
+  const connectParams = buildSshConnectParams(
+    params.host,
+    params.port,
+    params.username
+  );
+  if (!connectParams) {
+    throw new Error(
+      "SSH terminal blocked: connect to this workspace first to verify its host key"
+    );
+  }
+
+  const sessionId = await connectSsh(connectParams);
+  try {
+    const verified = getSshHostKey(params.host, params.port);
+    if (verified && formatSshKnownHost(verified)) {
+      return verified;
+    }
+  } finally {
+    disconnectSsh(sessionId);
+  }
+  throw new Error("SSH terminal blocked: verified host key is unavailable");
+};
+
+const createKnownHostsFile = (
+  record: SshHostKeyRecord
+): {
+  path: string;
+  dispose: () => void;
+} => {
+  const contents = formatSshKnownHost(record);
+  if (!contents) {
+    throw new Error("SSH terminal blocked: verified host key is unavailable");
+  }
+
+  const directory = mkdtempSync(join(tmpdir(), "snow-ssh-known-hosts-"));
+  const path = join(directory, "known_hosts");
+  try {
+    try {
+      chmodSync(directory, 0o700);
+    } catch {
+      // Some platforms cannot apply POSIX modes.
+    }
+    writeFileSync(path, contents, { encoding: "utf-8", mode: 0o600 });
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      // Some platforms cannot apply POSIX modes.
+    }
+  } catch (error) {
+    rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    path,
+    dispose: () => rmSync(directory, { recursive: true, force: true }),
+  };
+};
+
+const buildSshSpawnConfig = async (
+  cwd: string,
+  remoteCommand?: string
+): Promise<SshSpawnConfig | null> => {
   if (!isSshPath(cwd)) {
     return null;
   }
@@ -185,10 +313,13 @@ const buildSshSpawnConfig = (cwd: string): SshSpawnConfig | null => {
   }
 
   const { host, port, username, remotePath } = parsed;
+  const knownHosts = createKnownHostsFile(
+    await resolveVerifiedSshHostKey({ host, port, username })
+  );
   const sshArgs: string[] = [];
 
-  // Disable host key checking for smoother UX (can be improved later)
-  sshArgs.push("-o", "StrictHostKeyChecking=accept-new");
+  sshArgs.push("-o", `UserKnownHostsFile=${knownHosts.path}`);
+  sshArgs.push("-o", "StrictHostKeyChecking=yes");
   sshArgs.push("-o", "ConnectTimeout=10");
 
   if (port !== 22) {
@@ -199,7 +330,9 @@ const buildSshSpawnConfig = (cwd: string): SshSpawnConfig | null => {
   const credential = getSshCredential(host, port, username);
   const config: SshSpawnConfig = {
     shell: resolveWindowsExecutable("ssh"),
-    args: [...sshArgs, `${username}@${host}`],
+    args: sshArgs,
+    hostKeyVerified: true,
+    dispose: knownHosts.dispose,
   };
 
   if (credential) {
@@ -219,25 +352,33 @@ const buildSshSpawnConfig = (cwd: string): SshSpawnConfig | null => {
     // agent auth: no extra args needed
   }
 
-  // After connecting, cd to the remote path and start a login shell
-  if (remotePath && remotePath !== "/") {
-    config.args.push("-t", `cd '${remotePath}' && exec $SHELL -l`);
+  const destination = `${username}@${host}`;
+  // Only Main Process creates remoteCommand after validating the Job backend.
+  // Renderer-created terminals always get a normal login shell.
+  if (remoteCommand) {
+    config.args.push("-tt", destination, remoteCommand);
+  } else if (remotePath && remotePath !== "/") {
+    // After connecting, cd to the remote path and start a login shell.
+    config.args.push("-t", destination, `cd '${remotePath}' && exec $SHELL -l`);
   } else {
-    config.args.push("-t", `exec $SHELL -l`);
+    config.args.push("-t", destination, `exec $SHELL -l`);
   }
 
   return config;
 };
 
-export const createPtySession = (
+export const createPtySession = async (
   webContents: WebContents,
   options: PtySessionOptions
-): string => {
+): Promise<string> => {
   const id = generatePtyId();
   const customShell = options.shellPath?.trim();
   const isWindows = process.platform === "win32";
 
-  const sshConfig = buildSshSpawnConfig(options.cwd);
+  const sshConfig = await buildSshSpawnConfig(
+    options.cwd,
+    options.remoteCommand
+  );
 
   let shell: string;
   let shellArgs: string[];
@@ -247,7 +388,15 @@ export const createPtySession = (
     shell = sshConfig.shell;
     shellArgs = sshConfig.args;
     spawnCwd = undefined; // Remote path, not a local cwd
-  } else if (customShell && existsSync(customShell)) {
+  } else if (customShell) {
+    // 显式指定了 shell：含路径分隔符的路径必须真实存在，否则直接报错，
+    // 绝不静默回退到默认 shell（避免"传参成功但实际用的是别的 shell"）。
+    // 纯文件名（如 wsl.exe / bash）允许，由 spawn 时按 PATH 解析。
+    const looksLikePath =
+      customShell.includes("/") || customShell.includes("\\");
+    if (looksLikePath && !existsSync(customShell)) {
+      throw new Error(`Terminal shell not found: ${customShell}`);
+    }
     shell = customShell;
     if (isWindows && isWslShell(customShell)) {
       // WSL ignores the Windows process cwd; pass the project directory via
@@ -261,31 +410,45 @@ export const createPtySession = (
       spawnCwd = options.cwd || undefined;
     }
   } else {
-    shell = getShell();
+    // 未显式指定：与 bash 工具（Rust resolve_shell_and_args）完全同源，
+    // 使用 native detect_terminals() 的检测顺序取第一个，保证智能体命令
+    // 与集成终端使用同一个默认 shell。detect 失败时 getShell() 兜底。
+    const detected = await native.detectTerminals();
+    const detectedPath = detected[0]?.path?.trim();
+    shell = detectedPath || getShell();
     shellArgs = getShellArgs();
     spawnCwd = options.cwd || undefined;
   }
 
-  const pty = getNodePty().spawn(shell, shellArgs, {
-    name: "xterm-256color",
-    cols: options.cols,
-    rows: options.rows,
-    cwd: spawnCwd,
-    env: sanitizeEnv(options),
-    // Electron already has a console attached, so the default ConPTY kill path
-    // (which forks conpty_console_list_agent.js and calls AttachConsole) throws
-    // "AttachConsole failed". Setting useConptyDll routes kill() through a
-    // different code path that avoids the fork entirely. Falls back to false
-    // when conpty.dll is unavailable (ensureConptyDll could not locate or copy
-    // it), degrading to kernel32 ConPTY with a delayed kill cleanup.
-    useConptyDll: conptyDllAvailable,
-  });
+  let pty: IPty;
+  try {
+    pty = getNodePty().spawn(shell, shellArgs, {
+      name: "xterm-256color",
+      cols: options.cols,
+      rows: options.rows,
+      cwd: spawnCwd,
+      env: sanitizeEnv(options),
+      // Electron already has a console attached, so the default ConPTY kill path
+      // (which forks conpty_console_list_agent.js and calls AttachConsole) throws
+      // "AttachConsole failed". Setting useConptyDll routes kill() through a
+      // different code path that avoids the fork entirely. Falls back to false
+      // when conpty.dll is unavailable (ensureConptyDll could not locate or copy
+      // it), degrading to kernel32 ConPTY with a delayed kill cleanup.
+      useConptyDll: conptyDllAvailable,
+    });
+  } catch (error) {
+    sshConfig?.dispose();
+    throw error;
+  }
 
   const session: PtySession = { id, pty, webContents };
   sessions.set(id, session);
 
   // Password/passphrase auto-injection for SSH sessions
-  if (sshConfig && (sshConfig.password || sshConfig.passphrase)) {
+  if (
+    sshConfig?.hostKeyVerified &&
+    (sshConfig.password || sshConfig.passphrase)
+  ) {
     let injectedPassword = false;
     let injectedPassphrase = false;
 
@@ -335,6 +498,7 @@ export const createPtySession = (
       wc.send(PTY_EXIT_CHANNEL, { id, exitCode });
     }
     sessions.delete(id);
+    sshConfig?.dispose();
   });
 
   return id;

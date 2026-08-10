@@ -95,10 +95,11 @@ export function CustomSelect({
 
   // Initial measurement for portal dropdown.
   useLayoutEffect(() => {
-    if (!isOpen || !portal) {
+    if (!portal) {
       setDropdownRect(null);
       return;
     }
+    if (!isOpen) return;
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
     setDropdownRect({
@@ -126,8 +127,8 @@ export function CustomSelect({
     setIsOpen((v) => !v);
   };
 
-  const dropdownContent = (
-    <div className="custom-select-dropdown" ref={dropdownRef}>
+  const dropdownItems = (
+    <>
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -141,6 +142,12 @@ export function CustomSelect({
           )}
         </button>
       ))}
+    </>
+  );
+
+  const dropdown = (
+    <div className="custom-select-dropdown" ref={dropdownRef}>
+      {dropdownItems}
     </div>
   );
 
@@ -158,26 +165,26 @@ export function CustomSelect({
         </span>
         <ChevronDown size={14} />
       </button>
-      {isOpen &&
-        (portal && dropdownRect ? (
-          createPortal(
-            <div
-              className="custom-select-dropdown-portal"
-              style={{
-                position: "fixed",
-                top: `${dropdownRect.top}px`,
-                left: `${dropdownRect.left}px`,
-                width: `${dropdownRect.width}px`,
-                zIndex: 100000,
-              }}
-            >
-              {dropdownContent}
-            </div>,
+      {portal && dropdownRect
+        ? createPortal(
+            isOpen && (
+              <div
+                className="custom-select-dropdown-portal"
+                ref={dropdownRef}
+                style={{
+                  position: "fixed",
+                  top: `${dropdownRect.top}px`,
+                  left: `${dropdownRect.left}px`,
+                  width: `${dropdownRect.width}px`,
+                  zIndex: 100000,
+                }}
+              >
+                <div className="custom-select-dropdown">{dropdownItems}</div>
+              </div>
+            ),
             document.body
           )
-        ) : (
-          dropdownContent
-        ))}
+        : !portal && isOpen && dropdown}
     </div>
   );
 }

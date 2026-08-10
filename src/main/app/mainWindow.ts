@@ -1,4 +1,10 @@
-import { BrowserWindow, ipcMain, nativeTheme, shell, WebContents } from "electron";
+import {
+  BrowserWindow,
+  ipcMain,
+  nativeTheme,
+  shell,
+  WebContents,
+} from "electron";
 import { is } from "@electron-toolkit/utils";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,6 +26,7 @@ import {
 } from "./windowState";
 import { safeSend } from "../utils/safeSend";
 import { snowLog } from "../../utils/snowLogger";
+import { closeAllBrowserPopups } from "../browser/browserPopupWindow";
 
 // 模块级关闭确认标志：渲染进程确认关闭后置为 true，使 close 事件不再被拦截。
 // 这样可以统一覆盖所有关闭路径（自定义标题栏按钮、Alt+F4、任务栏关闭等）。
@@ -30,6 +37,14 @@ export const markCloseConfirmed = (): void => {
 };
 
 export const isCloseConfirmed = (): boolean => closeConfirmed;
+
+// 模块级主窗口引用：供其他模块（如宠物窗口定位）读取主窗口位置/尺寸。
+// macOS 上主窗口关闭后重建，因此引用在 closed 时清空、重建时更新。
+let mainWindowRef: BrowserWindow | null = null;
+
+/** 获取当前主窗口（已销毁时返回 null）。 */
+export const getMainWindow = (): BrowserWindow | null =>
+  mainWindowRef && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
 
 // 缓存当前主题对应的主背景色，供窗口创建和 nativeTheme 变化时使用。
 // 由渲染进程保存主题设置后通过 IPC 同步，避免每次都异步读取 Rust 后端。
@@ -112,7 +127,7 @@ export const createWindow = (): BrowserWindow => {
     autoHideMenuBar: true,
     backgroundColor: getWindowBackgroundColor(),
     webPreferences: {
-      preload: join(__dirname, "../preload/index.mjs"),
+      preload: join(import.meta.dirname, "../preload/index.mjs"),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -120,6 +135,7 @@ export const createWindow = (): BrowserWindow => {
       spellcheck: false,
     },
   });
+  mainWindowRef = mainWindow;
 
   mainWindow.setMenu(null);
   mainWindow.setMenuBarVisibility(false);
@@ -181,6 +197,13 @@ export const createWindow = (): BrowserWindow => {
     killAllPtyForWebContents(mainWindow.webContents);
   });
 
+  // 主窗口真正关闭后清理浏览器弹出窗口：Windows/Linux 上进程即将退出，
+  // macOS 上则避免关闭主窗口后残留孤儿弹出窗口。
+  mainWindow.on("closed", () => {
+    mainWindowRef = null;
+    closeAllBrowserPopups();
+  });
+
   // 渲染进程异常退出（崩溃/被系统回收）时自动重新加载，避免前端黑屏卡死。
   // 崩溃细节记录到应用日志便于排查；reload 后 preload/React 会重新初始化。
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
@@ -207,6 +230,19 @@ export const createWindow = (): BrowserWindow => {
     applyDevToolsSnowIcon(webContents);
   });
 
+  // 防御性兜底：渲染进程主框架导航到应用页面之外的 URL 一律阻止。
+  // 链接/路径点击已在渲染进程用 auxclick/click 拦截并转交系统浏览器或
+  // 右侧面板；若仍有漏网（如第三方注入的 <a>、Ctrl/Cmd+点击未覆盖场景），
+  // 在 Electron 中会降级为当前窗口导航，直接刷新整个前端，导致进行中的
+  // 会话与生成全部中断。location.reload()（错误边界自愈）不触发本事件。
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const devServerUrl = process.env.ELECTRON_RENDERER_URL;
+    if (devServerUrl && url.startsWith(devServerUrl)) {
+      return; // 开发模式放行 Vite dev server 同源导航（HMR 全量刷新场景）
+    }
+    event.preventDefault();
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url).catch((error) => {
       console.error("Failed to open external URL:", error);
@@ -222,7 +258,9 @@ export const createWindow = (): BrowserWindow => {
   } else {
     mainWindow
       .loadURL(
-        pathToFileURL(join(__dirname, "../renderer/index.html")).toString()
+        pathToFileURL(
+          join(import.meta.dirname, "../renderer/index.html")
+        ).toString()
       )
       .catch((error) => {
         console.error("Failed to load packaged renderer:", error);

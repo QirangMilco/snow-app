@@ -7,8 +7,13 @@ import {
   listSshDirectory,
   parseSshUrl,
   readSshFile,
+  readSshFileWithVersion,
+  isSshOperationError,
+  toSshOperationErrorResult,
   writeSshFile,
   type SshConnectParams,
+  type SshFileVersion,
+  type SshFileWriteResult,
 } from "./sshManager";
 import { getDecryptedSecret, getSshCredential } from "./sshCredentials";
 
@@ -42,6 +47,16 @@ type RemoteWorkspaceCommandArgs = {
   command?: unknown;
   workingDirectory?: unknown;
   timeout?: unknown;
+  durable?: unknown;
+  backend?: unknown;
+  mode?: unknown;
+  jobId?: unknown;
+  offset?: unknown;
+  limit?: unknown;
+  workspaceId?: unknown;
+  conversationId?: unknown;
+  toolCallId?: unknown;
+  workspaceRoot?: unknown;
 };
 
 /**
@@ -131,7 +146,9 @@ export const buildRemoteWorkspaceUri = (
     : `${normalizedWorkspacePath}/${relativePath}`;
 };
 
-export const buildSshConnectParams = (workspacePath: string): SshConnectParams => {
+export const buildSshConnectParams = (
+  workspacePath: string
+): SshConnectParams => {
   const parsed = parseSshUrl(workspacePath);
   const credential = getSshCredential(
     parsed.host,
@@ -169,10 +186,14 @@ export const withSshSession = async <T>(
     sessionId: string,
     remotePath: string,
     parsedPath: ReturnType<typeof parseSshUrl>
-  ) => Promise<T>
+  ) => Promise<T>,
+  options?: { signal?: AbortSignal }
 ): Promise<T> => {
   const parsedPath = parseSshUrl(workspacePath);
-  const sessionId = await connectSsh(buildSshConnectParams(workspacePath));
+  const sessionId = await connectSsh(
+    buildSshConnectParams(workspacePath),
+    options
+  );
   try {
     return await action(sessionId, parsedPath.remotePath, parsedPath);
   } finally {
@@ -183,60 +204,104 @@ export const withSshSession = async <T>(
 const readTextFile = async (
   workspacePath: string,
   startLine: number | undefined,
-  endLine: number | undefined
+  endLine: number | undefined,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
-  return withSshSession(workspacePath, async (sessionId, remotePath) => {
-    const file = processFileContent(
-      remotePath,
-      await readSshFile(sessionId, remotePath)
-    );
-    if (file.isBinary || file.isImage) {
-      throw new Error("Remote filesystem edit operations require a text file");
-    }
+  return withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      const file = processFileContent(
+        remotePath,
+        await readSshFile(sessionId, remotePath, { signal })
+      );
+      if (file.isBinary || file.isImage) {
+        throw new Error(
+          "Remote filesystem edit operations require a text file"
+        );
+      }
 
-    const lines = file.content.split("\n");
-    const totalLines = lines.length;
-    const requestedStart = Math.max(1, Math.floor(startLine ?? 1));
-    const requestedEnd = Math.max(
-      requestedStart,
-      Math.floor(endLine ?? totalLines)
-    );
-    const selected = lines.slice(requestedStart - 1, requestedEnd);
+      const lines = file.content.split("\n");
+      const totalLines = lines.length;
+      const requestedStart = Math.max(1, Math.floor(startLine ?? 1));
+      const requestedEnd = Math.max(
+        requestedStart,
+        Math.floor(endLine ?? totalLines)
+      );
+      const selected = lines.slice(requestedStart - 1, requestedEnd);
 
-    return {
-      content: selected
-        .map(
-          (line, index) =>
-            `${String(requestedStart + index).padStart(6, " ")}: ${line}`
-        )
-        .join("\n"),
-      totalLines,
-      startLine: requestedStart,
-      endLine: Math.min(requestedEnd, totalLines),
-    };
-  });
+      return {
+        content: selected
+          .map(
+            (line, index) =>
+              `${String(requestedStart + index).padStart(6, " ")}: ${line}`
+          )
+          .join("\n"),
+        totalLines,
+        startLine: requestedStart,
+        endLine: Math.min(requestedEnd, totalLines),
+      };
+    },
+    { signal }
+  );
 };
 
-const readRemoteText = async (workspacePath: string): Promise<string> =>
-  withSshSession(workspacePath, async (sessionId, remotePath) => {
-    const file = processFileContent(
-      remotePath,
-      await readSshFile(sessionId, remotePath)
+const resolveAuthorizedWorkspaceRoot = (
+  workspacePath: string,
+  workspaceRoot: unknown
+): string => {
+  const root = validateSshWorkspacePath(workspaceRoot, "workspaceRoot");
+  const target = parseSshUrl(workspacePath);
+  const authorized = parseSshUrl(root);
+  if (
+    target.host !== authorized.host ||
+    target.port !== authorized.port ||
+    target.username !== authorized.username
+  ) {
+    throw new Error(
+      "workspaceRoot must use the same SSH authority as filePath"
     );
-    if (file.isBinary || file.isImage) {
-      throw new Error("Remote filesystem edit operations require a text file");
-    }
-    return file.content;
-  });
+  }
+  return authorized.remotePath;
+};
+
+const readRemoteText = async (
+  workspacePath: string,
+  signal?: AbortSignal
+): Promise<{ content: string; version: SshFileVersion }> =>
+  withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      const loaded = await readSshFileWithVersion(sessionId, remotePath, {
+        signal,
+      });
+      const file = processFileContent(remotePath, loaded.content);
+      if (file.isBinary || file.isImage) {
+        throw new Error(
+          "Remote filesystem edit operations require a text file"
+        );
+      }
+      return { content: file.content, version: loaded.version };
+    },
+    { signal }
+  );
 
 const writeRemoteText = async (
   workspacePath: string,
-  content: string
-): Promise<void> => {
-  await withSshSession(workspacePath, async (sessionId, remotePath) =>
-    writeSshFile(sessionId, remotePath, content)
+  workspaceRoot: string,
+  content: string,
+  expectedVersion: SshFileVersion,
+  signal?: AbortSignal
+): Promise<SshFileWriteResult> =>
+  withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) =>
+      writeSshFile(sessionId, remotePath, content, {
+        signal,
+        workspaceRoot,
+        expectedVersion,
+      }),
+    { signal }
   );
-};
 
 /**
  * Read the project ROLE.md from a remote SSH workspace.
@@ -417,11 +482,7 @@ const parseGrepLines = (
     }
     return [
       {
-        file: buildRemoteWorkspaceUri(
-          workspacePath,
-          parsed[1],
-          remoteRootPath
-        ),
+        file: buildRemoteWorkspaceUri(workspacePath, parsed[1], remoteRootPath),
         line: lineNumber,
         content: parsed[3],
       },
@@ -429,57 +490,77 @@ const parseGrepLines = (
   });
 
 const executeFilesystemRead = async (
-  args: RemoteWorkspaceCommandArgs
+  args: RemoteWorkspaceCommandArgs,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.filePath, "filePath");
   const startLine = ensureOptionalPositiveInteger(args.startLine);
   const endLine = ensureOptionalPositiveInteger(args.endLine);
 
-  return withSshSession(workspacePath, async (sessionId, remotePath) => {
-    try {
-      const entries = await listSshDirectory(sessionId, remotePath);
-      // 确认为目录后才做低价值拦截（与本地 is_dir 对称：名为 build 等的
-      // 文件不误拦）。allowIgnored=true 时列出全部条目。
-      if (args.allowIgnored !== true) {
-        const lowValue = remoteLowValueDir(workspacePath);
-        if (lowValue) {
-          return {
-            content: `Path is inside a "${lowValue}" directory. Reading dependency/build/cache files is skipped by default to protect the context window. If you genuinely need this file (e.g. debugging a dependency), call filesystem-read again with allowIgnored=true and only read the specific file you need.`,
-            skipped: true,
-            reason: `inside a "${lowValue}" directory`,
-          };
+  return withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      try {
+        // 确认为目录后才做低价值拦截（与本地 is_dir 对称：名为 build 等的
+        // 文件不误拦）。allowIgnored=true 时列出全部条目。
+        if (args.allowIgnored !== true) {
+          const lowValue = remoteLowValueDir(workspacePath);
+          if (lowValue) {
+            return {
+              content: `Path is inside a "${lowValue}" directory. Reading dependency/build/cache files is skipped by default to protect the context window. If you genuinely need this file (e.g. debugging a dependency), call filesystem-read again with allowIgnored=true and only read the specific file you need.`,
+              skipped: true,
+              reason: `inside a "${lowValue}" directory`,
+            };
+          }
         }
+        const entries = await listSshDirectory(sessionId, remotePath, {
+          signal,
+        });
+        return {
+          content: entries
+            .map((entry) => `${entry.name}${entry.isDirectory ? "/" : ""}`)
+            .join("\n"),
+        };
+      } catch (error) {
+        if (isSshOperationError(error)) {
+          throw error;
+        }
+        return readTextFile(workspacePath, startLine, endLine, signal);
       }
-      return {
-        content: entries
-          .map((entry) => `${entry.name}${entry.isDirectory ? "/" : ""}`)
-          .join("\n"),
-      };
-    } catch {
-      // 文件：直接读取（单文件读取由 readTextFile 的大小上限兜底）
-      return readTextFile(workspacePath, startLine, endLine);
-    }
-  });
+    },
+    { signal }
+  );
 };
 
 const executeFilesystemReplaceEdit = async (
-  args: RemoteWorkspaceCommandArgs
+  args: RemoteWorkspaceCommandArgs,
+  signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.filePath, "filePath");
+  const workspaceRoot = resolveAuthorizedWorkspaceRoot(
+    workspacePath,
+    args.workspaceRoot
+  );
   const searchContent = ensureString(args.searchContent, "searchContent");
   const replacement = ensureString(args.replaceContent, "replaceContent");
   const occurrence =
     typeof args.occurrence === "number" && Number.isFinite(args.occurrence)
       ? Math.floor(args.occurrence)
       : 1;
-  const content = await readRemoteText(workspacePath);
+  const loaded = await readRemoteText(workspacePath, signal);
   const result = replaceContent(
-    content,
+    loaded.content,
     searchContent,
     replacement,
     occurrence
   );
-  await writeRemoteText(workspacePath, result.content);
+  const save = await writeRemoteText(
+    workspacePath,
+    workspaceRoot,
+    result.content,
+    loaded.version,
+    signal
+  );
 
   return {
     success: true,
@@ -487,6 +568,8 @@ const executeFilesystemReplaceEdit = async (
     matchType: "exact",
     matchedLineStart: result.matchedLineStart,
     matchedLineEnd: result.matchedLineEnd,
+    saveGuarantee: save.guarantee,
+    sideEffect: save.sideEffect,
   };
 };
 
@@ -495,34 +578,56 @@ const executeFilesystemCreate = async (
   signal?: AbortSignal
 ): Promise<Record<string, unknown>> => {
   const workspacePath = validateSshWorkspacePath(args.filePath, "filePath");
+  const workspaceRoot = resolveAuthorizedWorkspaceRoot(
+    workspacePath,
+    args.workspaceRoot
+  );
   const content = ensureString(args.content, "content");
   const overwrite = args.overwrite === true;
 
-  await withSshSession(workspacePath, async (sessionId, remotePath) => {
-    const exists = (
-      await executeSshCommand(sessionId, buildRemoteStatCommand(remotePath), {
+  const save = await withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      const exists = (
+        await executeSshCommand(sessionId, buildRemoteStatCommand(remotePath), {
+          signal,
+        })
+      ).trim();
+      if (exists && !overwrite) {
+        throw new Error(
+          "Remote file already exists. To overwrite this file, set overwrite=true."
+        );
+      }
+      const parentPath = dirname(remotePath);
+      if (parentPath && parentPath !== ".") {
+        await executeSshCommand(
+          sessionId,
+          buildRemoteMkdirCommand(parentPath),
+          {
+            signal,
+          }
+        );
+      }
+      const expectedVersion: SshFileVersion = exists
+        ? (await readSshFileWithVersion(sessionId, remotePath, { signal }))
+            .version
+        : { exists: false };
+      return writeSshFile(sessionId, remotePath, content, {
         signal,
-      })
-    ).trim();
-    if (exists && !overwrite) {
-      throw new Error(
-        "Remote file already exists. To overwrite this file, set overwrite=true."
-      );
-    }
-    const parentPath = dirname(remotePath);
-    if (parentPath && parentPath !== ".") {
-      await executeSshCommand(sessionId, buildRemoteMkdirCommand(parentPath), {
-        signal,
+        workspaceRoot,
+        expectedVersion,
       });
-    }
-    await writeSshFile(sessionId, remotePath, content);
-  });
+    },
+    { signal }
+  );
 
   return {
     success: true,
     path: workspacePath,
     bytes: Buffer.byteLength(content, "utf8"),
     lines: content.split("\n").length,
+    saveGuarantee: save.guarantee,
+    sideEffect: save.sideEffect,
   };
 };
 
@@ -559,31 +664,35 @@ const executeGrepSearch = async (
       ? Math.max(1, Math.floor(args.maxResults))
       : 100;
 
-  return withSshSession(workspacePath, async (sessionId, remotePath) => {
-    const output = await executeSshCommand(
-      sessionId,
-      buildRemoteGrepCommand(
-        remotePath,
+  return withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      const output = await executeSshCommand(
+        sessionId,
+        buildRemoteGrepCommand(
+          remotePath,
+          pattern,
+          fileGlob,
+          isRegex,
+          caseSensitive,
+          maxResults
+        ),
+        { timeoutMs: REMOTE_GREP_TIMEOUT_MS, signal }
+      );
+      const matches = parseGrepLines(output, workspacePath, remotePath);
+      return {
+        backend: "remote-grep",
         pattern,
+        path: workspacePath,
         fileGlob,
-        isRegex,
-        caseSensitive,
-        maxResults
-      ),
-      { timeoutMs: REMOTE_GREP_TIMEOUT_MS, signal }
-    );
-    const matches = parseGrepLines(output, workspacePath, remotePath);
-    return {
-      backend: "remote-grep",
-      pattern,
-      path: workspacePath,
-      fileGlob,
-      matches,
-      totalMatches: matches.length,
-      truncated: matches.length >= maxResults,
-      rawOutput: output.slice(0, 50_000),
-    };
-  });
+        matches,
+        totalMatches: matches.length,
+        truncated: matches.length >= maxResults,
+        rawOutput: output.slice(0, 50_000),
+      };
+    },
+    { signal }
+  );
 };
 
 const executeBashCommand = async (
@@ -600,24 +709,28 @@ const executeBashCommand = async (
       ? Math.max(1, Math.floor(args.timeout))
       : 30_000;
 
-  return withSshSession(workspacePath, async (sessionId, remotePath) => {
-    const wrappedCommand = `cd -- ${shellQuote(remotePath)} && ${command}`;
-    // The timeout lives inside executeSshCommand so a timed-out command also
-    // closes the exec channel and signals the remote process instead of
-    // merely racing the promise and leaking the underlying process.
-    const output = await executeSshCommand(sessionId, wrappedCommand, {
-      timeoutMs: timeout,
-      signal,
-    });
+  return withSshSession(
+    workspacePath,
+    async (sessionId, remotePath) => {
+      const wrappedCommand = `cd -- ${shellQuote(remotePath)} && ${command}`;
+      // The timeout lives inside executeSshCommand so a timed-out command also
+      // closes the exec channel and signals the remote process instead of
+      // merely racing the promise and leaking the underlying process.
+      const output = await executeSshCommand(sessionId, wrappedCommand, {
+        timeoutMs: timeout,
+        signal,
+      });
 
-    return {
-      stdout: output,
-      stderr: "",
-      exitCode: 0,
-      command,
-      executedAt: new Date().toISOString(),
-    };
-  });
+      return {
+        stdout: output,
+        stderr: "",
+        exitCode: 0,
+        command,
+        executedAt: new Date().toISOString(),
+      };
+    },
+    { signal }
+  );
 };
 
 export const dispatchRemoteWorkspaceCommand = async (
@@ -632,28 +745,37 @@ export const dispatchRemoteWorkspaceCommand = async (
     throw new Error("Remote workspace command arguments must be valid JSON");
   }
 
-  let result: Record<string, unknown>;
-  switch (command.operation) {
-    case "filesystem-read":
-      result = await executeFilesystemRead(args);
-      break;
-    case "filesystem-replace_edit":
-      result = await executeFilesystemReplaceEdit(args);
-      break;
-    case "filesystem-create":
-      result = await executeFilesystemCreate(args, signal);
-      break;
-    case "grep-search":
-      result = await executeGrepSearch(args, signal);
-      break;
-    case "bash-terminal-execute":
-      result = await executeBashCommand(args, signal);
-      break;
-    default:
-      throw new Error(
-        `Unsupported remote workspace operation: ${command.operation}`
-      );
+  try {
+    let result: Record<string, unknown>;
+    switch (command.operation) {
+      case "filesystem-read":
+        result = await executeFilesystemRead(args, signal);
+        break;
+      case "filesystem-replace_edit":
+        result = await executeFilesystemReplaceEdit(args, signal);
+        break;
+      case "filesystem-create":
+        result = await executeFilesystemCreate(args, signal);
+        break;
+      case "grep-search":
+        result = await executeGrepSearch(args, signal);
+        break;
+      case "bash-terminal-execute":
+        result = await executeBashCommand(args, signal);
+        break;
+      default:
+        throw new Error(
+          `Unsupported remote workspace operation: ${command.operation}`
+        );
+    }
+    return JSON.stringify(result);
+  } catch (error) {
+    if (isSshOperationError(error)) {
+      return JSON.stringify({
+        success: false,
+        error: toSshOperationErrorResult(error),
+      });
+    }
+    throw error;
   }
-
-  return JSON.stringify(result);
 };

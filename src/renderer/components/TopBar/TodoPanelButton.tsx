@@ -350,7 +350,7 @@ export const TodoPanelButton = ({
         ) : null}
       </button>
       {isOpen ? (
-        <div className="top-bar-todo-dropdown">
+          <div className="top-bar-todo-dropdown">
           <div className="top-bar-todo-dropdown-header">
             <span className="top-bar-todo-dropdown-title">
               {t("topBar.todo.title")}
@@ -446,7 +446,7 @@ export const TodoPanelButton = ({
               </button>
             </div>
           ) : null}
-        </div>
+          </div>
       ) : null}
       <ConfirmDialog
         open={confirmDeleteIds !== null}

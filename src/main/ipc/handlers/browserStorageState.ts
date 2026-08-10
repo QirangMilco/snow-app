@@ -236,16 +236,26 @@ const restoreCookies = async (
     try {
       const host = cookie.domain.replace(/^\./, "");
       const scheme = cookie.secure ? "https" : "http";
+      // 域 Cookie（带前导点，如 .google.com）必须显式传 domain，否则 Electron
+      // 会存成 host-only Cookie，不会发送给子域名（mail.google.com 等），
+      // 恢复后登录态失效。
+      const isDomainCookie = cookie.domain.startsWith(".");
+      // Chromium 拒绝 SameSite=None 且非 Secure 的组合；降级保证写入成功。
+      let sameSite = sameSiteToElectron(cookie.sameSite);
+      if (sameSite === "no_restriction" && !cookie.secure) {
+        sameSite = "unspecified";
+      }
       await contents.session.cookies.set({
         url: `${scheme}://${host}${cookie.path || "/"}`,
         name: cookie.name,
         value: cookie.value,
         secure: cookie.secure,
         httpOnly: cookie.httpOnly,
+        ...(isDomainCookie ? { domain: cookie.domain } : {}),
         ...(cookie.expires !== undefined
           ? { expirationDate: cookie.expires }
           : {}),
-        sameSite: sameSiteToElectron(cookie.sameSite),
+        sameSite,
       });
       restored++;
     } catch {

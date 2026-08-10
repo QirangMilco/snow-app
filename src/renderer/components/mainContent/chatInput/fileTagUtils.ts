@@ -61,6 +61,32 @@ export type ReviewTag = {
   repoPath?: string;
 };
 
+export type ElementTag = {
+  /** 元素所在页面 URL */
+  url: string;
+  /** 元素标签名（小写，如 button） */
+  tag: string;
+  /** 元素选择器描述（如 button#search），用于 chip 显示 */
+  label: string;
+  /** 元素文本内容摘要 */
+  text: string;
+  /** 用户添加的文字备注 */
+  note: string;
+};
+
+export type WebTag = {
+  /** 网页 URL（拖拽时取浏览器 tab 的实时地址） */
+  url: string;
+  /** 页面标题（可选，缺失时 chip 仅显示域名） */
+  title?: string;
+};
+
+/**
+ * 浏览器面板元素选择器完成选取后，通过该全局事件将 ElementTag 派发给
+ * 聊天输入框（ChatInputView）插入为 element chip。
+ */
+export const INSERT_ELEMENT_TAG_EVENT = "snow:insert-element-tag";
+
 /**
  * 自定义剪贴板 MIME 类型：应用内复制/剪切选区时携带编辑区的完整
  * 编码内容（含 @@file:...@@ 等 chip 标签），粘贴时优先解析该格式，
@@ -75,7 +101,9 @@ export type ContentSegment =
   | { type: "commit"; tag: CommitTag }
   | { type: "change"; tag: ChangeTag }
   | { type: "text-snippet"; tag: TextSnippetTag }
-  | { type: "review"; tag: ReviewTag };
+  | { type: "review"; tag: ReviewTag }
+  | { type: "element"; tag: ElementTag }
+  | { type: "web"; tag: WebTag };
 
 /**
  * 将行号数组格式化为紧凑的字符串表示，连续区间合并为范围。
@@ -193,7 +221,7 @@ const utf8ToBase64 = (str: string): string => {
 };
 
 /** base64 还原为 UTF-8 字符串（与 utf8ToBase64 互逆）。 */
-const base64ToUtf8 = (base64: string): string => {
+export const base64ToUtf8 = (base64: string): string => {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -217,6 +245,44 @@ export const encodeReviewTag = (tag: ReviewTag): string =>
     branch: tag.branch,
     repoPath: tag.repoPath,
   })}@@`;
+
+/**
+ * 将浏览器元素选择器选取的元素编码为 element 标签。
+ * text / note 为用户或页面自由文本（可能含 `@@`），以 base64 承载，
+ * 避免破坏标签终止符；url / tag / label 为结构化字段，直接 JSON 内嵌。
+ */
+export const encodeElementTag = (tag: ElementTag): string =>
+  `@@element:${JSON.stringify({
+    url: tag.url,
+    tag: tag.tag,
+    label: tag.label,
+    text: utf8ToBase64(tag.text),
+    note: utf8ToBase64(tag.note),
+  })}@@`;
+
+/**
+ * 将网页引用编码为 web 标签。
+ * url / title 为结构化字段（标题可能含引号等字符，由 JSON 序列化承载），
+ * 发送给 AI 时保留完整 URL 便于其使用浏览器工具打开该页面。
+ */
+export const encodeWebTag = (tag: WebTag): string =>
+  `@@web:${JSON.stringify({
+    url: tag.url,
+    title: tag.title,
+  })}@@`;
+
+/**
+ * 提取 URL 的域名（含端口），用于 web chip 显示。
+ * 无法解析（如异常 URL）时原样返回输入。
+ */
+export const extractUrlHost = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    return parsed.host || url;
+  } catch {
+    return url;
+  }
+};
 
 /**
  * 根据原始文本生成一个简短的摘要标签，用于 chip 显示。
@@ -261,7 +327,7 @@ export const buildTextSnippetSummary = (text: string, maxLen = 30): string => {
 
 export const parseContentSegments = (content: string): ContentSegment[] => {
   const segments: ContentSegment[] = [];
-  const regex = /@@(file|dir|image|commit|change|text-snippet|review):(.+?)@@/g;
+  const regex = /@@(file|dir|image|commit|change|text-snippet|review|element|web):(.+?)@@/g;
   let lastIndex = 0;
   let imageCounter = 0;
   let match: RegExpExecArray | null;
@@ -307,6 +373,40 @@ export const parseContentSegments = (content: string): ContentSegment[] => {
             repoPath: data.repoPath,
           },
         });
+      } catch {
+        segments.push({ type: "text", content: match[0] });
+      }
+    } else if (kind === "element") {
+      try {
+        const data = JSON.parse(value) as Partial<ElementTag>;
+        segments.push({
+          type: "element",
+          tag: {
+            url: data.url ?? "",
+            tag: data.tag ?? "",
+            label: data.label ?? "",
+            text: data.text ? base64ToUtf8(data.text) : "",
+            note: data.note ? base64ToUtf8(data.note) : "",
+          },
+        });
+      } catch {
+        segments.push({ type: "text", content: match[0] });
+      }
+    } else if (kind === "web") {
+      try {
+        const data = JSON.parse(value) as Partial<WebTag>;
+        const url = data.url ?? "";
+        if (!url) {
+          segments.push({ type: "text", content: match[0] });
+        } else {
+          segments.push({
+            type: "web",
+            tag: {
+              url,
+              title: typeof data.title === "string" ? data.title : undefined,
+            },
+          });
+        }
       } catch {
         segments.push({ type: "text", content: match[0] });
       }
@@ -413,14 +513,11 @@ export const createChipHtml = (tag: FileTag): string => {
     ? ` data-file-lines="${escapeHtml(linesStr)}"`
     : "";
   const displayName = linesStr ? `${tag.name}:${linesStr}` : tag.name;
-  const chipTitle = linesStr ? `${tag.path}:${linesStr}` : tag.path;
   return `<span class="file-chip" contenteditable="false" data-file-tag="true" data-file-path="${escapeHtml(
     tag.path
   )}" data-file-name="${escapeHtml(tag.name)}" data-file-is-dir="${
     tag.isDirectory
-  }"${linesAttr} title="${escapeHtml(
-    chipTitle
-  )}"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
+  }"${linesAttr}><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
     displayName
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
@@ -440,7 +537,6 @@ export const createImageChipHtml = (tag: ImageTag): string => {
 
 export const createCommitChipHtml = (tag: CommitTag): string => {
   const icon = getCommitIconHtml(12);
-  const chipTitle = `${tag.shortHash} ${tag.message} (${tag.author}, ${tag.date})`;
   const commitData = escapeHtml(
     JSON.stringify({
       hash: tag.hash,
@@ -451,9 +547,7 @@ export const createCommitChipHtml = (tag: CommitTag): string => {
       repoPath: tag.repoPath,
     })
   );
-  return `<span class="file-chip commit-chip" contenteditable="false" data-commit-tag="true" data-commit-data="${commitData}" title="${escapeHtml(
-    chipTitle
-  )}"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
+  return `<span class="file-chip commit-chip" contenteditable="false" data-commit-tag="true" data-commit-data="${commitData}"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
     tag.shortHash
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
@@ -465,9 +559,6 @@ export const createChangeChipHtml = (tag: ChangeTag): string => {
     tag.path.lastIndexOf("\\")
   );
   const name = lastSep === -1 ? tag.path : tag.path.slice(lastSep + 1);
-  const chipTitle = `${tag.section === "staged" ? "Staged" : "Unstaged"} ${
-    tag.status
-  } ${tag.path}`;
   const changeData = escapeHtml(
     JSON.stringify({
       repoPath: tag.repoPath,
@@ -476,9 +567,7 @@ export const createChangeChipHtml = (tag: ChangeTag): string => {
       status: tag.status,
     })
   );
-  return `<span class="file-chip change-chip" contenteditable="false" data-change-tag="true" data-change-data="${changeData}" title="${escapeHtml(
-    chipTitle
-  )}\"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
+  return `<span class="file-chip change-chip" contenteditable="false" data-change-tag="true" data-change-data="${changeData}"><span class="file-chip-icon">${icon}</span><span class="file-chip-name">${escapeHtml(
     name
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
@@ -509,11 +598,44 @@ export const createReviewChipHtml = (tag: ReviewTag): string => {
       repoPath: tag.repoPath,
     })
   );
-  const displayName = `${tag.summary} (${tag.charCount} chars)`;
-  return `<span class="file-chip review-chip" contenteditable="false" data-review-tag="true" data-review-data="${reviewData}" title="${escapeHtml(
-    displayName
-  )}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></svg></span><span class="file-chip-name">${escapeHtml(
+  return `<span class="file-chip review-chip" contenteditable="false" data-review-tag="true" data-review-data="${reviewData}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/></svg></span><span class="file-chip-name">${escapeHtml(
     tag.summary
+  )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
+};
+
+export const createElementChipHtml = (tag: ElementTag): string => {
+  const elementData = escapeHtml(
+    JSON.stringify({
+      url: tag.url,
+      tag: tag.tag,
+      label: tag.label,
+      text: utf8ToBase64(tag.text),
+      note: utf8ToBase64(tag.note),
+    })
+  );
+  const displayName = tag.note ? `${tag.label} · ${tag.note}` : tag.label;
+  return `<span class="file-chip element-chip" contenteditable="false" data-element-tag="true" data-element-data="${elementData}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/></svg></span><span class="file-chip-name">${escapeHtml(
+    displayName
+  )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
+};
+
+/**
+ * 生成网页引用 chip HTML。显示「标题 · 域名」，标题缺失时仅显示域名；
+ * 完整 URL 存放在 data-web-data 中，供序列化与点击打开浏览器使用。
+ */
+export const createWebTagChipHtml = (tag: WebTag): string => {
+  const webData = escapeHtml(
+    JSON.stringify({
+      url: tag.url,
+      title: tag.title,
+    })
+  );
+  const host = extractUrlHost(tag.url);
+  const displayName = tag.title ? `${tag.title} · ${host}` : host;
+  return `<span class="file-chip web-chip" contenteditable="false" data-web-tag="true" data-web-data="${webData}" title="${escapeHtml(
+    `${displayName} (${tag.url})`
+  )}"><span class="file-chip-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg></span><span class="file-chip-name">${escapeHtml(
+    displayName
   )}</span><span class="file-chip-remove" data-chip-remove="true">${CLOSE_ICON_SVG}</span></span>`;
 };
 
@@ -543,6 +665,12 @@ export const buildSegmentsHtml = (segments: ContentSegment[]): string =>
       if (segment.type === "review") {
         return createReviewChipHtml(segment.tag);
       }
+      if (segment.type === "element") {
+        return createElementChipHtml(segment.tag);
+      }
+      if (segment.type === "web") {
+        return createWebTagChipHtml(segment.tag);
+      }
       return createChipHtml(segment.tag);
     })
     .join("");
@@ -554,6 +682,8 @@ type ChipSerializers = {
   change: (tag: ChangeTag) => string;
   textSnippet: (tag: TextSnippetTag) => string;
   review: (tag: ReviewTag) => string;
+  element: (tag: ElementTag) => string;
+  web: (tag: WebTag) => string;
 };
 
 const readEditableContentWith = (
@@ -647,6 +777,37 @@ const readEditableContentWith = (
         } catch {
           // Ignore malformed review data
         }
+      } else if (elem.dataset.elementTag === "true") {
+        try {
+          const data = JSON.parse(
+            elem.dataset.elementData || "{}"
+          ) as Partial<ElementTag>;
+          result += serializers.element({
+            url: data.url ?? "",
+            tag: data.tag ?? "",
+            label: data.label ?? "",
+            text: data.text ? base64ToUtf8(data.text) : "",
+            note: data.note ? base64ToUtf8(data.note) : "",
+          });
+        } catch {
+          // Ignore malformed element data
+        }
+      } else if (elem.dataset.webTag === "true") {
+        try {
+          const data = JSON.parse(
+            elem.dataset.webData || "{}"
+          ) as Partial<WebTag>;
+          const url = data.url ?? "";
+          if (url) {
+            result += serializers.web({
+              url,
+              title:
+                typeof data.title === "string" ? data.title : undefined,
+            });
+          }
+        } catch {
+          // Ignore malformed web data
+        }
       } else if (elem.tagName === "BR") {
         result += "\n";
       } else {
@@ -674,6 +835,8 @@ export const readEditableContent = (el: HTMLElement): string =>
     change: encodeChangeTag,
     textSnippet: encodeTextSnippetTag,
     review: encodeReviewTag,
+    element: encodeElementTag,
+    web: encodeWebTag,
   });
 
 /**
@@ -695,6 +858,9 @@ export const readEditableContentAsPlainText = (el: HTMLElement): string =>
     change: (tag) => tag.path,
     textSnippet: (tag) => tag.content,
     review: (tag) => tag.summary,
+    element: (tag) => (tag.note ? `${tag.label}: ${tag.note}` : tag.label),
+    // 复制到应用外时输出「标题 URL」，保留可读性与可点击性
+    web: (tag) => (tag.title ? `${tag.title} ${tag.url}` : tag.url),
   });
 
 export const insertHtmlAtSelection = (html: string): void => {

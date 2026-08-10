@@ -41,7 +41,7 @@ export function Modal({
   size = "medium",
   closeDisabled = false,
   className = "",
-}: ModalProps): React.JSX.Element | null {
+}: ModalProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -60,8 +60,6 @@ export function Modal({
       previouslyFocusedElement?.focus();
     };
   }, [open]);
-
-  if (!open) return null;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab" || !dialogRef.current) return;
@@ -95,37 +93,39 @@ export function Modal({
     .join(" ");
 
   return createPortal(
-    <div className="app-modal-overlay">
-      <div
-        aria-describedby={description ? descriptionId : undefined}
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className={dialogClassName}
-        onKeyDown={handleKeyDown}
-        ref={dialogRef}
-        role="dialog"
-        tabIndex={-1}
-      >
-        <div className="app-modal-header">
-          <div className="app-modal-title-group">
-            <strong id={titleId}>{title}</strong>
-            {description && <span id={descriptionId}>{description}</span>}
+    open && (
+      <div className="app-modal-overlay">
+        <div
+          aria-describedby={description ? descriptionId : undefined}
+          aria-labelledby={titleId}
+          aria-modal="true"
+          className={dialogClassName}
+          onKeyDown={handleKeyDown}
+          ref={dialogRef}
+          role="dialog"
+          tabIndex={-1}
+        >
+            <div className="app-modal-header">
+              <div className="app-modal-title-group">
+                <strong id={titleId}>{title}</strong>
+                {description && <span id={descriptionId}>{description}</span>}
+              </div>
+              <button
+                aria-label={closeLabel}
+                className="icon-btn ghost app-modal-close"
+                disabled={closeDisabled}
+                onClick={onClose}
+                title={closeLabel}
+                type="button"
+              >
+                <X size={16} strokeWidth={1.9} />
+              </button>
+            </div>
+            <div className="app-modal-body">{children}</div>
+            {footer && <div className="app-modal-footer">{footer}</div>}
           </div>
-          <button
-            aria-label={closeLabel}
-            className="icon-btn ghost app-modal-close"
-            disabled={closeDisabled}
-            onClick={onClose}
-            title={closeLabel}
-            type="button"
-          >
-            <X size={16} strokeWidth={1.9} />
-          </button>
         </div>
-        <div className="app-modal-body">{children}</div>
-        {footer && <div className="app-modal-footer">{footer}</div>}
-      </div>
-    </div>,
+    ),
     document.body
   );
 }

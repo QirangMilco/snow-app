@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use napi::bindgen_prelude::*;
 
 use crate::prompt::goal_mode_system_prompt::build_goal_mode_system_prompt;
@@ -49,6 +51,28 @@ pub struct PreparedConversationRequest {
     /// user prompts occupy the `system` slot exclusively and the built-in
     /// prompt is prepended as a leading `user` message.
     pub user_system_prompts: Vec<String>,
+}
+
+pub(crate) fn compose_sub_agent_system_prompts(
+    builtin: &str,
+    api_prompts: &[String],
+    sub_agent_prompt: Option<&str>,
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let candidates = std::iter::once(builtin)
+        .chain(api_prompts.iter().map(String::as_str))
+        .chain(sub_agent_prompt);
+
+    candidates
+        .filter_map(|prompt| {
+            let normalized = prompt.trim();
+            if normalized.is_empty() || !seen.insert(normalized.to_string()) {
+                None
+            } else {
+                Some(normalized.to_string())
+            }
+        })
+        .collect()
 }
 
 pub fn prepare_context_request(
@@ -124,18 +148,19 @@ pub fn prepare_context_request(
     // can decide how to combine them with the built-in system prompt
     // (e.g. Anthropic demotes the built-in prompt to a user message when
     // user prompts are present, matching Snow CLI PR #127).
-    let user_system_prompts =
-        resolve_active_system_prompt_contents(
-            request.database_path,
-            request.system_prompt_ids_json,
-            request.directory_id,
-        );
+    let user_system_prompts = resolve_active_system_prompt_contents(
+        request.database_path,
+        request.system_prompt_ids_json,
+        request.directory_id,
+    );
 
     // Inject the built-in system prompt as the first message.
     let working_directory = request
         .directory_id
         .and_then(|id| {
-            get_workspace_directory_path(request.database_path, id).ok().flatten()
+            get_workspace_directory_path(request.database_path, id)
+                .ok()
+                .flatten()
         })
         .unwrap_or_default();
 
@@ -181,23 +206,38 @@ pub fn prepare_context_request(
             request.remote_include_global_rules,
         )
     };
+    let user_system_prompts = if request.is_sub_agent {
+        compose_sub_agent_system_prompts(
+            &system_prompt,
+            &user_system_prompts,
+            request.sub_agent_system_prompt,
+        )
+    } else {
+        user_system_prompts
+    };
 
-    let has_existing_system = messages
-        .iter()
-        .any(|msg| msg.role.trim() == "system" || msg.role.trim() == "developer");
+    // Main conversations retain the existing provider-specific built-in prompt
+    // behavior. Sub-agents pass the unified ordered prompt list directly to
+    // providers, so inserting the built-in system message again would duplicate
+    // Snow's protocol.
+    if !request.is_sub_agent {
+        let has_existing_system = messages
+            .iter()
+            .any(|msg| msg.role.trim() == "system" || msg.role.trim() == "developer");
 
-    if !has_existing_system {
-        messages.insert(
-            0,
-            ChatContextMessage {
-                role: "system".to_string(),
-                content: system_prompt,
-                tool_calls_json: None,
-                tool_results_json: None,
-                thinking: None,
-                thinking_blocks_json: None,
-            },
-        );
+        if !has_existing_system {
+            messages.insert(
+                0,
+                ChatContextMessage {
+                    role: "system".to_string(),
+                    content: system_prompt,
+                    tool_calls_json: None,
+                    tool_results_json: None,
+                    thinking: None,
+                    thinking_blocks_json: None,
+                },
+            );
+        }
     }
 
     // 按 max_context_tokens 预算截断历史：system prompt 与当前请求消息
@@ -418,7 +458,10 @@ fn resolve_default_shell(database_path: &std::path::Path) -> String {
     };
     let shell_path = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
-        .and_then(|json| json.get("shellPath").and_then(|v| v.as_str().map(String::from)))
+        .and_then(|json| {
+            json.get("shellPath")
+                .and_then(|v| v.as_str().map(String::from))
+        })
         .unwrap_or_default();
 
     if shell_path.trim().is_empty() {

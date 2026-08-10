@@ -643,6 +643,12 @@ export const useConversationManagement = (
     ctx.updateSessionField(key, "streamStartedAt", 0);
     ctx.updateSessionField(key, "isAborting", false);
     ctx.updateSessionField(key, "isPaused", false);
+    // Clear the vision textify status card: an abort while the backend is
+    // describing user images with the external vision model must recycle the
+    // "vision model analyzing image" intermediate state immediately (the
+    // backend also pushes a cancel event, but it races the abort and may be
+    // dropped).
+    ctx.updateSessionField(key, "visionAnalysis", undefined);
     ctx.pauseControllerRef.current.delete(key);
     ctx.removeStreamingId(key);
 
@@ -697,6 +703,8 @@ export const useConversationManagement = (
       ctx.updateSessionField(subKey, "streamStartedAt", 0);
       ctx.updateSessionField(subKey, "isAborting", false);
       ctx.updateSessionField(subKey, "isPaused", false);
+      // Same vision textify status card cleanup as the parent abort.
+      ctx.updateSessionField(subKey, "visionAnalysis", undefined);
       ctx.pauseControllerRef.current.delete(subKey);
       ctx.removeStreamingId(subKey);
 
@@ -740,6 +748,9 @@ export const useConversationManagement = (
       ctx.updateSessionField(conversationId, "isStreaming", false);
       ctx.updateSessionField(conversationId, "streamStartedAt", 0);
       ctx.updateSessionField(conversationId, "isAborting", false);
+      // Clear the vision textify status card (the conversation is being
+      // deleted; a stuck intermediate card must not outlive it).
+      ctx.updateSessionField(conversationId, "visionAnalysis", undefined);
       ctx.removeStreamingId(conversationId);
       // Clean up session state and incremental checkpoint storage.
       if (ref) {

@@ -1,6 +1,5 @@
 import {
   app,
-  BrowserWindow,
   ipcMain,
   Menu,
   nativeImage,
@@ -10,8 +9,12 @@ import {
 import { deflateSync, inflateSync } from "node:zlib";
 import { readFileSync } from "node:fs";
 import type { NativeBridge } from "../native/types";
-import { APP_FAVICON_16_PATH, APP_FAVICON_32_PATH, APP_ICON_PATH } from "./constants";
-import { createWindow, markCloseConfirmed } from "./mainWindow";
+import {
+  APP_FAVICON_16_PATH,
+  APP_FAVICON_32_PATH,
+  APP_ICON_PATH,
+} from "./constants";
+import { createWindow, getMainWindow, markCloseConfirmed } from "./mainWindow";
 import { getActivePtyCount } from "../pty/ptyManager";
 import { snowLog } from "../../utils/snowLogger";
 
@@ -67,7 +70,9 @@ const pngChunk = (type: string, data: Uint8Array): Buffer => {
 
 /** 将 RGBA 像素编码为标准 PNG（8bit、非隔行），供 nativeImage.createFromBuffer 使用。 */
 const encodePng = (rgba: Uint8Array, width: number, height: number): Buffer => {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const signature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
@@ -111,7 +116,9 @@ const paethPredictor = (a: number, b: number, c: number): number => {
 const decodePng = (
   buffer: Buffer
 ): { width: number; height: number; rgba: Uint8Array } | null => {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const signature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
   if (buffer.length < 8 || !buffer.subarray(0, 8).equals(signature)) {
     return null;
   }
@@ -347,7 +354,11 @@ const computeContentCrop = (
   if (maxX < 0) {
     // 无内容兜底：用整个画布的居中正方形
     const side = Math.min(width, height);
-    return { x: Math.floor((width - side) / 2), y: Math.floor((height - side) / 2), side };
+    return {
+      x: Math.floor((width - side) / 2),
+      y: Math.floor((height - side) / 2),
+      side,
+    };
   }
   const side = Math.max(maxX - minX + 1, maxY - minY + 1);
   const cropSide = side;
@@ -381,10 +392,16 @@ const maskToTemplateRgba = (
   };
   for (let ty = 0; ty < targetHeight; ty++) {
     const sy0 = Math.floor(crop.y + (ty * crop.side) / targetHeight);
-    const sy1 = Math.max(sy0 + 1, Math.floor(crop.y + ((ty + 1) * crop.side) / targetHeight));
+    const sy1 = Math.max(
+      sy0 + 1,
+      Math.floor(crop.y + ((ty + 1) * crop.side) / targetHeight)
+    );
     for (let tx = 0; tx < targetWidth; tx++) {
       const sx0 = Math.floor(crop.x + (tx * crop.side) / targetWidth);
-      const sx1 = Math.max(sx0 + 1, Math.floor(crop.x + ((tx + 1) * crop.side) / targetWidth));
+      const sx1 = Math.max(
+        sx0 + 1,
+        Math.floor(crop.x + ((tx + 1) * crop.side) / targetWidth)
+      );
       let sum = 0;
       let n = 0;
       for (let sy = sy0; sy < sy1; sy++) {
@@ -424,7 +441,8 @@ const DIGIT_GLYPHS: Record<string, number[]> = {
  * 系统渲染时会把雪花横向拉伸变形。系数取 snowSize/16，数字高 7*cell
  * 约占画布 44%，比雪花略小不会喧宾夺主；最小取 1 保证 @1x 可见。
  */
-const digitCell = (snowSize: number): number => Math.max(1, Math.round(snowSize / 16));
+const digitCell = (snowSize: number): number =>
+  Math.max(1, Math.round(snowSize / 16));
 
 /**
  * 在 RGBA 模板画布（纯黑 + alpha）上绘制活跃会话数点阵数字。
@@ -517,10 +535,16 @@ const createMacTemplateIcons = (): TrayIcons => {
     };
     for (let ty = 0; ty < snowSize; ty++) {
       const sy0 = Math.floor(crop.y + (ty * crop.side) / snowSize);
-      const sy1 = Math.max(sy0 + 1, Math.floor(crop.y + ((ty + 1) * crop.side) / snowSize));
+      const sy1 = Math.max(
+        sy0 + 1,
+        Math.floor(crop.y + ((ty + 1) * crop.side) / snowSize)
+      );
       for (let tx = 0; tx < snowSize; tx++) {
         const sx0 = Math.floor(crop.x + (tx * crop.side) / snowSize);
-        const sx1 = Math.max(sx0 + 1, Math.floor(crop.x + ((tx + 1) * crop.side) / snowSize));
+        const sx1 = Math.max(
+          sx0 + 1,
+          Math.floor(crop.x + ((tx + 1) * crop.side) / snowSize)
+        );
         let sum = 0;
         let n = 0;
         for (let sy = sy0; sy < sy1; sy++) {
@@ -571,18 +595,30 @@ const createMacTemplateIcons = (): TrayIcons => {
   try {
     const decoded = decodePng(readFileSync(APP_ICON_PATH));
     if (decoded) {
-      const mask = extractSnowflakeMask(decoded.rgba, decoded.width, decoded.height);
+      const mask = extractSnowflakeMask(
+        decoded.rgba,
+        decoded.width,
+        decoded.height
+      );
       const crop = computeContentCrop(mask, decoded.width, decoded.height);
 
       // 普通态：雪花占满 16×16 画布（@1x + @2x）。
       const normal16 = nativeImage.createFromBuffer(
-        encodePng(maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 16, 16), 16, 16)
+        encodePng(
+          maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 16, 16),
+          16,
+          16
+        )
       );
       normal16.addRepresentation({
         scaleFactor: 2,
         width: 32,
         height: 32,
-        buffer: encodePng(maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 32, 32), 32, 32),
+        buffer: encodePng(
+          maskToTemplateRgba(mask, decoded.width, decoded.height, crop, 32, 32),
+          32,
+          32
+        ),
       });
       normal16.setTemplateImage(true);
 
@@ -594,7 +630,13 @@ const createMacTemplateIcons = (): TrayIcons => {
         if (cached) {
           return cached;
         }
-        const { png16, png32 } = buildActivePngs(mask, decoded.width, decoded.height, crop, key);
+        const { png16, png32 } = buildActivePngs(
+          mask,
+          decoded.width,
+          decoded.height,
+          crop,
+          key
+        );
         const img = nativeImage.createFromBuffer(png16);
         // @2x 表示需按实际画布尺寸（位数不同宽度不同）注册。
         img.addRepresentation({
@@ -619,7 +661,10 @@ const createMacTemplateIcons = (): TrayIcons => {
 };
 
 /** 构建 Windows 双表示图标：16px @1x + 32px @2x，DPI 精确匹配。 */
-const buildDualRepIcon = (icon16: NativeImage, icon32: NativeImage): NativeImage => {
+const buildDualRepIcon = (
+  icon16: NativeImage,
+  icon32: NativeImage
+): NativeImage => {
   icon16.addRepresentation({
     scaleFactor: 2,
     width: 32,
@@ -722,19 +767,22 @@ const formatTokens = (count: number): string => {
   return String(count);
 };
 
-// 显示主窗口：恢复最小化、隐藏（托盘）状态并聚焦；窗口已全部关闭（macOS）时重建。
+// 显示主窗口：恢复最小化 / 隐藏（托盘）状态并聚焦；窗口已全部关闭（macOS）时重建。
 const showMainWindow = (): void => {
   // macOS 从菜单栏托盘恢复时，重新显示 Dock 图标。
   if (process.platform === "darwin") {
     app.dock?.show();
   }
-  const windows = BrowserWindow.getAllWindows();
-  if (windows.length > 0) {
-    const win = windows[0];
+  // 使用 getMainWindow() 精确获取主窗口，避免 getAllWindows()[0] 误选宠物窗口。
+  const win = getMainWindow();
+  if (win) {
     if (win.isMinimized()) {
       win.restore();
     }
-    win.show();
+    // 处理 hide-to-tray 隐藏状态：show() 对已显示的窗口无副作用。
+    if (!win.isVisible()) {
+      win.show();
+    }
     win.focus();
     return;
   }
@@ -778,7 +826,9 @@ const applyActiveVisual = (): void => {
 // 通过 Rust 后端异步聚合全部指标（目录、备忘录、用量均走 native bridge）。
 const refreshAllStats = (native: NativeBridge): void => {
   const today = new Date();
-  const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const dateStr = `${today.getFullYear()}-${String(
+    today.getMonth() + 1
+  ).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   // Rust 端对 usage 使用 SQLite datetime 字符串比较，需带时间部分，
   // 否则 "YYYY-MM-DD HH:MM:SS" 格式的 created_at 无法匹配纯日期边界。
   const dayStart = `${dateStr} 00:00:00`;

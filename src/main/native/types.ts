@@ -426,6 +426,22 @@ export type WorkspaceDirectoryRecord = WorkspaceDirectoryInput & {
   updatedAt: string;
 };
 
+export type RemoteDraftStatus = "pending" | "conflict";
+
+export type RemoteDraftInput = {
+  profileId: string;
+  workspaceId: string;
+  remotePath: string;
+  baseVersionJson: string;
+  content: string;
+  status: RemoteDraftStatus;
+};
+
+export type RemoteDraftRecord = RemoteDraftInput & {
+  id: string;
+  updatedAt: string;
+};
+
 export type IdeInfo = {
   id: string;
   name: string;
@@ -550,6 +566,7 @@ export type SubAgentConfigInput = {
   systemPrompt: string;
   toolsJson: string;
   configProfile: string;
+  model: string;
   builtin: boolean;
   sortOrder: number;
   source: string;
@@ -693,6 +710,19 @@ export type ImageLibraryRecord = {
   model: string;
   provider: string;
   createdAt: string;
+  /** 所属相册 id；null = 未分类 */
+  albumId: string | null;
+};
+
+/** 图库相册记录 */
+export type ImageAlbumRecord = {
+  id: string;
+  name: string;
+  createdAt: string;
+  /** 相册封面：最新一张图的图库相对路径（image/...）；空相册为 null */
+  coverPath: string | null;
+  /** 相册内图片数量 */
+  imageCount: number;
 };
 
 /** 图库目录迁移进度 */
@@ -754,6 +784,7 @@ export type ResponsesApiRequest = {
    */
   resumeAfterCompaction?: boolean;
   subAgentToolsJson?: string;
+  subAgentSystemPrompt?: string;
   subAgentConfigProfile?: string;
   skipContext?: boolean;
   skipPersist?: boolean;
@@ -798,6 +829,8 @@ export type ResponsesApiStreamChunk = {
   streamTokenCount: number;
   elapsedMs: number;
   ttftMs: number;
+  /** External-vision textify progress event (JSON string). See preload types. */
+  visionStatus?: string;
 };
 
 export type McpToolDefinition = {
@@ -1148,6 +1181,16 @@ export type NativeBridge = {
     items: WorkspaceDirectoryInput[]
   ) => Promise<void>;
   deleteWorkspaceDirectory: (directoryId: string) => Promise<void>;
+  listRemoteDrafts: (
+    workspaceId: string,
+    profileId?: string
+  ) => Promise<RemoteDraftRecord[]>;
+  upsertRemoteDraft: (item: RemoteDraftInput) => Promise<RemoteDraftRecord>;
+  deleteRemoteDraft: (
+    profileId: string,
+    workspaceId: string,
+    remotePath: string
+  ) => Promise<void>;
   createProjectDirectory: (
     parentPath: string,
     projectName: string
@@ -1256,6 +1299,10 @@ export type NativeBridge = {
     limit: number,
     offset: number
   ) => Promise<ChatConversationPage>;
+  /** 跨项目按会话 ID 查询会话记录（供「跨项目通知」使用）。 */
+  listChatConversationsByIds: (
+    conversationIds: string[]
+  ) => Promise<ChatConversationRecord[]>;
   listPinnedConversations: (
     directoryId: string
   ) => Promise<ChatConversationRecord[]>;
@@ -1277,6 +1324,7 @@ export type NativeBridge = {
     agentId: string,
     agentName: string,
     directoryId: string,
+    apiProfileName: string,
     model: string,
     title: string
   ) => Promise<void>;
@@ -1439,6 +1487,11 @@ export type NativeBridge = {
     repoPath: string,
     hash: string
   ) => Promise<GitDiffResult>;
+  gitCommitFileDiff: (
+    repoPath: string,
+    hash: string,
+    filePath: string
+  ) => Promise<GitDiffResult>;
   discoverGitRepos: (rootPath: string) => Promise<GitRepoInfo[]>;
   startGitWatch: (
     repoPath: string,
@@ -1523,6 +1576,13 @@ export type NativeBridge = {
   getImageLibraryDir: () => Promise<string>;
   setImageLibraryDir: (dir: string) => Promise<void>;
   listImageLibrary: () => Promise<ImageLibraryRecord[]>;
+  listImageAlbums: () => Promise<ImageAlbumRecord[]>;
+  createImageAlbum: (name: string) => Promise<ImageAlbumRecord>;
+  renameImageAlbum: (id: string, name: string) => Promise<ImageAlbumRecord>;
+  deleteImageAlbum: (id: string) => Promise<void>;
+  setImageAlbum: (imageId: string, albumId: string | null) => Promise<void>;
+  /** 手动导入图片文件（复制进图库目录并写入索引），返回成功导入的记录 */
+  importImageFiles: (filePaths: string[]) => Promise<ImageLibraryRecord[]>;
   readImageLibraryFile: (relativePath: string) => Promise<string | null>;
   deleteImageLibraryImage: (id: string) => Promise<void>;
   countConversationImages: (conversationIds: string[]) => Promise<number>;
@@ -1535,4 +1595,81 @@ export type NativeBridge = {
   commitImageLibraryMigration: () => Promise<void>;
   /** 回滚迁移：删除已复制到新目录的文件并移除日志（幂等） */
   rollbackImageLibraryMigration: () => Promise<void>;
+  /** 探测本机浏览器（Chrome/Edge/Chromium/Firefox）及其配置文件与数据量 */
+  browserImportListSources: () => Promise<BrowserImportSource[]>;
+  /** 解密并导出指定浏览器配置文件的已保存密码（明文，仅供主进程加密落盘） */
+  browserImportPasswords: (
+    sourceId: string,
+    profile: string
+  ) => Promise<ImportedBrowserPassword[]>;
+  /** 解析指定浏览器配置文件的 Cookie（Chrome 系已解密） */
+  browserImportCookies: (
+    sourceId: string,
+    profile: string
+  ) => Promise<ImportedBrowserCookie[]>;
+  // ── Codex 宠物系统 ────────────────────────────────────────────────
+  /** 安装 Codex 宠物包（zip），返回安装后的宠物清单 */
+  installPetFromZip: (zipPath: string) => Promise<PetManifestRecord>;
+  /** 列出所有可用宠物（Snow App 安装 + Codex App / Petdex 生态） */
+  listInstalledPets: () => Promise<PetManifestRecord[]>;
+  /** 卸载 Snow App 安装的宠物 */
+  uninstallPet: (petId: string) => Promise<void>;
+};
+
+/** 本机浏览器源（探测结果）。 */
+export type BrowserImportSource = {
+  /** "chrome" | "edge" | "chromium" | "firefox" */
+  id: string;
+  name: string;
+  profile: string;
+  /** 浏览器登录账号（Chrome: account_info email / Firefox: sync username） */
+  accountName: string;
+  passwordDb: string;
+  cookieDb: string;
+  passwordCount: number;
+  cookieCount: number;
+  note: string;
+};
+
+/** 导入的密码（明文仅存在于主进程内存，随即加密落盘）。 */
+export type ImportedBrowserPassword = {
+  origin: string;
+  username: string;
+  password: string;
+};
+
+/** 导入的 Cookie。 */
+export type ImportedBrowserCookie = {
+  domain: string;
+  path: string;
+  name: string;
+  value: string;
+  expires: number | null;
+  httpOnly: boolean;
+  secure: boolean;
+  sameSite: string;
+};
+
+/** Codex 宠物清单（pet.json 解析结果 + 安装位置信息）。 */
+export type PetManifestRecord = {
+  /** 宠物唯一标识 */
+  id: string;
+  /** 展示名称 */
+  displayName: string;
+  /** 宠物描述 */
+  description: string;
+  /** 精灵图文件名（相对宠物目录） */
+  spritesheetFile: string;
+  /** 宠物目录绝对路径 */
+  dirPath: string;
+  /** 精灵图绝对路径 */
+  spritesheetPath: string;
+  /** 来源："snow"（Snow App 安装）| "codex"（Codex App）| "petdex"（Petdex） */
+  source: string;
+  /** 精灵图版本：1 = 9 行标准网格，2 = 11 行（Hatch Pet v2） */
+  version: number;
+  /** 精灵图列数（标准为 8） */
+  columns: number;
+  /** 精灵图行数 */
+  rows: number;
 };

@@ -11,6 +11,7 @@ import { RightPanel, type RightPanelRef } from "./components/RightPanel";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { WindowControls } from "./components/WindowControls";
+import { NotificationNavigationBridge } from "./components/NotificationNavigationBridge";
 import {
   ChatConversationProvider,
   useChatConversationContext,
@@ -190,19 +191,22 @@ export const App = (): React.JSX.Element => {
     void window.snow.hideWindowToTray();
   }, []);
 
-  const handleOpenTerminal = useCallback(() => {
-    const rawPath = activeDirectory?.path ?? "";
-    // Pass the full path (including ssh://) to ptyManager.
-    // ptyManager detects ssh:// and spawns an SSH session instead of a local shell.
-    const cwd = rawPath;
-    if (isRightPanelCollapsed) {
-      setIsRightPanelCollapsed(false);
-    }
-    // Defer to ensure panel is visible before fitting terminal
-    requestAnimationFrame(() => {
-      rightPanelRef.current?.openTerminal(cwd);
-    });
-  }, [activeDirectory, isRightPanelCollapsed]);
+  const handleOpenTerminal = useCallback(
+    (cwd?: string) => {
+      // Pass the full path (including ssh://) to ptyManager.
+      // ptyManager detects ssh:// and spawns an SSH session instead of a local shell.
+      const rawPath = cwd ?? activeDirectory?.path ?? "";
+      const targetCwd = rawPath;
+      if (isRightPanelCollapsed) {
+        setIsRightPanelCollapsed(false);
+      }
+      // Defer to ensure panel is visible before fitting terminal
+      requestAnimationFrame(() => {
+        rightPanelRef.current?.openTerminal(targetCwd);
+      });
+    },
+    [activeDirectory, isRightPanelCollapsed]
+  );
 
   const handleOpenBrowser = useCallback(() => {
     if (isRightPanelCollapsed) {
@@ -231,7 +235,9 @@ export const App = (): React.JSX.Element => {
       fileName: string,
       isSsh?: boolean,
       sshSessionId?: string | null,
-      focusLine?: number
+      focusLine?: number,
+      sshWorkspaceRoot?: string,
+      sshWorkspaceId?: string
     ) => {
       if (isRightPanelCollapsed) {
         setIsRightPanelCollapsed(false);
@@ -242,7 +248,9 @@ export const App = (): React.JSX.Element => {
           fileName,
           isSsh,
           sshSessionId,
-          focusLine
+          focusLine,
+          sshWorkspaceRoot,
+          sshWorkspaceId
         );
       });
     },
@@ -389,6 +397,11 @@ export const App = (): React.JSX.Element => {
         directoryId={activeDirectory?.directoryId}
         directoryPath={activeDirectory?.path}
       >
+        <NotificationNavigationBridge
+          activeDirectory={activeDirectory}
+          onActiveDirectoryChange={setActiveDirectory}
+          onSelectMainView={setActiveMainView}
+        />
         <ShortcutHandlerBridge />
         <div
           ref={appShellRef}
@@ -419,14 +432,18 @@ export const App = (): React.JSX.Element => {
               activeDirectory={activeDirectory}
               activeMainView={activeMainView}
               isCollapsed={isSidebarCollapsed}
+              isResizing={activeResizeTarget !== null}
               onActiveDirectoryChange={setActiveDirectory}
               onSelectMainView={setActiveMainView}
               onOpenSshWizard={handleOpenSshWizard}
+              onOpenTerminal={handleOpenTerminal}
               onOpenFile={handleOpenFile}
             />
             {!isSidebarCollapsed && (
               <div
-                className="panel-resizer sidebar-resizer layout-resizer"
+                className={`panel-resizer sidebar-resizer layout-resizer${
+                  activeResizeTarget === "sidebar" ? " is-active" : ""
+                }`}
                 role="separator"
                 aria-label="Resize sidebar"
                 aria-orientation="vertical"
@@ -436,11 +453,14 @@ export const App = (): React.JSX.Element => {
             <MainContent
               activeDirectory={activeDirectory}
               activeView={activeMainView}
+              isResizing={activeResizeTarget !== null}
               onSelectView={setActiveMainView}
             />
             {!isRightPanelCollapsed && (
               <div
-                className="panel-resizer right-panel-resizer layout-resizer"
+                className={`panel-resizer right-panel-resizer layout-resizer${
+                  activeResizeTarget === "right-panel" ? " is-active" : ""
+                }`}
                 role="separator"
                 aria-label="Resize review panel"
                 aria-orientation="vertical"
@@ -453,6 +473,7 @@ export const App = (): React.JSX.Element => {
               ref={rightPanelRef}
               isCollapsed={isRightPanelCollapsed}
               isFullscreen={isRightPanelFullscreen}
+              isResizing={activeResizeTarget !== null}
               activeDirectory={activeDirectory}
             />
           </div>

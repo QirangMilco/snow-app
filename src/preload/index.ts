@@ -13,6 +13,7 @@ import { importConfigApi } from "./modules/importConfigApi";
 import { pluginsApi } from "./modules/pluginsApi";
 import { imageLibraryApi } from "./modules/imageLibraryApi";
 import { ideApi } from "./modules/ideApi";
+import { petApi } from "./modules/petApi";
 
 export type * from "./types";
 
@@ -33,6 +34,7 @@ const api = {
   ...pluginsApi,
   ...imageLibraryApi,
   ...ideApi,
+  ...petApi,
 };
 
 contextBridge.exposeInMainWorld("snow", api);

@@ -139,7 +139,7 @@ impl McpService for AppControlService {
             McpTool {
                 server_id: SERVER_ID.to_string(),
                 name: TOOL_OPEN_SETTINGS.to_string(),
-                description: "Open a specific settings page in the Snow App UI. Available pages: api-settings, imagegen-settings, image-library, proxy-browser-settings, codebase-settings, system-prompt-settings, personalization-settings, custom-headers-settings, mcp-settings, import-settings, skills-settings, sub-agent-settings, sensitive-command-settings, hooks-settings, theme-settings, terminal-settings, keyboard-shortcuts-settings, privacy-settings, usage-settings, system-logs.".to_string(),
+                description: "Open a specific settings page in the Snow App UI. Available pages: api-settings, imagegen-settings, image-library, proxy-browser-settings, codebase-settings, system-prompt-settings, personalization-settings, custom-headers-settings, mcp-settings, import-settings, skills-settings, sub-agent-settings, sensitive-command-settings, hooks-settings, theme-settings, terminal-settings, browser-settings, keyboard-shortcuts-settings, privacy-settings, usage-settings, system-logs.".to_string(),
                 input_schema: json!({
                     "type": "object",
                     "properties": {
@@ -162,6 +162,7 @@ impl McpService for AppControlService {
                                 "hooks-settings",
                                 "theme-settings",
                                 "terminal-settings",
+                                "browser-settings",
                                 "keyboard-shortcuts-settings",
                                 "privacy-settings",
                                 "usage-settings",
@@ -293,10 +294,7 @@ async fn execute_request_approval(
     let plan_summary = required_plan_summary(args)?;
     let command = UserQuestionCommand {
         question: plan_summary.clone(),
-        options: vec![
-            APPROVE_OPTION.to_string(),
-            KEEP_PLANNING_OPTION.to_string(),
-        ],
+        options: vec![APPROVE_OPTION.to_string(), KEEP_PLANNING_OPTION.to_string()],
     };
 
     let promise = on_question
@@ -399,14 +397,20 @@ fn validate_set_mode_args(args: &Value) -> napi::Result<(String, Value)> {
         ));
     }
 
-    let enabled = args.get("enabled").and_then(Value::as_bool).ok_or_else(|| {
-        Error::new(
-            Status::InvalidArg,
-            "enabled is required and must be a boolean for setMode".to_string(),
-        )
-    })?;
+    let enabled = args
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            Error::new(
+                Status::InvalidArg,
+                "enabled is required and must be a boolean for setMode".to_string(),
+            )
+        })?;
 
-    Ok(("set_mode".to_string(), json!({ "mode": mode, "enabled": enabled })))
+    Ok((
+        "set_mode".to_string(),
+        json!({ "mode": mode, "enabled": enabled }),
+    ))
 }
 
 const VALID_SETTINGS_PAGES: &[&str] = &[
@@ -426,6 +430,7 @@ const VALID_SETTINGS_PAGES: &[&str] = &[
     "hooks-settings",
     "theme-settings",
     "terminal-settings",
+    "browser-settings",
     "keyboard-shortcuts-settings",
     "privacy-settings",
     "usage-settings",
@@ -587,16 +592,17 @@ fn validate_create_scheduled_task_args(args: &Value) -> napi::Result<(String, Va
                                     .to_string(),
                             )
                         })?;
-                    let minute = schedule
-                        .get("minute")
-                        .and_then(Value::as_i64)
-                        .ok_or_else(|| {
-                            Error::new(
-                                Status::InvalidArg,
-                                "schedule.minute is required (0-59) when mode is \"daily\""
-                                    .to_string(),
-                            )
-                        })?;
+                    let minute =
+                        schedule
+                            .get("minute")
+                            .and_then(Value::as_i64)
+                            .ok_or_else(|| {
+                                Error::new(
+                                    Status::InvalidArg,
+                                    "schedule.minute is required (0-59) when mode is \"daily\""
+                                        .to_string(),
+                                )
+                            })?;
                     if !(0..=23).contains(&hour) {
                         return Err(Error::new(
                             Status::InvalidArg,
@@ -625,9 +631,7 @@ fn validate_create_scheduled_task_args(args: &Value) -> napi::Result<(String, Va
         other => {
             return Err(Error::new(
                 Status::InvalidArg,
-                format!(
-                    "schedule.type must be \"once\" or \"recurring\", received \"{other}\""
-                ),
+                format!("schedule.type must be \"once\" or \"recurring\", received \"{other}\""),
             ));
         }
     }

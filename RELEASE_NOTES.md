@@ -1,5 +1,61 @@
 # Release Notes
 
+## v0.1.23
+
+## New Features
+
+- **API Settings Enhancements**: Gemini profiles gain a **Google search** option (`googleSearch` / `visionGoogleSearch`) that injects the Google Search tool for real-time web grounding; Responses profiles gain **Fast Mode** (`responsesFastMode`); the form validates fields per request method so invalid combinations cannot be submitted.
+- **Per-Commit Diff Viewing**: The Git commit graph can expand a commit to list its files and show each file's diff **within that commit**; the file context menu opens the diff **in a new right-panel tab** (loading state first, then async fill) or copies the file path. Works for local and `ssh://` remote repositories.
+- **Cross-Project Notification Aggregation**: The sidebar aggregates conversations from **other projects** that are streaming, need attention, or completed into a per-project notification block with status badges (including an attention-required indicator); clicking one jumps to that project and conversation.
+- **Image Library Upgrades**: Album card wall default view; fuzzy search over file name/prompt/model/provider; batch mode (move into album / batch delete); manual multi-file import; drag-and-drop images onto album cards to classify.
+- **Explorer Context Menu**: Right-click files/directories in the project explorer to open a terminal there, reveal in the system file manager, copy the path, or open the directory with an installed IDE (local entries only; SSH entries keep rename/delete/open).
+- **Sub-Agent Conversation View**: A sub-agent session's header shows its **stage name** (prompt truncated at activation) and the launching main conversation; an info card above the messages shows the agent name badge, a jump-back-to-parent button, and the full delegated prompt.
+- **Unified Terminal Shell Resolution**: One shell-resolution chain now serves the Git panel (WSL scenarios) and the integrated terminal; non-empty `shellPath` is validated at save time and `terminal-open` rejects missing shell paths instead of silently falling back.
+- **Bash Execution Timings**: Every `bash` tool execution logs phase timings (argument parse, sensitive check, remote dispatch, shell resolve, spawn, first output, process wait, pipe drain, total) to the app log with the tool execution id.
+
+## Improvements
+
+- **Checkpoint Capture**: Git-driven `git worktree` capture replaces full-tree traversal/copy, eliminating the serial bottleneck; gitignore matching now honors subdirectory rules and `info/exclude`.
+- **Main Process ESM**: `__dirname`/`__filename` replaced with `import.meta.dirname`/`import.meta.filename` (constants, mainWindow, nativeBridge, plugin runtime, discovery worker).
+- **Sub-Agent Execution Chain**: Optimized activation/cancellation flow and updated docs.
+- **Navigation Safety**: Renderer link/path clicks are intercepted on `auxclick` as well as `click`, and the main process blocks out-of-app `will-navigate` — Ctrl/Cmd+clicking a link can no longer reload the whole frontend and kill in-flight generations.
+
+## Bug Fixes
+
+- Ctrl/Cmd+click on a message link no longer navigates the current window (frontend reload) and stops streaming/generation previews; links now open in the app browser panel.
+- ImageGen settings toggles were invisible due to a slider class-name mismatch; the class names are aligned.
+- Responses API failed terminal events are handled correctly (event/stream/retry paths).
+- The Git tab stays visible when it is the only open tab.
+- Chat deletion confirmation dialog is reused consistently (single/batch).
+
+## v0.1.22
+
+## New Features
+
+- **Browser Credential Import**: Passwords and Cookies can be imported from Chrome/Edge/Chromium (macOS Keychain + PBKDF2/AES-128-CBC, Windows DPAPI + AES-256-GCM) and Firefox (SHA1 iteration + 3DES-CBC), including Chrome 133+ Cookie hash prefix stripping and SQLite WAL lock read-only fallback.
+- **Password Vault**: Passwords are stored in an AES-256-GCM encrypted vault on disk, protected by the OS keychain; autofill IPC validates the sender frame origin to prevent cross-origin reads.
+- **Webview Password Assistant**: Login forms are auto-filled and auto-saved via a dedicated preload (webview-browser entry).
+- **Webview Popup Windows**: `window.open` / `target=_blank` now open real windows preserving the opener relationship (required for Google OAuth login).
+- **Element Selector**: Select page elements to add as chips to the chat input, with notes and real-time style editing preview; elements auto-expand into readable descriptions in messages.
+- **Browser Settings Panel**: Configure the start page, manage passwords (search/show-hide/delete), and import passwords/Cookies from local browsers.
+- **Model Search**: The model dropdown now supports filtering long model lists by model id or owner.
+- **Requested Model Persistence**: The model the user requested is now persisted across Anthropic, Chat Completions, Gemini, and Responses paths — provider-echoed date-stamped or aliased model names no longer overwrite the model shown in the chat input.
+- **Dialog Close Button**: Form dialogs get a localized close button in the header; overlay click-to-close was removed to prevent accidental dismissals.
+
+## Improvements
+
+- **Chat Scrolling**: The chat stays pinned to the bottom during async rendering of historical messages and no longer auto-snaps after the session ends; chip hover detail preview added; cancelling a project add returns to the parent level.
+- **Metric Breakpoints**: Container query breakpoints recalibrated to measured widths so metrics are neither hidden early nor overflow.
+- **Cookie Restore**: Domain Cookies explicitly pass their domain so subdomains share login state; SameSite=None non-Secure cookies are downgraded to ensure they can be written.
+
+## Bug Fixes
+
+- **Stream Disconnect Retry**: When a streaming response disconnects mid-stream with zero output, the request is now automatically retried with exponential backoff (3s→30s, up to 5 times) across all four protocols (chat/anthropic/responses/gemini) with a visible retry indicator; exhausted retries return an explicit error instead of a silent empty reply. Streams with partial output stay `incomplete` to avoid duplicated content.
+- **MCP Handshake**: Added a discover probe timeout and fallback to the legacy `initialize` handshake for silent old-SDK servers.
+- **Sensitive Command Rule**: The preset `rm` rule now uses word boundaries so substrings like `arm64`, `warm`, or `--rm` are no longer flagged; existing preset rows are migrated.
+- **ImageGen Compile Fix**: Fixed missing commas in three `json!` macros in `imagegen.rs`.
+- **Native Bridge Fallback**: Missing `browserImport*` methods added to the fallback native bridge so non-Rust runtimes fail with a clear error.
+
 ## v0.1.21
 
 ## New Features

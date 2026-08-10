@@ -1,14 +1,7 @@
-import {
-  app,
-  BrowserWindow,
-  ipcMain,
-  Menu,
-  nativeImage,
-  nativeTheme,
-} from "electron";
+import { app, ipcMain, Menu, nativeImage, nativeTheme } from "electron";
 import { APP_ICON_PATH, APP_USER_MODEL_ID, isMacOS } from "./constants";
 import { initializeApplicationServices } from "./applicationServices";
-import { createWindow } from "./mainWindow";
+import { createWindow, getMainWindow } from "./mainWindow";
 import { initTray } from "./tray";
 import { registerIpcHandlers } from "../ipc/registerIpcHandlers";
 import { native, getRawNative } from "../native/nativeBridge";
@@ -29,11 +22,16 @@ import {
   initBrowserNetworkRecorder,
 } from "../ipc/handlers/browserNetworkRecorder";
 import { installWebviewContextMenu } from "../utils/webviewContextMenu";
+import { initBrowserPopupHandler } from "../browser/browserPopupWindow";
+import { disposePetWindow, restorePetWindow } from "../pets/petWindow";
 
 export const bootstrapApplication = (): void => {
   // ─── Chromium 启动加速开关（必须在 whenReady 之前）─────────────────────
   // 禁用不必要的 GPU 光栅化和合成特性检测，减少内核初始化耗时。
-  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+  app.commandLine.appendSwitch(
+    "disable-features",
+    "CalculateNativeWinOcclusion"
+  );
   // 跳过 GPU 沙箱预热（部分显卡驱动初始化极慢）。
   app.commandLine.appendSwitch("disable-gpu-sandbox");
   // 禁用后台节流，确保启动阶段渲染不被降频。
@@ -66,13 +64,17 @@ export const bootstrapApplication = (): void => {
       func: "second-instance",
       message: "Second instance detected, focusing existing window",
     });
-    const windows = BrowserWindow.getAllWindows();
-    if (windows.length > 0) {
-      const win = windows[0];
-      if (win.isMinimized()) {
-        win.restore();
+    // 使用 getMainWindow() 而非 getAllWindows()[0]：宠物窗口始终存在，
+    // getAllWindows()[0] 可能返回宠物窗口而非会话主窗口。
+    const existing = getMainWindow();
+    if (existing) {
+      if (existing.isMinimized()) {
+        existing.restore();
       }
-      win.focus();
+      if (!existing.isVisible()) {
+        existing.show();
+      }
+      existing.focus();
     }
   });
 
@@ -108,11 +110,18 @@ export const bootstrapApplication = (): void => {
     // 完整的 loading 动画，而非空白/黑屏过渡。
     const mainWindow = createWindow();
 
+    // 宠物窗口生命周期绑定主窗口：主窗口关闭后一并销毁宠物，
+    // 避免 Windows 下悬浮宠物窗口残留导致进程无法退出。
+    mainWindow.on("closed", () => {
+      disposePetWindow();
+    });
+
     // 初始化系统托盘（黑白脱色图标 + 悬停快速信息 + 右键菜单）。
     initTray(native);
 
-    // 首次启动安装内置 skills 并同步内置文档（供 snow-app-docs 技能阅读），
-    // 均为幂等操作。
+    // 安装/同步内置 skills 与内置文档（供 snow-app-docs 技能阅读）：
+    // 首次安装、应用升级或开发模式下自动推送官方版本；内置 skill 的
+    // 用户启用/禁用开关会在同步时保留。
     ensureBuiltinSkills();
     ensureBuiltinDocs();
 
@@ -130,6 +139,9 @@ export const bootstrapApplication = (): void => {
     // 需在 app ready 且 defaultSession 可用后初始化。
     initBrowserNetworkRecorder();
     initBrowserDialogHandler();
+    // 浏览器弹出窗口：webview 内 window.open / target=_blank 创建真实窗体
+    // （Google 登录等 OAuth 弹窗依赖 window.opener 关系，不能转交系统浏览器）。
+    initBrowserPopupHandler();
     // 浏览器右键菜单：Electron webview 默认无右键菜单，需主进程手动弹出。
     installWebviewContextMenu();
 
@@ -144,15 +156,17 @@ export const bootstrapApplication = (): void => {
     // 用户已看到 loading 动画后再执行阻塞操作。
     mainWindow.webContents.once("did-finish-load", () => {
       // Initialise storage — use raw binding to avoid storageReady deadlock.
-      initializeApplicationServices(getRawNative()).catch((error) => {
-        console.error("Failed to initialize application storage:", error);
-        snowLog.error({
-          module: "app/bootstrap",
-          func: "initializeApplicationServices",
-          message: "Failed to initialize application storage",
-          error: error instanceof Error ? error.message : String(error),
+      initializeApplicationServices(getRawNative())
+        .then(() => restorePetWindow(native))
+        .catch((error) => {
+          console.error("Failed to initialize application storage:", error);
+          snowLog.error({
+            module: "app/bootstrap",
+            func: "initializeApplicationServices",
+            message: "Failed to initialize application storage",
+            error: error instanceof Error ? error.message : String(error),
+          });
         });
-      });
 
       // 启动时应用会话代理，使 net.fetch / electron-updater 走内置代理配置。
       void applySessionProxy(native);
@@ -181,7 +195,20 @@ export const bootstrapApplication = (): void => {
     });
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
+      // macOS：点击 Dock 图标时，优先恢复已存在的主窗口（可能是最小化或
+      // hide-to-tray 隐藏状态）；主窗口不存在时才创建新窗口。
+      // 不能使用 getAllWindows().length 判断——宠物窗口始终存在，
+      // 会导致最小化/隐藏主窗口后点击 Dock 图标无法复原。
+      const existing = getMainWindow();
+      if (existing) {
+        if (existing.isMinimized()) {
+          existing.restore();
+        }
+        if (!existing.isVisible()) {
+          existing.show();
+        }
+        existing.focus();
+      } else {
         createWindow();
       }
     });
@@ -196,5 +223,10 @@ export const bootstrapApplication = (): void => {
       });
       app.quit();
     }
+  });
+
+  // 退出前销毁宠物窗口，避免残留透明置顶窗口。
+  app.on("before-quit", () => {
+    disposePetWindow();
   });
 };

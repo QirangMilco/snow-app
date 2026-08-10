@@ -2,6 +2,7 @@ import type { ResponsesApiStreamChunk } from "../../../../../preload/types/api";
 import type {
   ConversationContextValue,
   HookExecutionRecord,
+  VisionAnalysisState,
 } from "../utils/conversationTypes";
 import { formatMessageTime } from "../utils/conversationHelpers";
 import { appendHookExecutionToMessage } from "./hookOutcome";
@@ -164,6 +165,40 @@ export const createStreamChunkHandler = (
   isCancelled: () => boolean
 ) => {
   return (chunk: ResponsesApiStreamChunk): void => {
+    // External-vision textify progress event: update the session-level
+    // visionAnalysis field only, never touch message content. The backend
+    // pushes these chunks while it describes user images with the external
+    // vision model (before the first content delta arrives).
+    //
+    // This is processed BEFORE the isCancelled() early return: when the user
+    // aborts mid-textify, the backend pushes a final cancel/done/error event
+    // to recycle the "vision model analyzing image" status card — skipping it
+    // would leave the card stuck forever. Cancelled runs only apply clearing
+    // events (cancel/done/error): a stale describing/cached event from the
+    // old run must not resurrect the card nor clobber a newer run's state.
+    if (chunk.visionStatus) {
+      try {
+        const parsed = JSON.parse(chunk.visionStatus) as VisionAnalysisState;
+        // describing/cached → show the intermediate status card; done with
+        // remaining images → keep the card (the next describing event will
+        // advance the index); done on the last image / error / cancel → clear.
+        const keep =
+          parsed.phase === "describing" ||
+          parsed.phase === "cached" ||
+          (parsed.phase === "done" && parsed.index < parsed.total);
+        if (!isCancelled() || !keep) {
+          ctx.updateSessionField(
+            sessionKey,
+            "visionAnalysis",
+            keep ? parsed : undefined
+          );
+        }
+      } catch {
+        // Ignore unparseable vision status payloads.
+      }
+      return;
+    }
+
     if (isCancelled()) {
       return;
     }

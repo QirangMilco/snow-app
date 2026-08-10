@@ -32,7 +32,7 @@ export const ConfirmDialog = ({
   variant = "default",
   className,
   children,
-}: ConfirmDialogProps): React.JSX.Element | null => {
+}: ConfirmDialogProps): React.JSX.Element => {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,68 +42,66 @@ export const ConfirmDialog = ({
     dialogRef.current?.focus();
   }, [open]);
 
-  if (!open) {
-    return null;
-  }
-
   return createPortal(
-    <div
-      className="confirm-dialog-overlay"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-        if (e.key === "Enter" && e.target === dialogRef.current) {
-          e.preventDefault();
-          onConfirm();
-        }
-      }}
-    >
+    open && (
       <div
-        className={`confirm-dialog confirm-dialog-${variant}${className ? ` ${className}` : ""}`}
-        ref={dialogRef}
-        tabIndex={-1}
+        className="confirm-dialog-overlay"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+          if (e.key === "Enter" && e.target === dialogRef.current) {
+            e.preventDefault();
+            onConfirm();
+          }
+        }}
       >
-        <div className="confirm-dialog-header">
-          <div className="confirm-dialog-title">
-            <AlertTriangle size={16} />
-            <span>{title}</span>
+        <div
+          className={`confirm-dialog confirm-dialog-${variant}${className ? ` ${className}` : ""}`}
+          ref={dialogRef}
+          tabIndex={-1}
+        >
+            <div className="confirm-dialog-header">
+              <div className="confirm-dialog-title">
+                <AlertTriangle size={16} />
+                <span>{title}</span>
+              </div>
+            </div>
+            <div className="confirm-dialog-body">
+              {message ? <p>{message}</p> : null}
+              {children}
+            </div>
+            <div className="confirm-dialog-actions">
+              {cancelLabel && (
+                <button
+                  type="button"
+                  className="confirm-dialog-btn cancel"
+                  onClick={onCancel}
+                >
+                  {cancelLabel}
+                </button>
+              )}
+              {extraLabel && onExtra && (
+                <button
+                  type="button"
+                  className="confirm-dialog-btn cancel"
+                  onClick={onExtra}
+                >
+                  {extraLabel}
+                </button>
+              )}
+              <button
+                type="button"
+                className="confirm-dialog-btn confirm"
+                onClick={onConfirm}
+              >
+                {confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
-        <div className="confirm-dialog-body">
-          {message ? <p>{message}</p> : null}
-          {children}
-        </div>
-        <div className="confirm-dialog-actions">
-          {cancelLabel && (
-            <button
-              type="button"
-              className="confirm-dialog-btn cancel"
-              onClick={onCancel}
-            >
-              {cancelLabel}
-            </button>
-          )}
-          {extraLabel && onExtra && (
-            <button
-              type="button"
-              className="confirm-dialog-btn cancel"
-              onClick={onExtra}
-            >
-              {extraLabel}
-            </button>
-          )}
-          <button
-            type="button"
-            className="confirm-dialog-btn confirm"
-            onClick={onConfirm}
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>,
+    ),
     document.body
   );
 };

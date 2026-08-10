@@ -6,6 +6,7 @@ import type {
   UserQuestionResponse,
 } from "../native/types";
 import { safeSend } from "../utils/safeSend";
+import { reportPetWaiting } from "../pets/petWindow";
 
 const USER_QUESTION_CHANNEL = "user-question:request";
 const USER_QUESTION_RESPONSE_CHANNEL = "user-question:response";
@@ -28,6 +29,7 @@ const failPendingQuestionsForRenderer = (rendererId: number): void => {
 
     pending.reject(new Error("User question renderer was destroyed"));
     pendingQuestions.delete(questionId);
+    reportPetWaiting(false);
   }
 };
 
@@ -68,11 +70,13 @@ export const dispatchUserQuestion = async (
       resolve,
       reject,
     });
+    reportPetWaiting(true);
 
     try {
       safeSend(source, USER_QUESTION_CHANNEL, request);
     } catch (error) {
       pendingQuestions.delete(questionId);
+      reportPetWaiting(false);
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
@@ -92,6 +96,7 @@ export const resolveUserQuestion = (
   }
 
   pendingQuestions.delete(response.questionId);
+  reportPetWaiting(false);
   if (response.error) {
     pending.reject(new Error(response.error));
     return;

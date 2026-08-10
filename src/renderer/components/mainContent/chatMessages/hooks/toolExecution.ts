@@ -91,8 +91,7 @@ export function createToolExecutor(
     // session's Plan Mode, never the live global ref (another conversation
     // toggling its modes must not weaken or strengthen this session's gate).
     const sessionPlanMode = (key: string): boolean =>
-      ctx.sessionsRefData.current.get(key)?.planMode ??
-      planModeRef.current;
+      ctx.sessionsRefData.current.get(key)?.planMode ?? planModeRef.current;
     const structuredToolResults: {
       name: string;
       callId: string;
@@ -109,7 +108,8 @@ export function createToolExecutor(
     // tool-execution ids, terminal stdout/stderr and imagegen
     // partial-image previews are routed by matching the tool call.
     const buildToolChunkHandler =
-      (toolCall: ToolCallInfo) => (chunk: BashStreamChunk): void => {
+      (toolCall: ToolCallInfo) =>
+      (chunk: BashStreamChunk): void => {
         if (!chunk.data) {
           return;
         }
@@ -117,34 +117,32 @@ export function createToolExecutor(
           chunk.stream === "interactive_session" ||
           chunk.stream === "tool_execution"
         ) {
-          ctx.updateSessionMessages(
-            effectiveKey,
-            (currentMessages) =>
-              currentMessages.map((currentMessage) => {
-                if (currentMessage.id !== currentAssistantMessageId) {
-                  return currentMessage;
-                }
+          ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+            currentMessages.map((currentMessage) => {
+              if (currentMessage.id !== currentAssistantMessageId) {
+                return currentMessage;
+              }
 
-                return {
-                  ...currentMessage,
-                  toolCalls: updateFirstMatchingToolCall(
-                    currentMessage.toolCalls,
-                    toolCall,
-                    ["pending", "running"],
-                    (currentToolCall) => ({
-                      ...currentToolCall,
-                      interactiveSessionId:
-                        chunk.stream === "interactive_session"
-                          ? chunk.data
-                          : currentToolCall.interactiveSessionId,
-                      toolExecutionId:
-                        chunk.stream === "tool_execution"
-                          ? chunk.data
-                          : currentToolCall.toolExecutionId,
-                    })
-                  ),
-                };
-              })
+              return {
+                ...currentMessage,
+                toolCalls: updateFirstMatchingToolCall(
+                  currentMessage.toolCalls,
+                  toolCall,
+                  ["pending", "running"],
+                  (currentToolCall) => ({
+                    ...currentToolCall,
+                    interactiveSessionId:
+                      chunk.stream === "interactive_session"
+                        ? chunk.data
+                        : currentToolCall.interactiveSessionId,
+                    toolExecutionId:
+                      chunk.stream === "tool_execution"
+                        ? chunk.data
+                        : currentToolCall.toolExecutionId,
+                  })
+                ),
+              };
+            })
           );
           return;
         }
@@ -162,10 +160,7 @@ export function createToolExecutor(
                 toolCall,
                 ["pending", "running"],
                 (currentToolCall) => {
-                  if (
-                    chunk.stream === "stdout" ||
-                    chunk.stream === "stderr"
-                  ) {
+                  if (chunk.stream === "stdout" || chunk.stream === "stderr") {
                     return {
                       ...currentToolCall,
                       streamingStdout:
@@ -201,17 +196,13 @@ export function createToolExecutor(
                         typeof (parsed as Record<string, unknown>).index ===
                           "number"
                       ) {
-                        const record = parsed as Record<
-                          string,
-                          unknown
-                        >;
+                        const record = parsed as Record<string, unknown>;
                         const incoming = {
                           index: record.index as number,
                           mimeType: record.mimeType as string,
                           data: record.data as string,
                         };
-                        const existing =
-                          currentToolCall.streamingImages ?? [];
+                        const existing = currentToolCall.streamingImages ?? [];
                         const next = [
                           ...existing.filter(
                             (image) => image.index !== incoming.index
@@ -269,9 +260,7 @@ export function createToolExecutor(
     // 启动一个并行工具：置为 running、执行生图 beforeToolCall hook、
     // 立即发起请求（不 await）。返回是否成功启动（hook 中止返回 false，
     // 调用方应停止继续启动）。
-    const startParallelTool = async (
-      idx: number
-    ): Promise<boolean> => {
+    const startParallelTool = async (idx: number): Promise<boolean> => {
       const parallelToolCall = toolCalls[idx];
       const isSubAgent = parallelToolCall.name === "sub-agents-activate";
 
@@ -411,9 +400,7 @@ export function createToolExecutor(
                 parallelToolCall.arguments,
                 sessionDirId,
                 preStartCheckpointIds,
-                preStartCheckpointIds.length > 0
-                  ? sessionDirPath
-                  : undefined,
+                preStartCheckpointIds.length > 0 ? sessionDirPath : undefined,
                 undefined,
                 buildToolChunkHandler(parallelToolCall),
                 parallelToolCall.interactionId,
@@ -715,6 +702,26 @@ export function createToolExecutor(
               toolArgs,
               effectiveKey === PENDING_SESSION_KEY ? undefined : effectiveKey
             );
+
+            // Persist conversation and tool-call binding so bash commands can
+            // recover context after a restart.
+            if (
+              toolCall.name === "bash-terminal-execute" &&
+              effectiveKey !== PENDING_SESSION_KEY
+            ) {
+              try {
+                const parsedArgs = JSON.parse(toolArgs) as Record<
+                  string,
+                  unknown
+                >;
+                parsedArgs.sessionId = effectiveKey;
+                parsedArgs.conversationId = effectiveKey;
+                parsedArgs.toolCallId = toolCall.callId || undefined;
+                toolArgs = JSON.stringify(parsedArgs);
+              } catch {
+                // If args are not valid JSON, let the tool fail naturally.
+              }
+            }
 
             let sensitiveAuthorizationToken: string | undefined;
             if (

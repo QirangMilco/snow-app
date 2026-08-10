@@ -18,14 +18,13 @@ type SensitiveCommandConfirmDialogProps = {
     userProvidedReason?: boolean
   ) => void;
 };
-
-const BASH_TOOL_NAME = "bash-terminal-execute";
+const COMMAND_TOOL_NAMES = new Set(["bash-terminal-execute"]);
 
 const parseBashArgument = (
   toolCall: ToolCallInfo,
   key: "command" | "description"
 ): string | null => {
-  if (toolCall.name !== BASH_TOOL_NAME) {
+  if (!COMMAND_TOOL_NAMES.has(toolCall.name)) {
     return null;
   }
 
@@ -142,8 +141,7 @@ const SensitiveCommandItem = ({
             const trimmedReason = rejectionReason.trim();
             onReject(
               toolCall,
-              trimmedReason ||
-                t("toolAuthorization.defaultRejectionReason"),
+              trimmedReason || t("toolAuthorization.defaultRejectionReason"),
               trimmedReason.length > 0
             );
           }}

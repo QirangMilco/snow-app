@@ -98,8 +98,13 @@ export const AskUserQuestionToolCall = ({
   toolCall,
 }: AskUserQuestionToolCallProps): React.JSX.Element => {
   const { t } = useI18n();
-  const { answerUserQuestion, cancelUserQuestion } =
-    useChatConversationContext();
+  const {
+    answerUserQuestion,
+    cancelUserQuestion,
+    getUserQuestionDraft,
+    saveUserQuestionDraft,
+    clearUserQuestionDraft,
+  } = useChatConversationContext();
   const parsedArgs = useMemo(
     () => parseQuestionArgs(toolCall.arguments),
     [toolCall.arguments]
@@ -111,6 +116,7 @@ export const AskUserQuestionToolCall = ({
   const questionState = toolCall.userQuestion;
   const question = questionState?.question ?? parsedArgs?.question ?? "";
   const options = questionState?.options ?? parsedArgs?.options ?? [];
+  const questionId = questionState?.questionId;
   const isWaitingForRequest = toolCall.status === "running" && !questionState;
   const isCancelled =
     questionState?.status === "cancelled" || parsedResult?.cancelled === true;
@@ -118,42 +124,65 @@ export const AskUserQuestionToolCall = ({
     questionState?.status === "answered" ||
     Boolean(parsedResult && !parsedResult.cancelled);
   const isSettled = isAnswered || isCancelled;
-  const isInteractive = Boolean(questionState && !isSettled);
+  // 工具被中止（用户点停止 / 会话 abort）时 toolCall 会标记为 error，但
+  // userQuestion 状态保留在 waiting——此时 pending 已被 reject，提交/取消
+  // 都是无效操作，必须禁用表单，否则卡片看起来可交互却点了没反应。
+  const isInteractive = Boolean(
+    questionState && !isSettled && toolCall.status !== "error"
+  );
 
-  const [selectedOptions, setSelectedOptions] = useState<string[]>([]);
-  const [customAnswers, setCustomAnswers] = useState<string[]>([]);
+  // 交互状态优先从草稿恢复（卡片因会话切换等重挂载后，本地 state 会丢失，
+  // 草稿按 questionId 保存在 context 中，由 useEffect 同步兜底恢复）。
+  const [selectedOptions, setSelectedOptions] = useState<string[]>(() =>
+    questionId
+      ? (getUserQuestionDraft(questionId)?.selectedOptions ?? [])
+      : []
+  );
+  const [customAnswers, setCustomAnswers] = useState<string[]>(() =>
+    questionId ? (getUserQuestionDraft(questionId)?.customAnswers ?? []) : []
+  );
   const [customInput, setCustomInput] = useState("");
 
   useEffect(() => {
+    const draft = questionId ? getUserQuestionDraft(questionId) : undefined;
     setSelectedOptions(
-      questionState?.selectedOptions ?? parsedResult?.selectedOptions ?? []
+      draft?.selectedOptions ??
+        questionState?.selectedOptions ??
+        parsedResult?.selectedOptions ??
+        []
     );
     setCustomAnswers(
-      questionState?.customAnswers ?? parsedResult?.customAnswers ?? []
+      draft?.customAnswers ??
+        questionState?.customAnswers ??
+        parsedResult?.customAnswers ??
+        []
     );
     setCustomInput("");
   }, [
     parsedResult?.customAnswers,
     parsedResult?.selectedOptions,
+    questionId,
     questionState?.customAnswers,
-    questionState?.questionId,
     questionState?.selectedOptions,
   ]);
 
   const toggleOption = (option: string): void => {
-    if (!isInteractive) {
+    if (!isInteractive || !questionId) {
       return;
     }
 
-    setSelectedOptions((current) =>
-      current.includes(option)
-        ? current.filter((item) => item !== option)
-        : [...current, option]
-    );
+    const next = selectedOptions.includes(option)
+      ? selectedOptions.filter((item) => item !== option)
+      : [...selectedOptions, option];
+    setSelectedOptions(next);
+    saveUserQuestionDraft(questionId, {
+      selectedOptions: next,
+      customAnswers,
+    });
   };
 
   const addCustomAnswer = (): void => {
-    if (!isInteractive) {
+    if (!isInteractive || !questionId) {
       return;
     }
 
@@ -162,17 +191,27 @@ export const AskUserQuestionToolCall = ({
       return;
     }
 
-    setCustomAnswers((current) =>
-      current.includes(value) ? current : [...current, value]
-    );
+    const next = customAnswers.includes(value)
+      ? customAnswers
+      : [...customAnswers, value];
+    setCustomAnswers(next);
     setCustomInput("");
+    saveUserQuestionDraft(questionId, {
+      selectedOptions,
+      customAnswers: next,
+    });
   };
 
   const removeCustomAnswer = (answer: string): void => {
-    if (!isInteractive) {
+    if (!isInteractive || !questionId) {
       return;
     }
-    setCustomAnswers((current) => current.filter((item) => item !== answer));
+    const next = customAnswers.filter((item) => item !== answer);
+    setCustomAnswers(next);
+    saveUserQuestionDraft(questionId, {
+      selectedOptions,
+      customAnswers: next,
+    });
   };
 
   const pendingCustomAnswer = customInput.trim();
@@ -184,6 +223,9 @@ export const AskUserQuestionToolCall = ({
   const submitAnswer = (): void => {
     if (!questionState || !canSubmit) {
       return;
+    }
+    if (questionId) {
+      clearUserQuestionDraft(questionId);
     }
     answerUserQuestion(
       questionState.questionId,
@@ -197,6 +239,9 @@ export const AskUserQuestionToolCall = ({
   const cancelAnswer = (): void => {
     if (!questionState || !isInteractive) {
       return;
+    }
+    if (questionId) {
+      clearUserQuestionDraft(questionId);
     }
     cancelUserQuestion(questionState.questionId);
   };

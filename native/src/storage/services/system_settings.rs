@@ -17,7 +17,7 @@ const DEFAULT_PROXY_BROWSER_SETTING_VALUE: &str = "{\"enabled\":false,\"port\":7
 
 const DEFAULT_TERMINAL_SETTING_NAME: &str = "Terminal settings";
 const DEFAULT_TERMINAL_SETTING_CODE: &str = "terminal_settings";
-const DEFAULT_TERMINAL_SETTING_VALUE: &str = "{\"shellPath\":\"\",\"fontFamily\":\"\",\"fontSize\":14,\"fontWeight\":\"normal\",\"lineHeight\":1.2,\"proxy\":\"\"}";
+const DEFAULT_TERMINAL_SETTING_VALUE: &str = "{\"shellPath\":\"\",\"fontFamily\":\"\",\"fontSize\":14,\"fontWeight\":\"normal\",\"lineHeight\":1.2}";
 
 const DEFAULT_CODEBASE_SETTING_NAME: &str = "Codebase settings";
 const DEFAULT_CODEBASE_SETTING_CODE: &str = "codebase_settings";
@@ -49,7 +49,7 @@ const DEFAULT_PRIVACY_SETTING_VALUE: &str = "{\"enabled\":false,\"mode\":\"local
 const DEFAULT_THEME_SETTING_NAME: &str = "Theme settings";
 const DEFAULT_THEME_SETTING_CODE: &str = "theme_settings";
 // 默认主题：跟随系统 + snow 预设 + 无背景图 + 100% 不透明
-const DEFAULT_THEME_SETTING_VALUE: &str = "{\"mode\":\"system\",\"presetId\":\"snow\",\"custom\":{\"light\":{\"bgPrimary\":\"#ffffff\",\"bgSecondary\":\"#f9fafb\",\"bgTertiary\":\"#f3f4f6\",\"bgHover\":\"#f3f4f6\",\"bgActive\":\"#e5e7eb\",\"chromeBg\":\"#f8fafc\",\"appBg\":\"#eef2f7\",\"borderColor\":\"#e5e7eb\",\"borderLight\":\"#f3f4f6\",\"borderSubtle\":\"#d1d5db\",\"textPrimary\":\"#111827\",\"textSecondary\":\"#374151\",\"textTertiary\":\"#6b7280\",\"textMuted\":\"#9ca3af\",\"accentGreen\":\"#22c55e\",\"accentGreenBg\":\"#dcfce7\",\"accentGreenText\":\"#166534\",\"accentRed\":\"#ef4444\",\"accentRedBg\":\"#fee2e2\",\"accentRedText\":\"#991b1b\",\"accentBlue\":\"#3b82f6\",\"accentBlueBg\":\"#dbeafe\",\"accentBlueText\":\"#1d4ed8\",\"onSolid\":\"#ffffff\",\"selectionBg\":\"rgba(59, 130, 246, 0.2)\",\"focusRing\":\"rgba(17, 24, 39, 0.06)\"},\"dark\":{\"bgPrimary\":\"#0a0a0a\",\"bgSecondary\":\"#111111\",\"bgTertiary\":\"#1a1a1a\",\"bgHover\":\"#1f1f1f\",\"bgActive\":\"#2a2a2a\",\"chromeBg\":\"#141414\",\"appBg\":\"#050505\",\"borderColor\":\"#2b2b2b\",\"borderLight\":\"#202020\",\"borderSubtle\":\"#3a3a3a\",\"textPrimary\":\"#f5f5f5\",\"textSecondary\":\"#d4d4d4\",\"textTertiary\":\"#a3a3a3\",\"textMuted\":\"#737373\",\"accentGreen\":\"#4ade80\",\"accentGreenBg\":\"rgba(34, 197, 94, 0.18)\",\"accentGreenText\":\"#86efac\",\"accentRed\":\"#f87171\",\"accentRedBg\":\"rgba(239, 68, 68, 0.18)\",\"accentRedText\":\"#fca5a5\",\"accentBlue\":\"#58a6ff\",\"accentBlueBg\":\"rgba(59, 130, 246, 0.18)\",\"accentBlueText\":\"#93c5fd\",\"onSolid\":\"#0a0a0a\",\"selectionBg\":\"rgba(88, 166, 255, 0.28)\",\"focusRing\":\"rgba(212, 212, 212, 0.14)\"}},\"background\":{\"enabled\":false,\"imagePath\":\"\",\"opacity\":1.0,\"blur\":0},\"fontFamily\":\"\",\"streamCursor\":{\"iconType\":\"dot\",\"lucideName\":\"\",\"svgPath\":\"\",\"iconSize\":14.0}}";
+const DEFAULT_THEME_SETTING_VALUE: &str = "{\"mode\":\"system\",\"presetId\":\"snow\",\"custom\":{\"light\":{\"bgPrimary\":\"#ffffff\",\"bgSecondary\":\"#f9fafb\",\"bgTertiary\":\"#f3f4f6\",\"bgHover\":\"#f3f4f6\",\"bgActive\":\"#e5e7eb\",\"chromeBg\":\"#f8fafc\",\"appBg\":\"#eef2f7\",\"borderColor\":\"#e5e7eb\",\"borderLight\":\"#f3f4f6\",\"borderSubtle\":\"#d1d5db\",\"textPrimary\":\"#111827\",\"textSecondary\":\"#374151\",\"textTertiary\":\"#6b7280\",\"textMuted\":\"#9ca3af\",\"accentGreen\":\"#22c55e\",\"accentGreenBg\":\"#dcfce7\",\"accentGreenText\":\"#166534\",\"accentRed\":\"#ef4444\",\"accentRedBg\":\"#fee2e2\",\"accentRedText\":\"#991b1b\",\"accentBlue\":\"#3b82f6\",\"accentBlueBg\":\"#dbeafe\",\"accentBlueText\":\"#1d4ed8\",\"accentColor\":\"\",\"onSolid\":\"#ffffff\",\"selectionBg\":\"rgba(59, 130, 246, 0.2)\",\"focusRing\":\"rgba(17, 24, 39, 0.06)\"},\"dark\":{\"bgPrimary\":\"#0a0a0a\",\"bgSecondary\":\"#111111\",\"bgTertiary\":\"#1a1a1a\",\"bgHover\":\"#1f1f1f\",\"bgActive\":\"#2a2a2a\",\"chromeBg\":\"#141414\",\"appBg\":\"#050505\",\"borderColor\":\"#2b2b2b\",\"borderLight\":\"#202020\",\"borderSubtle\":\"#3a3a3a\",\"textPrimary\":\"#f5f5f5\",\"textSecondary\":\"#d4d4d4\",\"textTertiary\":\"#a3a3a3\",\"textMuted\":\"#737373\",\"accentGreen\":\"#4ade80\",\"accentGreenBg\":\"rgba(34, 197, 94, 0.18)\",\"accentGreenText\":\"#86efac\",\"accentRed\":\"#f87171\",\"accentRedBg\":\"rgba(239, 68, 68, 0.18)\",\"accentRedText\":\"#fca5a5\",\"accentBlue\":\"#58a6ff\",\"accentBlueBg\":\"rgba(59, 130, 246, 0.18)\",\"accentBlueText\":\"#93c5fd\",\"accentColor\":\"\",\"onSolid\":\"#0a0a0a\",\"selectionBg\":\"rgba(88, 166, 255, 0.28)\",\"focusRing\":\"rgba(212, 212, 212, 0.14)\"}},\"background\":{\"enabled\":false,\"imagePath\":\"\",\"opacity\":1.0,\"blur\":0},\"fontFamily\":\"\",\"streamCursor\":{\"iconType\":\"dot\",\"lucideName\":\"\",\"svgPath\":\"\",\"iconSize\":14.0}}";
 
 const PROJECT_MCP_SETTING_NAME: &str = "Project MCP scope";
 const PROJECT_MCP_SETTING_CODE_PREFIX: &str = "project_mcp_scope_";
@@ -259,7 +259,8 @@ pub fn set_system_setting(
 }
 
 pub fn get_yolo_mode(database_path: &Path) -> Result<bool> {
-    let Some(value) = get_system_setting_value(database_path, DEFAULT_YOLO_MODE_SETTING_CODE)? else {
+    let Some(value) = get_system_setting_value(database_path, DEFAULT_YOLO_MODE_SETTING_CODE)?
+    else {
         return Ok(false);
     };
 
@@ -281,7 +282,8 @@ pub fn set_yolo_mode(database_path: &Path, enabled: bool) -> Result<()> {
 }
 
 pub fn get_request_logging(database_path: &Path) -> Result<bool> {
-    let Some(value) = get_system_setting_value(database_path, DEFAULT_REQUEST_LOGGING_SETTING_CODE)?
+    let Some(value) =
+        get_system_setting_value(database_path, DEFAULT_REQUEST_LOGGING_SETTING_CODE)?
     else {
         return Ok(false);
     };
@@ -329,7 +331,8 @@ pub fn set_request_logging_expiry(database_path: &Path, expires_at_ms: i64) -> R
 
 /// 获取图库自定义保存目录。返回空字符串表示未设置（使用默认 ~/.snowapp/image）。
 pub fn get_image_library_dir(database_path: &Path) -> Result<String> {
-    let Some(value) = get_system_setting_value(database_path, DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE)?
+    let Some(value) =
+        get_system_setting_value(database_path, DEFAULT_IMAGE_LIBRARY_DIR_SETTING_CODE)?
     else {
         return Ok(String::new());
     };
@@ -675,12 +678,13 @@ pub fn get_mcp_project_scope_settings(
         });
     };
 
-    let mut settings = serde_json::from_str::<McpProjectScopeSettings>(&raw_value).map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Failed to parse project MCP scope settings: {error}"),
-        )
-    })?;
+    let mut settings =
+        serde_json::from_str::<McpProjectScopeSettings>(&raw_value).map_err(|error| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to parse project MCP scope settings: {error}"),
+            )
+        })?;
     settings.normalize();
     if settings.project_id.is_empty() {
         settings.project_id = normalized_project_id.clone();
@@ -751,12 +755,13 @@ pub fn get_skills_project_scope_settings(
         });
     };
 
-    let mut settings = serde_json::from_str::<SkillsProjectScopeSettings>(&raw_value).map_err(|error| {
-        Error::new(
-            Status::GenericFailure,
-            format!("Failed to parse project Skills scope settings: {error}"),
-        )
-    })?;
+    let mut settings =
+        serde_json::from_str::<SkillsProjectScopeSettings>(&raw_value).map_err(|error| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Failed to parse project Skills scope settings: {error}"),
+            )
+        })?;
     settings.normalize();
     if settings.project_id.is_empty() {
         settings.project_id = normalized_project_id.clone();
@@ -764,7 +769,8 @@ pub fn get_skills_project_scope_settings(
     if settings.project_id != normalized_project_id {
         return Err(Error::new(
             Status::GenericFailure,
-            "Project Skills scope setting identity does not match the requested project".to_string(),
+            "Project Skills scope setting identity does not match the requested project"
+                .to_string(),
         ));
     }
 
@@ -920,8 +926,8 @@ pub fn get_tool_approval_project_scope_settings(
         });
     };
 
-    let mut settings =
-        serde_json::from_str::<ToolApprovalProjectScopeSettings>(&raw_value).map_err(|error| {
+    let mut settings = serde_json::from_str::<ToolApprovalProjectScopeSettings>(&raw_value)
+        .map_err(|error| {
             Error::new(
                 Status::GenericFailure,
                 format!("Failed to parse project Tool approval scope settings: {error}"),

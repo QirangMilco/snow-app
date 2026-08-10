@@ -172,8 +172,9 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `config.json` | API 密钥与模型配置（`snowcfg` 字段） |
-| `active-profile.json` | 当前生效的 API 档案（`activeProfile` 字段） |
+| `config.json` | API 密钥与模型配置（`snowcfg` 字段，为**当前生效档案**的 CLI 兼容镜像；多档案权威存储在应用数据库 `api_configs` 表） |
+| `active-profile.json` | 当前生效的 API 档案名（`activeProfile` 字段，CLI 兼容层；运行时以应用数据库 `api_configs.is_active` 为准） |
+| 应用数据库 `api_configs` 表 | **多档案的权威存储**（`~/.snowapp/snowapp.db`，每行一个档案，`profile_name` 唯一）；agent 可用 `config-set scope=apiProfiles ...` 读写（见 [2-使用指南/3-配置API密钥与模型](../2-使用指南/3-配置API密钥与模型.md) 第 5 节） |
 | `proxy-config.json` | 代理与浏览器配置 |
 | `custom-headers.json` | 自定义请求头方案 |
 | `system-prompt.json` | 系统提示词 |

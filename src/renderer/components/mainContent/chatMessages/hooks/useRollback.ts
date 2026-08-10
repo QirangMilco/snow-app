@@ -43,6 +43,10 @@ export const useRollback = (ctx: ConversationContextValue) => {
       ctx.updateSessionField(key, "isStreaming", false);
       ctx.updateSessionField(key, "streamStartedAt", 0);
       ctx.updateSessionField(key, "isAborting", false);
+      // Clear the vision textify status card: the abort above may interrupt
+      // the backend while it describes user images, and a stuck intermediate
+      // card must not survive the rollback.
+      ctx.updateSessionField(key, "visionAnalysis", undefined);
       ctx.removeStreamingId(key);
 
       // Cancel any in-flight summary generation so the

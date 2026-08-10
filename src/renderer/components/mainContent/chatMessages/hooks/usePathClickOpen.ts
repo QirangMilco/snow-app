@@ -91,9 +91,11 @@ const decodeHref = (href: string): string => {
  * 4. [title] 中的完整路径（兜底）
  */
 export const usePathClickOpen = (
-  directoryPath: string | undefined
+  directoryPath: string | undefined,
+  directoryId: string | undefined
 ): {
   onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onAuxClick: (event: React.MouseEvent<HTMLDivElement>) => void;
 } => {
   useEffect(() => {
     const updateHeld = (held: boolean): void => {
@@ -139,10 +141,11 @@ export const usePathClickOpen = (
         filePath: resolved,
         isSsh: isSshWorkspace,
         sshWorkspacePath: isSshWorkspace ? directoryPath : undefined,
+        sshWorkspaceId: isSshWorkspace ? directoryId : undefined,
         focusLine: focusLine && focusLine > 0 ? focusLine : undefined,
       });
     },
-    [directoryPath]
+    [directoryId, directoryPath]
   );
 
   const handleClick = useCallback(
@@ -206,5 +209,9 @@ export const usePathClickOpen = (
     [openPath]
   );
 
-  return { onClick: handleClick };
+  // auxclick 与 click 共用同一处理：Chromium 中 Ctrl/Cmd+点击或中键点击
+  // 触发的是 auxclick 事件，其“新标签打开”默认行为只有 auxclick 的
+  // preventDefault 才能阻止；若只挂 onClick，Ctrl+点击 <a href> 会降级为
+  // 当前窗口导航，导致整个前端刷新、进行中的会话/生成全部中断。
+  return { onClick: handleClick, onAuxClick: handleClick };
 };

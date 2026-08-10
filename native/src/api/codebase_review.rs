@@ -16,14 +16,16 @@
 use std::collections::HashMap;
 
 use napi::bindgen_prelude::*;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE,
+};
 use serde_json::{json, Value};
 
 use crate::api::config::{
     get_active_api_request_context, normalize_base_url, resolve_sdk_api_base_url,
     DEFAULT_ANTHROPIC_BASE_URL, DEFAULT_GEMINI_BASE_URL, DEFAULT_OPENAI_BASE_URL,
 };
-use crate::api::retry::{RetryOptions, should_retry};
+use crate::api::retry::{should_retry, RetryOptions};
 use crate::storage::services::codebase_index::SearchResult;
 
 const MAX_REVIEW_ATTEMPTS: u32 = 3;
@@ -264,7 +266,8 @@ async fn review_results(query: &str, results: &[SearchResult]) -> Result<ReviewO
         ));
     }
 
-    let retry_options = RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
+    let retry_options =
+        RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
 
     let review_text = match api_config.request_method.as_str() {
         "responses" => {
@@ -509,9 +512,7 @@ async fn send_review_request_with_retry(
             .json(payload)
             .send()
             .await
-            .map_err(|error| {
-                Error::from_reason(format!("Review request failed: {}", error))
-            });
+            .map_err(|error| Error::from_reason(format!("Review request failed: {}", error)));
 
         match response {
             Ok(response) => {
@@ -533,15 +534,9 @@ async fn send_review_request_with_retry(
                     continue;
                 }
 
-                let body: Value = response
-                    .json()
-                    .await
-                    .map_err(|error| {
-                        Error::from_reason(format!(
-                            "Failed to parse review response: {}",
-                            error
-                        ))
-                    })?;
+                let body: Value = response.json().await.map_err(|error| {
+                    Error::from_reason(format!("Failed to parse review response: {}", error))
+                })?;
 
                 return Ok(body);
             }
@@ -751,10 +746,7 @@ fn resolve_gemini_endpoint(
 
     let clean_model = model.strip_prefix("models/").unwrap_or(model);
 
-    let mut url = format!(
-        "{}/models/{}:generateContent",
-        resolved_base, clean_model
-    );
+    let mut url = format!("{}/models/{}:generateContent", resolved_base, clean_model);
 
     if !api_key.is_empty() {
         url.push_str(&format!("?key={}", api_key));
@@ -805,7 +797,10 @@ fn build_header_map(api_key: &str, custom_headers: &HashMap<String, String>) -> 
         }
 
         let header_name = trimmed_key.parse::<HeaderName>().map_err(|error| {
-            Error::from_reason(format!("Invalid custom header '{}': {}", trimmed_key, error))
+            Error::from_reason(format!(
+                "Invalid custom header '{}': {}",
+                trimmed_key, error
+            ))
         })?;
         let header_value = HeaderValue::from_str(trimmed_value).map_err(|error| {
             Error::from_reason(format!(
@@ -848,7 +843,10 @@ fn build_anthropic_header_map(
         }
 
         let header_name = trimmed_key.parse::<HeaderName>().map_err(|error| {
-            Error::from_reason(format!("Invalid custom header '{}': {}", trimmed_key, error))
+            Error::from_reason(format!(
+                "Invalid custom header '{}': {}",
+                trimmed_key, error
+            ))
         })?;
         let header_value = HeaderValue::from_str(trimmed_value).map_err(|error| {
             Error::from_reason(format!(
@@ -881,7 +879,10 @@ fn build_gemini_header_map(custom_headers: &HashMap<String, String>) -> Result<H
         }
 
         let header_name = trimmed_key.parse::<HeaderName>().map_err(|error| {
-            Error::from_reason(format!("Invalid custom header '{}': {}", trimmed_key, error))
+            Error::from_reason(format!(
+                "Invalid custom header '{}': {}",
+                trimmed_key, error
+            ))
         })?;
         let header_value = HeaderValue::from_str(trimmed_value).map_err(|error| {
             Error::from_reason(format!(

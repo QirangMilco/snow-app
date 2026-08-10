@@ -107,16 +107,14 @@ export const CommandPanel = forwardRef<CommandPanelHandle, CommandPanelProps>(
       [filteredCommands, onClose, onSelect, selectedIndex]
     );
 
-    if (!visible) {
-      return null;
-    }
     return (
-      <div
-        className="chat-command-panel"
-        role="listbox"
-        data-esc-panel
-        aria-label={t("chatCommand.title")}
-      >
+      visible && (
+        <div
+          className="chat-command-panel"
+          data-esc-panel
+          role="listbox"
+          aria-label={t("chatCommand.title")}
+        >
         <div className="chat-command-list" ref={listRef}>
           {filteredCommands.length > 0 ? (
             filteredCommands.map((command, index) => {
@@ -170,7 +168,8 @@ export const CommandPanel = forwardRef<CommandPanelHandle, CommandPanelProps>(
             <kbd>Esc</kbd> {t("chatCommand.close")}
           </span>
         </div>
-      </div>
+        </div>
+      )
     );
   }
 );

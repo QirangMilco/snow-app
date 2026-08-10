@@ -130,7 +130,9 @@ export const PlusMenu = ({
         <Plus size={16} />
       </button>
       {isOpen && (
-        <div className={`plus-menu-dropdown drop-${dropdownDir}`}>
+          <div
+            className={`plus-menu-dropdown drop-${dropdownDir}`}
+          >
           {sections.map((section, sectionIndex) => (
             <div key={section.id} className="plus-menu-section">
               <div className="plus-menu-section-title">{section.label}</div>
@@ -282,8 +284,8 @@ export const PlusMenu = ({
               </div>
             )}
           </div>
-        </div>
-      )}
+          </div>
+        )}
     </div>
   );
 };

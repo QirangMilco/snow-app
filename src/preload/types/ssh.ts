@@ -1,5 +1,24 @@
 export type SshAuthMethod = "password" | "privateKey" | "agent";
 
+export type SshConnectionStatus =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "degraded"
+  | "reconnecting"
+  | "offline"
+  | "auth_required"
+  | "host_key_changed";
+
+/** A stable SSH profile handle; sessionId changes whenever the transport reconnects. */
+export type SshProfileConnection = {
+  profileId: string;
+  sessionId?: string;
+  generation: number;
+  status: SshConnectionStatus;
+  lastError?: string;
+};
+
 /**
  * SSH 连接失败的错误码，由主进程 `ssh:connect` handler 分类产生，
  * 渲染层据此展示本地化的友好提示。
@@ -35,6 +54,7 @@ export type SshConnectParams = {
   password?: string;
   privateKeyPath?: string;
   passphrase?: string;
+  hostKeyPolicy?: "replace";
 };
 
 export type SshDirectoryEntry = {
@@ -42,6 +62,64 @@ export type SshDirectoryEntry = {
   path: string;
   isDirectory: boolean;
   size: number;
+};
+
+export type SshCapabilities = {
+  platform: "posix" | "windows";
+  remoteOs?: string;
+  remoteArch?: string;
+  posixShell: boolean;
+  systemdUser: boolean;
+  tmux: boolean;
+  setsid: boolean;
+  nohup: boolean;
+  powerShell: boolean;
+};
+
+export type SshFileSaveGuarantee =
+  | "strong_atomic"
+  | "atomic_best_effort"
+  | "compatibility";
+
+export type SshFileVersion = {
+  exists: boolean;
+  sha256?: string;
+  size?: number;
+  mtime?: number;
+};
+
+export type SshFileWriteOptions = {
+  /** Stable SSH workspace record that Main resolves to the authorized root. */
+  workspaceId: string;
+  /** Required write CAS precondition for all user-reachable saves. */
+  expectedVersion: SshFileVersion;
+};
+
+export type SshFileWriteResult = {
+  guarantee: SshFileSaveGuarantee;
+  sideEffect: "committed";
+  bytes: number;
+  version: SshFileVersion;
+  durability: {
+    fsynced: boolean;
+    posixRename: boolean;
+  };
+};
+
+export type RemoteDraftStatus = "pending" | "conflict";
+
+export type RemoteDraftInput = {
+  profileId: string;
+  workspaceId: string;
+  remotePath: string;
+  baseVersionJson: string;
+  content: string;
+  status: RemoteDraftStatus;
+};
+
+export type RemoteDraftRecord = RemoteDraftInput & {
+  id: string;
+  updatedAt: string;
 };
 
 export type RemoteWorkspaceFileSearchOptions = {

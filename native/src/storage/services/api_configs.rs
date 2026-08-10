@@ -312,3 +312,4 @@ fn ensure_one_active_config(connection: &Connection) -> rusqlite::Result<()> {
 
     Ok(())
 }
+

@@ -5,12 +5,16 @@ import { pathToFileURL } from "node:url";
 import { THEME_BG_SCHEME, themeBgUrl } from "../../renderer/utils/themeBgUrl";
 
 /**
- * 背景图/流式光标 SVG 允许的根目录列表。协议处理器只允许读取这些目录下的文件，
+ * 背景图/流式光标 SVG/宠物精灵图允许的根目录列表。协议处理器只允许读取这些目录下的文件，
  * 防止渲染进程通过构造 URL 读取任意本地文件。
  */
 const ALLOWED_DIRS = [
   join(homedir(), ".snowapp", "backgrounds"),
   join(homedir(), ".snowapp", "stream-cursors"),
+  // Codex 宠物精灵图：Snow App 安装目录 + Codex App / Petdex 生态目录。
+  join(homedir(), ".snowapp", "pets"),
+  join(homedir(), ".codex", "pets"),
+  join(homedir(), ".petdex", "pets"),
 ];
 
 let registered = false;

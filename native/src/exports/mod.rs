@@ -5,6 +5,7 @@ mod engine;
 mod git;
 mod ide;
 mod images;
+mod pets;
 mod sample;
 mod sphere_layout;
 mod storage;

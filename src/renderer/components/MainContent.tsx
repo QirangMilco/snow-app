@@ -109,6 +109,11 @@ const KeyboardShortcutsSettingsPanel = lazy(() =>
     default: m.KeyboardShortcutsSettingsPanel,
   }))
 );
+const PetsSettingsPanel = lazy(() =>
+  import("./sidebar/PetsSettingsPanel").then((m) => ({
+    default: m.PetsSettingsPanel,
+  }))
+);
 const UsageSettingsPanel = lazy(() =>
   import("./sidebar/usageSettings/UsageSettingsPanel").then((m) => ({
     default: m.UsageSettingsPanel,
@@ -119,10 +124,16 @@ const SystemLogsPanel = lazy(() =>
     default: m.SystemLogsPanel,
   }))
 );
+const BrowserSettingsPanel = lazy(() =>
+  import("./sidebar/browserSettings/BrowserSettingsPanel").then((m) => ({
+    default: m.BrowserSettingsPanel,
+  }))
+);
 
 type MainContentProps = {
   activeDirectory?: WorkspaceDirectoryRecord | null;
   activeView: MainContentView;
+  isResizing?: boolean;
   onSelectView: (view: MainContentView) => void;
 };
 
@@ -141,6 +152,7 @@ const LazyPanelFallback = (): React.JSX.Element => {
 export const MainContent = ({
   activeDirectory,
   activeView,
+  isResizing = false,
   onSelectView,
 }: MainContentProps): React.JSX.Element => {
   return (
@@ -158,6 +170,8 @@ export const MainContent = ({
             <ImageGenSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "image-library" ? (
             <ImageLibraryPanel onClose={() => onSelectView("chat")} />
+          ) : activeView === "browser-settings" ? (
+            <BrowserSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "proxy-browser-settings" ? (
             <ProxyBrowserSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "codebase-settings" ? (
@@ -215,6 +229,8 @@ export const MainContent = ({
             <KeyboardShortcutsSettingsPanel
               onClose={() => onSelectView("chat")}
             />
+          ) : activeView === "pets-settings" ? (
+            <PetsSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "usage-settings" ? (
             <UsageSettingsPanel onClose={() => onSelectView("chat")} />
           ) : activeView === "system-logs" ? (

@@ -650,12 +650,12 @@ export const FileMentionPopup = forwardRef<
     t,
   ]);
 
-  if (!visible) {
-    return null;
-  }
-
-  return (
-    <div className="file-mention-popup" ref={popupRef} data-esc-panel>
+  return visible ? (
+    <div
+      className="file-mention-popup"
+      ref={popupRef}
+      data-esc-panel
+    >
       {pathSegments.length > 0 && (
         <div className="file-mention-breadcrumbs">
           <button
@@ -833,5 +833,5 @@ export const FileMentionPopup = forwardRef<
         </span>
       </div>
     </div>
-  );
+  ) : null;
 });

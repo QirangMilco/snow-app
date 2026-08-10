@@ -29,17 +29,26 @@ pub fn parse_chat_message_content(
 ) -> Result<ParsedChatMessageContent> {
     const IMAGE_TAG_PREFIX: &str = "@@image:";
     const REVIEW_TAG_PREFIX: &str = "@@review:";
+    const ELEMENT_TAG_PREFIX: &str = "@@element:";
 
     let mut parsed = ParsedChatMessageContent::default();
     let mut remaining = content;
 
-    // 同时识别 image / review 两种标签，取最先出现的那个处理。
-    while let Some(tag_start) = find_earliest_tag(remaining, IMAGE_TAG_PREFIX, REVIEW_TAG_PREFIX) {
+    // 同时识别 image / review / element 三种标签，取最先出现的那个处理。
+    while let Some(tag_start) = find_earliest_tag(
+        remaining,
+        IMAGE_TAG_PREFIX,
+        REVIEW_TAG_PREFIX,
+        ELEMENT_TAG_PREFIX,
+    ) {
         parsed.text.push_str(&remaining[..tag_start]);
 
         let is_review = remaining[tag_start..].starts_with(REVIEW_TAG_PREFIX);
+        let is_element = remaining[tag_start..].starts_with(ELEMENT_TAG_PREFIX);
         let prefix = if is_review {
             REVIEW_TAG_PREFIX
+        } else if is_element {
+            ELEMENT_TAG_PREFIX
         } else {
             IMAGE_TAG_PREFIX
         };
@@ -58,6 +67,15 @@ pub fn parse_chat_message_content(
             // 使 AI 收到干净的指令 + diff 内容，而非 JSON 外壳。
             if let Some(prompt) = try_expand_review_tag(value) {
                 parsed.text.push_str(&prompt);
+            } else {
+                parsed.text.push_str(&remaining[tag_start..full_tag_end]);
+            }
+        } else if is_element {
+            // element 标签：将浏览器元素选择器选取的元素展开为人类可读的
+            // 描述文本（标签/选择器/备注/文本/URL），使 AI 直接理解用户
+            // 选取了页面上哪个元素，而非收到 base64 JSON 外壳。
+            if let Some(description) = try_expand_element_tag(value) {
+                parsed.text.push_str(&description);
             } else {
                 parsed.text.push_str(&remaining[tag_start..full_tag_end]);
             }
@@ -90,15 +108,15 @@ fn find_earliest_tag(
     remaining: &str,
     image_prefix: &str,
     review_prefix: &str,
+    element_prefix: &str,
 ) -> Option<usize> {
     let image_start = remaining.find(image_prefix);
     let review_start = remaining.find(review_prefix);
-    match (image_start, review_start) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    }
+    let element_start = remaining.find(element_prefix);
+    [image_start, review_start, element_start]
+        .into_iter()
+        .flatten()
+        .min()
 }
 
 /// 尝试将 `@@review:{"prompt":"<base64>",...}@@` 标签展开为完整审查提示词。
@@ -116,6 +134,78 @@ fn try_expand_review_tag(value: &str) -> Option<String> {
         .decode(prompt_b64)
         .ok()?;
     String::from_utf8(bytes).ok()
+}
+
+/// 尝试将 `@@element:{"url":"...","tag":"button","label":"button#search",
+/// "text":"<base64>","note":"<base64>"}@@` 标签展开为人类可读的元素描述。
+///
+/// text / note 在前端编码时以 base64 承载（自由文本可能含 `@@` 破坏标签
+/// 终止符）；url / tag / label 为结构化字段直接 JSON 内嵌。非法 JSON 或
+/// base64 解码失败时返回 None，调用方保留原始标签、不破坏消息内容。
+fn try_expand_element_tag(value: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(value).ok()?;
+    let tag = parsed.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+    let label = parsed.get("label").and_then(|v| v.as_str()).unwrap_or("");
+    let url = parsed.get("url").and_then(|v| v.as_str()).unwrap_or("");
+    let decode_field = |key: &str| -> String {
+        parsed
+            .get(key)
+            .and_then(|v| v.as_str())
+            .and_then(|b64| base64::engine::general_purpose::STANDARD.decode(b64).ok())
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default()
+    };
+    let text = decode_field("text");
+    let note = decode_field("note");
+
+    let display = if !label.is_empty() { label } else { tag };
+    let mut parts: Vec<String> = Vec::new();
+    if display.is_empty() {
+        parts.push("[页面元素]".to_string());
+    } else {
+        parts.push(format!("[页面元素 {display}]"));
+    }
+    if !note.is_empty() {
+        parts.push(format!("备注：{note}"));
+    }
+    if !text.is_empty() {
+        parts.push(format!("内容：{text}"));
+    }
+    if !url.is_empty() {
+        parts.push(format!("页面：{url}"));
+    }
+    Some(parts.join(" "))
+}
+
+/// 展开消息内容中所有 `@@element:...@@` 标签为人类可读的元素描述文本。
+///
+/// 用于会话标题等展示场景：避免 base64 JSON 外壳污染侧边栏文字。
+/// 内容不含 element 标签时返回 None，调用方沿用原文。
+pub(crate) fn expand_element_tags_in_content(content: &str) -> Option<String> {
+    const ELEMENT_TAG_PREFIX: &str = "@@element:";
+    if !content.contains(ELEMENT_TAG_PREFIX) {
+        return None;
+    }
+    let mut result = String::with_capacity(content.len());
+    let mut remaining = content;
+    while let Some(tag_start) = remaining.find(ELEMENT_TAG_PREFIX) {
+        result.push_str(&remaining[..tag_start]);
+        let value_start = tag_start + ELEMENT_TAG_PREFIX.len();
+        let value_and_rest = &remaining[value_start..];
+        let Some(tag_end) = value_and_rest.find("@@") else {
+            result.push_str(&remaining[tag_start..]);
+            return Some(result);
+        };
+        let value = &value_and_rest[..tag_end];
+        let full_tag_end = value_start + tag_end + 2;
+        match try_expand_element_tag(value) {
+            Some(description) => result.push_str(&description),
+            None => result.push_str(&remaining[tag_start..full_tag_end]),
+        }
+        remaining = &remaining[full_tag_end..];
+    }
+    result.push_str(remaining);
+    Some(result)
 }
 
 /// 展开消息内容中所有 `@@review:...@@` 标签为完整审查提示词文本。
@@ -203,7 +293,10 @@ fn parse_base64_image_data_url(data_url: &str) -> Option<ChatImage> {
     // 校验 base64 内容合法性。非法的 base64 会导致上游 API 直接拒绝请求
     // （例如 "Invalid 'input[0].content[1].image_url' ... invalid base64-encoded value"）。
     // 这里与上游使用相同的标准解码器提前拦截，避免把脏数据发到视觉模型。
-    if base64::engine::general_purpose::STANDARD.decode(data).is_err() {
+    if base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .is_err()
+    {
         return None;
     }
 
@@ -227,7 +320,9 @@ fn try_extract_svg_source(value: &str, database_path: &Path) -> Option<String> {
         if media_type != "image/svg+xml" {
             return None;
         }
-        let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).ok()?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data.trim())
+            .ok()?;
         return String::from_utf8(bytes).ok();
     }
 
@@ -239,7 +334,13 @@ fn try_extract_svg_source(value: &str, database_path: &Path) -> Option<String> {
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join(value);
-    if file_path.extension().and_then(|e| e.to_str()).map(str::to_lowercase).as_deref() != Some("svg") {
+    if file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_lowercase)
+        .as_deref()
+        != Some("svg")
+    {
         return None;
     }
     fs::read_to_string(&file_path).ok()
@@ -376,9 +477,7 @@ pub fn resolve_inline_images_from_disk(content: &str, database_path: &Path) -> S
 
         if value.trim().starts_with("data:") {
             result.push_str(&remaining[tag_start..full_tag_end]);
-        } else if let Some(image) =
-            parse_image_tag_value(value, database_path).unwrap_or(None)
-        {
+        } else if let Some(image) = parse_image_tag_value(value, database_path).unwrap_or(None) {
             result.push_str(&format!("@@image:{}@@", image.data_url));
         } else {
             result.push_str(&remaining[tag_start..full_tag_end]);

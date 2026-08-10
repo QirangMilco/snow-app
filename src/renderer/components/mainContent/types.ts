@@ -3,6 +3,7 @@ export type MainContentView =
   | "api-settings"
   | "imagegen-settings"
   | "image-library"
+  | "browser-settings"
   | "proxy-browser-settings"
   | "codebase-settings"
   | "system-prompt-settings"
@@ -19,6 +20,7 @@ export type MainContentView =
   | "theme-settings"
   | "privacy-settings"
   | "keyboard-shortcuts-settings"
+  | "pets-settings"
   | "usage-settings"
   | "builtin-services-settings"
   | "system-logs";

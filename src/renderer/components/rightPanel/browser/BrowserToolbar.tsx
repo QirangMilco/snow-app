@@ -5,6 +5,7 @@ import {
   Check,
   Globe,
   Loader2,
+  MousePointer2,
   RotateCw,
 } from "lucide-react";
 import type { ScreenshotFeedback } from "./useWebviewScreenshot";
@@ -15,8 +16,11 @@ export type BrowserToolbarProps = {
   canGoBack: boolean;
   canGoForward: boolean;
   isLoading: boolean;
+  /** 页面已加载完成且存在实际页面时才能选择元素（未加载完成时隐藏选择按钮） */
+  canPickElement: boolean;
   addressInput: string;
   isCapturing: boolean;
+  isPickingElement: boolean;
   screenshotFeedback: ScreenshotFeedback;
   onAddressChange: (value: string) => void;
   onAddressKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
@@ -24,11 +28,13 @@ export type BrowserToolbarProps = {
   onForward: () => void;
   onReload: () => void;
   onScreenshot: () => void;
+  onToggleElementPicker: () => void;
   // Browser menu
   zoomFactor: number;
   homepage: string;
   onClearCache: () => void;
   onClearCookies: () => void;
+  onOpenSettings: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
@@ -73,8 +79,10 @@ export const BrowserToolbar = ({
   canGoBack,
   canGoForward,
   isLoading,
+  canPickElement,
   addressInput,
   isCapturing,
+  isPickingElement,
   screenshotFeedback,
   onAddressChange,
   onAddressKeyDown,
@@ -82,10 +90,12 @@ export const BrowserToolbar = ({
   onForward,
   onReload,
   onScreenshot,
+  onToggleElementPicker,
   zoomFactor,
   homepage,
   onClearCache,
   onClearCookies,
+  onOpenSettings,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -142,6 +152,20 @@ export const BrowserToolbar = ({
           spellCheck={false}
         />
       </div>
+      {canPickElement && (
+        <button
+          type="button"
+          className={`browser-nav-btn browser-element-pick-btn${
+            isPickingElement ? " is-active" : ""
+          }`}
+          onClick={onToggleElementPicker}
+          aria-label={t("browser.pickElement")}
+          aria-pressed={isPickingElement}
+          title={t("browser.pickElementTitle")}
+        >
+          <MousePointer2 size={15} strokeWidth={1.8} />
+        </button>
+      )}
       <button
         type="button"
         className={buildScreenshotClassName(screenshotFeedback)}
@@ -157,6 +181,7 @@ export const BrowserToolbar = ({
         homepage={homepage}
         onClearCache={onClearCache}
         onClearCookies={onClearCookies}
+        onOpenSettings={onOpenSettings}
         onZoomIn={onZoomIn}
         onZoomOut={onZoomOut}
         onZoomReset={onZoomReset}

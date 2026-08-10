@@ -1,19 +1,20 @@
 import {
   Boxes,
   ChartColumn,
+  Compass,
   Database,
   Download,
   EyeOff,
-  Globe,
   FishingHook,
+  Globe,
   Image as ImageIcon,
   Images,
   Keyboard,
   List,
   MessageSquareText,
   Palette,
+  PawPrint,
   Plug,
-  Puzzle,
   ScrollText,
   Sparkles,
   ShieldAlert,
@@ -22,6 +23,7 @@ import {
   Wand2,
 } from "lucide-react";
 
+import { McpLogo } from "../icons/mcpLogo";
 import type { MainContentView } from "../mainContent/types";
 
 export type SettingsItem = {
@@ -109,7 +111,7 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
   },
   {
     id: "mcp",
-    icon: Puzzle,
+    icon: McpLogo,
     labelKey: "settings.mcpSettings",
     defaultLabel: "MCP settings",
     view: "mcp-settings",
@@ -164,11 +166,25 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
     view: "terminal-settings",
   },
   {
+    id: "browser",
+    icon: Compass,
+    labelKey: "settings.browserSettings",
+    defaultLabel: "Browser settings",
+    view: "browser-settings",
+  },
+  {
     id: "keyboard-shortcuts",
     icon: Keyboard,
-    labelKey: "settings.keyboardShortcuts",
+    labelKey: "settings.keyboardShortcutsSettings",
     defaultLabel: "Keyboard shortcuts",
     view: "keyboard-shortcuts-settings",
+  },
+  {
+    id: "pets",
+    icon: PawPrint,
+    labelKey: "settings.pets",
+    defaultLabel: "Desktop pet",
+    view: "pets-settings",
   },
   {
     id: "privacy",

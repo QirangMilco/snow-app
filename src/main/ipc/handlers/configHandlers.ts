@@ -9,6 +9,8 @@ import {
   readSnowCliCustomHeadersConfig,
 } from "../../settings/customHeadersSettings";
 import {
+  deleteSnowCliMcpServerConfig,
+  deleteSnowCliProjectMcpServerConfig,
   normalizeMcpServerConfig,
   normalizeProjectMcpServerConfig,
   readSnowCliMcpConfig,
@@ -77,10 +79,10 @@ const validateSubAgentTools = async (
     return;
   }
 
+  // 全局子代理没有项目上下文：跳过项目工具可用性校验，
+  // 运行时按当前对话项目解析（Rust collect_allowed_mcp_tools 兜底）。
   if (!projectId) {
-    throw new Error(
-      "Project id is required when sub-agent MCP tools are selected"
-    );
+    return;
   }
 
   const servers = await native.listMcpProjectServers(projectId);
@@ -187,7 +189,14 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
       if (typeof serverId !== "string" || !serverId.trim()) {
         throw new Error("MCP server ID is required");
       }
-      await native.deleteMcpServerConfig(serverId.trim());
+      const normalizedServerId = serverId.trim();
+      const existing = (await native.listMcpServerConfigs()).find(
+        (item) => item.serverId === normalizedServerId
+      );
+      if (existing?.source === "snow-cli") {
+        deleteSnowCliMcpServerConfig(existing.name);
+      }
+      await native.deleteMcpServerConfig(normalizedServerId);
       return native.listMcpServerConfigs();
     }
   );
@@ -216,9 +225,20 @@ export const registerConfigHandlers = (native: NativeBridge): void => {
       if (typeof serverId !== "string" || !serverId.trim()) {
         throw new Error("MCP server ID is required");
       }
+      const normalizedServerId = serverId.trim();
+      const existing = (await native.listProjectMcpServerConfigs(
+        normalizedProjectId
+      )).find((item) => item.serverId === normalizedServerId);
+      if (existing?.source === "snow-cli") {
+        await deleteSnowCliProjectMcpServerConfig(
+          native,
+          normalizedProjectId,
+          existing.name
+        );
+      }
       await native.deleteProjectMcpServerConfig(
         normalizedProjectId,
-        serverId.trim()
+        normalizedServerId
       );
       return native.listProjectMcpServerConfigs(normalizedProjectId);
     }

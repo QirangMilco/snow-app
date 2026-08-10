@@ -12,15 +12,19 @@ type SidebarProps = {
   activeMainView: SidebarContentProps["activeMainView"];
   activeDirectory?: SidebarContentProps["activeDirectory"];
   isCollapsed: boolean;
+  isResizing?: boolean;
   onActiveDirectoryChange?: SidebarContentProps["onActiveDirectoryChange"];
   onSelectMainView: SidebarContentProps["onSelectMainView"];
   onOpenSshWizard?: () => void;
+  onOpenTerminal?: SidebarContentProps["onOpenTerminal"];
   onOpenFile?: (
     filePath: string,
     fileName: string,
     isSsh?: boolean,
     sshSessionId?: string | null,
-    focusLine?: number
+    focusLine?: number,
+    sshWorkspaceRoot?: string,
+    sshWorkspaceId?: string
   ) => void;
 };
 
@@ -28,9 +32,11 @@ export const Sidebar = ({
   activeMainView,
   activeDirectory,
   isCollapsed,
+  isResizing = false,
   onActiveDirectoryChange,
   onSelectMainView,
   onOpenSshWizard,
+  onOpenTerminal,
   onOpenFile,
 }: SidebarProps): React.JSX.Element => {
   const [activeContent, setActiveContent] = useState<SidebarContentKey>("main");
@@ -93,6 +99,7 @@ export const Sidebar = ({
     onSwitchContent: handleSwitchContent,
     onSwitchToExplorer: handleSwitchToExplorer,
     onOpenSshWizard,
+    onOpenTerminal,
     onOpenFile,
   };
 

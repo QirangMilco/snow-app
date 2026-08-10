@@ -2,15 +2,21 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import type { ITheme } from "@xterm/xterm";
-import { ClipboardPaste, Copy, Eraser, ListChecks } from "lucide-react";
+import { ClipboardPaste, Copy, Eraser, ListChecks, Send } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTerminalSettings } from "./useTerminalSettings";
 import { ContextMenu, type ContextMenuItem } from "../common/ContextMenu";
 import { useTerminalMcpInstance } from "./terminal/useTerminalMcpInstance";
+import {
+  TERMINAL_INSERT_TEXT_EVENT,
+  pushTerminalLines,
+  type TerminalInsertTextPayload,
+} from "./terminal/terminalMonitor";
 
 export type TerminalPanelContentProps = {
   tabId: string;
   cwd: string;
+  ptyId?: string;
   shellPath?: string;
   sessionId?: string;
   isActive: boolean;
@@ -86,6 +92,7 @@ const DEFAULT_FONT_FAMILY =
 export const TerminalPanelContent = ({
   tabId,
   cwd,
+  ptyId: attachedPtyId,
   shellPath: shellPathProp,
   sessionId,
   isActive,
@@ -94,7 +101,7 @@ export const TerminalPanelContent = ({
   onProcessExit,
 }: TerminalPanelContentProps): React.JSX.Element => {
   const settings = useTerminalSettings();
-  const shellPath = shellPathProp ?? settings.shellPath;
+  const shellPath = shellPathProp?.trim() || settings.shellPath;
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -104,6 +111,31 @@ export const TerminalPanelContent = ({
     x: number;
     y: number;
   } | null>(null);
+
+  // ------------------------------------------------------------------
+  // 终端日志流：按行切分后实时推送给监控方（输入框「监控终端」模式）
+  // ------------------------------------------------------------------
+
+  /** 终端当前是否有选中文本（驱动 Cursor 式「添加到输入框」浮动按钮） */
+  const [hasSelection, setHasSelection] = useState(false);
+  /** 尚未遇到换行的输出残段（跨 data 分片的行拼接） */
+  const logDraftRef = useRef("");
+
+  /** 追加一段 PTY 输出：按换行切分，推送增量行给监控方（无监控者时零开销） */
+  const appendLog = useCallback(
+    (data: string): void => {
+      const merged = logDraftRef.current + data;
+      const parts = merged.split("\n");
+      logDraftRef.current = parts.pop() ?? "";
+      const newLines: string[] = [];
+      for (const part of parts) {
+        // \r\n 拆行后行尾残留 \r，去掉避免日志里出现孤立回车
+        newLines.push(part.replace(/\r$/, ""));
+      }
+      pushTerminalLines(tabId, newLines);
+    },
+    [tabId]
+  );
 
   // onOpenLink 存 ref：避免父组件每次渲染产生新引用导致 PTY 重建。
   const onOpenLinkRef = useRef(onOpenLink);
@@ -215,6 +247,14 @@ export const TerminalPanelContent = ({
 
     term.open(containerRef.current);
 
+    // Cursor 式交互：选中文本后浮动显示「添加到输入框」按钮；
+    // 选区变化（选择/清除/点击）都会触发，布尔 state 重复值自动跳过渲染。
+    term.onSelectionChange(() => {
+      if (!disposed) {
+        setHasSelection(term.hasSelection());
+      }
+    });
+
     // Synchronously fit so PTY is created with correct cols/rows.
     // Without this, initPty() reads default 80x24 dimensions, the PTY
     // starts with wrong size, and the subsequent resize causes zsh to
@@ -258,13 +298,15 @@ export const TerminalPanelContent = ({
       try {
         const cols = term.cols > 0 ? term.cols : 80;
         const rows = term.rows > 0 ? term.rows : 24;
-        const id = await window.snow.ptyCreate({
-          cwd,
-          cols,
-          rows,
-          shellPath: shellPath || undefined,
-          sessionId,
-        });
+        const id =
+          attachedPtyId ??
+          (await window.snow.ptyCreate({
+            cwd,
+            cols,
+            rows,
+            shellPath: shellPath || undefined,
+            sessionId,
+          }));
         if (disposed) {
           void window.snow.ptyKill(id);
           return;
@@ -274,6 +316,7 @@ export const TerminalPanelContent = ({
         disposeOutput = window.snow.onPtyOutput((payload) => {
           if (payload.id === id && !disposed) {
             term.write(payload.data);
+            appendLog(payload.data);
           }
         });
 
@@ -305,6 +348,10 @@ export const TerminalPanelContent = ({
           }
         });
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // 将启动失败原因直接写入终端，替代仅 console 输出——用户与智能体
+        // 都能看到"传参无效"之类的明确错误，而不是空白终端。
+        term.write(`\r\n\x1b[91m[Terminal failed to start: ${message}]\x1b[0m\r\n`);
         // eslint-disable-next-line no-console
         console.error("Failed to initialize PTY:", err);
       }
@@ -332,7 +379,7 @@ export const TerminalPanelContent = ({
       cleanupRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, shellPath, sessionId]);
+  }, [attachedPtyId, cwd, shellPath, sessionId]);
 
   // Live-update font settings without recreating the terminal / PTY.
   useEffect(() => {
@@ -421,8 +468,47 @@ export const TerminalPanelContent = ({
     return items;
   };
 
+  /** 清屏（右键菜单用） */
+  const clearScreen = useCallback((): void => {
+    termRef.current?.clear();
+  }, []);
+
+  /**
+   * 将选中的终端文本添加到聊天输入框：
+   * 浮动按钮仅在终端有选中文本时出现，因此这里只处理选中内容；
+   * 输入框侧会把日志编码为 text-snippet 小组件（chip），避免大段文本铺开。
+   */
+  const insertToComposer = useCallback((): void => {
+    const term = termRef.current;
+    if (!term?.hasSelection()) {
+      return;
+    }
+    const text = term.getSelection();
+    if (!text) {
+      return;
+    }
+    const payload: TerminalInsertTextPayload = { text, source: cwd };
+    window.dispatchEvent(
+      new CustomEvent(TERMINAL_INSERT_TEXT_EVENT, { detail: payload })
+    );
+    // 插入后清除选区（按钮随之隐藏），与复制行为保持一致的交互惯例
+    term.clearSelection();
+  }, [cwd]);
+
   return (
     <div className="terminal-panel">
+      {/* Cursor 式：选中终端文本后浮动「添加到输入框」按钮 */}
+      {hasSelection ? (
+        <button
+          type="button"
+          className="terminal-toolbar-send"
+          onClick={insertToComposer}
+          title="将选中的日志添加到输入框"
+        >
+          <Send size={12} strokeWidth={2} aria-hidden="true" />
+          添加到输入框
+        </button>
+      ) : null}
       <div
         ref={containerRef}
         className="terminal-container"
@@ -444,7 +530,7 @@ export const TerminalPanelContent = ({
               icon: <Eraser size={13} strokeWidth={1.8} />,
               onClick: () => {
                 setContextMenu(null);
-                termRef.current?.clear();
+                clearScreen();
               },
             },
           ]}

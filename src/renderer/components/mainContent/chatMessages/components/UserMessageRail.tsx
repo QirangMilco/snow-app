@@ -4,12 +4,15 @@ import {
   FileText,
   GitCommitHorizontal,
   GitCompare,
+  Globe,
   MessageSquare,
+  MousePointer2,
   ScanSearch,
 } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import type { UserMessageSummary } from "../../../../../preload";
 import {
+  extractUrlHost,
   formatLinesStr,
   parseContentSegments,
   type ContentSegment,
@@ -79,6 +82,18 @@ const buildPlainTextSummary = (content: string): string => {
       parts.push(segment.tag.summary);
     } else if (segment.type === "review") {
       parts.push(segment.tag.summary);
+    } else if (segment.type === "element") {
+      parts.push(
+        segment.tag.note
+          ? `${segment.tag.label}: ${segment.tag.note}`
+          : segment.tag.label
+      );
+    } else if (segment.type === "web") {
+      parts.push(
+        segment.tag.title
+          ? `${segment.tag.title} ${segment.tag.url}`
+          : segment.tag.url
+      );
     } else {
       const { tag } = segment;
       const linesStr =
@@ -205,6 +220,51 @@ const renderRailSegments = (content: string): React.ReactNode => {
           <span className="user-message-file-chip-name">
             {segment.tag.summary}
           </span>
+        </span>
+      );
+    }
+
+    if (segment.type === "element") {
+      const displayName = segment.tag.note
+        ? `${segment.tag.label} · ${segment.tag.note}`
+        : segment.tag.label;
+      const elementTitle = segment.tag.url
+        ? `${segment.tag.label} (${segment.tag.url})`
+        : segment.tag.label;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip element-chip"
+          title={elementTitle}
+        >
+          <MousePointer2
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#1a73e8" }}
+          />
+          <span className="user-message-file-chip-name">{displayName}</span>
+        </span>
+      );
+    }
+
+    if (segment.type === "web") {
+      const host = extractUrlHost(segment.tag.url);
+      const displayName = segment.tag.title
+        ? `${segment.tag.title} · ${host}`
+        : host;
+      const webTitle = `${displayName} (${segment.tag.url})`;
+      return (
+        <span
+          key={index}
+          className="user-message-file-chip web-chip"
+          title={webTitle}
+        >
+          <Globe
+            size={12}
+            className="user-message-file-chip-icon"
+            style={{ color: "#0f766e" }}
+          />
+          <span className="user-message-file-chip-name">{displayName}</span>
         </span>
       );
     }
@@ -628,7 +688,8 @@ export const UserMessageRail = memo(
                     msg.content.includes("@@commit:") ||
                     msg.content.includes("@@change:") ||
                     msg.content.includes("@@text-snippet:") ||
-                    msg.content.includes("@@review:");
+                    msg.content.includes("@@review:") ||
+                    msg.content.includes("@@element:");
                   const isVisible = visibleUserIndices.has(index);
                   return (
                     <button

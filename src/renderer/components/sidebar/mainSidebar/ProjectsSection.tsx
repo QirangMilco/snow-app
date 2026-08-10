@@ -17,10 +17,13 @@ import type {
 } from "../../../../preload";
 import { FormDialog } from "../../common/FormDialog";
 import { WorkspaceDirectoryList } from "./WorkspaceDirectoryList";
+import type { CrossProjectNotificationGroup } from "./useCrossProjectNotifications";
 
 type AddDirectoryMode = "" | WorkspaceDirectoryKind;
 type ProjectsSectionProps = {
   activeDirectory?: WorkspaceDirectoryRecord | null;
+  /** 跨项目通知（其他项目的运行中/需关注/已完成会话分组），用于项目条目徽标 */
+  notificationGroups?: CrossProjectNotificationGroup[];
   onActiveDirectoryChange?: (
     directory: WorkspaceDirectoryRecord | null
   ) => void;
@@ -83,6 +86,7 @@ const toPersistableDirectoryInput = (
 
 export function ProjectsSection({
   activeDirectory: externalActiveDirectory,
+  notificationGroups,
   onActiveDirectoryChange,
   onSwitchingDirectoryChange,
   onSwitchContent,
@@ -147,6 +151,16 @@ export function ProjectsSection({
     () => workspaceDirectories.find((directory) => directory.isActive),
     [workspaceDirectories]
   );
+
+  // 各项目通知计数：directoryId → 通知会话数（需关注/运行中/已完成）。
+  // 当前项目的动态由对话列表展示，不参与徽标（hook 已排除）。
+  const notificationCountByDirectory = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const group of notificationGroups ?? []) {
+      counts[group.directoryId] = group.notifications.length;
+    }
+    return counts;
+  }, [notificationGroups]);
 
   useEffect(() => {
     onActiveDirectoryChange?.(activeDirectory ?? null);
@@ -370,11 +384,13 @@ export function ProjectsSection({
 
   const handleAddLocalDirectoryCancel = (): void => {
     if (isSavingDirectory) return;
+    // 取消时返回上一级（选择添加方式），而不是直接关闭整个模态框
     setIsAddLocalDialogOpen(false);
     setSelectedLocalPath("");
     setIsDraggingLocalDirectory(false);
     setAddDirectoryMode("");
     setDirectoryError(null);
+    setIsAddMenuOpen(true);
   };
 
   const handleLocalDirectoryDrop = async (
@@ -450,9 +466,11 @@ export function ProjectsSection({
     if (isSavingDirectory) {
       return;
     }
+    // 取消时返回上一级（选择添加方式），而不是直接关闭整个模态框
     setIsCreateProjectOpen(false);
     setProjectNameInput("");
     setDirectoryError(null);
+    setIsAddMenuOpen(true);
   };
 
   // 创建项目：先让用户选择保存目录（父目录），再交由主进程/Rust 创建文件夹
@@ -974,6 +992,7 @@ export function ProjectsSection({
             }
             isLoadingDirectories={isLoadingDirectories}
             loadMoreRef={directoryLoadMoreRef}
+            notificationCountByDirectory={notificationCountByDirectory}
             onActivate={(directoryId) =>
               void handleActivateDirectory(directoryId)
             }

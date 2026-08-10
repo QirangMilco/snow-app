@@ -1,10 +1,18 @@
-const { copyFileSync, existsSync, readdirSync, unlinkSync, statSync } = require("node:fs");
+const {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  unlinkSync,
+  writeFileSync,
+} = require("node:fs");
 const { join } = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const projectRoot = join(__dirname, "..");
 const nativeDir = join(projectRoot, "native");
-
+const packageVersion = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")).version;
 const targetMap = {
   "win32-x64": {
     triple: "x86_64-pc-windows-msvc",

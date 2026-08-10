@@ -1,8 +1,8 @@
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 
-type AutoDismissNoticeTone = "success" | "error" | "info";
+type AutoDismissNoticeTone = "success" | "error" | "info" | "warning";
 
 type AutoDismissNoticeProps = {
   message: string;
@@ -15,6 +15,7 @@ const noticeIcons: Record<AutoDismissNoticeTone, ReactNode> = {
   success: <CheckCircle2 size={15} strokeWidth={2} />,
   error: <AlertCircle size={15} strokeWidth={2} />,
   info: <Info size={15} strokeWidth={2} />,
+  warning: <AlertTriangle size={15} strokeWidth={2} />,
 };
 
 export function AutoDismissNotice({

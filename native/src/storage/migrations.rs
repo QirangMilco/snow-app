@@ -76,6 +76,7 @@ pub fn run_post_schema_migrations(connection: &Connection) -> rusqlite::Result<(
     migrate_system_prompt_scope(connection)?;
     migrate_chat_conversations_modes(connection)?;
     migrate_sub_agent_configs_project_id(connection)?;
+    migrate_sub_agent_configs_model(connection)?;
     purge_assistant_raw_json_blobs(connection)?;
     Ok(())
 }
@@ -93,13 +94,14 @@ pub fn run_post_schema_migrations(connection: &Connection) -> rusqlite::Result<(
 /// the snowflake-ID migration was applied; development databases are expected
 /// to be rebuilt.
 fn reset_legacy_integer_primary_key_tables(connection: &Connection) -> rusqlite::Result<()> {
-    let has_legacy_primary_key = LEGACY_INTEGER_PRIMARY_KEY_TABLES
-        .iter()
-        .try_fold(false, |found, table_name| {
-            Ok::<bool, rusqlite::Error>(
-                found || has_integer_primary_key(connection, table_name)?,
-            )
-        })?;
+    let has_legacy_primary_key =
+        LEGACY_INTEGER_PRIMARY_KEY_TABLES
+            .iter()
+            .try_fold(false, |found, table_name| {
+                Ok::<bool, rusqlite::Error>(
+                    found || has_integer_primary_key(connection, table_name)?,
+                )
+            })?;
 
     if !has_legacy_primary_key {
         return Ok(());
@@ -384,6 +386,7 @@ fn migrate_sub_agent_configs_project_id(connection: &Connection) -> rusqlite::Re
            system_prompt TEXT NOT NULL DEFAULT '',
            tools_json TEXT NOT NULL DEFAULT '[]',
            config_profile TEXT NOT NULL DEFAULT '',
+           model TEXT NOT NULL DEFAULT '',
            builtin INTEGER NOT NULL DEFAULT 0,
            sort_order INTEGER NOT NULL DEFAULT 0,
            source TEXT NOT NULL DEFAULT 'manual',
@@ -392,14 +395,14 @@ fn migrate_sub_agent_configs_project_id(connection: &Connection) -> rusqlite::Re
            updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
            UNIQUE(agent_id, project_id)
          );
-         INSERT INTO sub_agent_configs (
-           id, agent_id, name, description, system_prompt, tools_json,
-           config_profile, builtin, sort_order, source, project_id,
-           created_at, updated_at
-         )
-         SELECT id, agent_id, name, description, system_prompt, tools_json,
-                config_profile, builtin, sort_order, source, '',
-                created_at, updated_at
+           INSERT INTO sub_agent_configs (
+            id, agent_id, name, description, system_prompt, tools_json,
+            config_profile, model, builtin, sort_order, source, project_id,
+            created_at, updated_at
+          )
+          SELECT id, agent_id, name, description, system_prompt, tools_json,
+                 config_profile, '', builtin, sort_order, source, '',
+                 created_at, updated_at
            FROM sub_agent_configs_legacy;
          CREATE INDEX IF NOT EXISTS idx_sub_agent_configs_builtin
            ON sub_agent_configs(builtin);
@@ -409,6 +412,28 @@ fn migrate_sub_agent_configs_project_id(connection: &Connection) -> rusqlite::Re
            ON sub_agent_configs(project_id);
          DROP TABLE sub_agent_configs_legacy;",
     )?;
+
+    Ok(())
+}
+
+/// Adds the optional independent model override for sub-agents.
+///
+/// Existing rows receive an empty string, which preserves the compatibility
+/// rule: inherited agents use the parent runtime model, while fixed-profile
+/// agents use that profile's advanced model. Idempotent on fresh or already
+/// migrated databases.
+fn migrate_sub_agent_configs_model(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(sub_agent_configs)")?;
+    let columns: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !columns.iter().any(|column| column == "model") {
+        connection.execute(
+            "ALTER TABLE sub_agent_configs ADD COLUMN model TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
 
     Ok(())
 }
@@ -454,3 +479,4 @@ fn purge_assistant_raw_json_blobs(connection: &Connection) -> rusqlite::Result<(
     }
     Ok(())
 }
+

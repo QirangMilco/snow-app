@@ -19,7 +19,14 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: resolve(__dirname, "src/preload/index.ts"),
+        input: {
+          index: resolve(__dirname, "src/preload/index.ts"),
+          // 内置浏览器 webview 的密码助手（guest 页面 preload，独立入口
+          // 以输出单独的 webview-browser.mjs 供 <webview preload> 引用）。
+          "webview-browser": resolve(__dirname, "src/preload/webviewBrowserPreload.ts"),
+          // 桌面宠物窗口的轻量 preload（输出 pet.mjs）。
+          pet: resolve(__dirname, "src/preload/petPreload.ts"),
+        },
       },
     },
   },
@@ -32,7 +39,11 @@ export default defineConfig({
     plugins: [react()],
     build: {
       rollupOptions: {
-        input: resolve(__dirname, "src/renderer/index.html"),
+        input: {
+          index: resolve(__dirname, "src/renderer/index.html"),
+          // 桌面宠物窗口页面（独立入口，输出 pet.html）。
+          pet: resolve(__dirname, "src/renderer/pet.html"),
+        },
         output: {
           manualChunks: {
             // React 核心 — 首屏必需，独立 chunk 利于缓存

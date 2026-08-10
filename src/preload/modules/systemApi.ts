@@ -1,4 +1,10 @@
 import { ipcRenderer, type IpcRendererEvent } from "electron";
+import { join } from "node:path";
+import {
+  isNotificationConversationTarget,
+  type AppNotificationOptions,
+  type NotificationConversationTarget,
+} from "../../shared/notification";
 import type {
   BashStreamChunk,
   BrowserCommandRequest,
@@ -39,9 +45,54 @@ const USER_QUESTION_RESPONSE_CHANNEL = "user-question:response";
 const APP_CONTROL_CHANNEL = "app-control:request";
 const APP_CONTROL_RESPONSE_CHANNEL = "app-control:response";
 const CODEBASE_EMBED_PROGRESS_CHANNEL = "codebase:embed:progress";
+const NOTIFICATION_ACTIVATED_CHANNEL = "notification:activated";
+const MAX_BUFFERED_NOTIFICATION_ACTIVATIONS = 50;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+type NotificationActivationSubscriber = (
+  target: NotificationConversationTarget
+) => void;
+
+const notificationActivationSubscribers =
+  new Set<NotificationActivationSubscriber>();
+const notificationActivationBuffer: NotificationConversationTarget[] = [];
+
+const deliverNotificationActivation = (
+  subscriber: NotificationActivationSubscriber,
+  target: NotificationConversationTarget
+): void => {
+  try {
+    subscriber(target);
+  } catch (error) {
+    console.error("[notification] Activation subscriber failed", error);
+  }
+};
+
+ipcRenderer.on(
+  NOTIFICATION_ACTIVATED_CHANNEL,
+  (_event: IpcRendererEvent, target: unknown): void => {
+    if (!isNotificationConversationTarget(target)) {
+      return;
+    }
+
+    if (notificationActivationSubscribers.size === 0) {
+      if (
+        notificationActivationBuffer.length >=
+        MAX_BUFFERED_NOTIFICATION_ACTIVATIONS
+      ) {
+        notificationActivationBuffer.shift();
+      }
+      notificationActivationBuffer.push(target);
+      return;
+    }
+
+    for (const subscriber of notificationActivationSubscribers) {
+      deliverNotificationActivation(subscriber, target);
+    }
+  }
+);
 
 const createMcpToolStreamId = (): string =>
   `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -676,11 +727,22 @@ export const systemApi = {
     ipcRenderer.invoke("debug:write-log", level, entry),
   sum: (a: number, b: number): Promise<number> =>
     ipcRenderer.invoke("native:sum", a, b),
-  showNotification: (options: {
-    title: string;
-    body: string;
-    silent?: boolean;
-  }): Promise<void> => ipcRenderer.invoke("notification:show", options),
+  showNotification: (options: AppNotificationOptions): Promise<void> =>
+    ipcRenderer.invoke("notification:show", options),
+  onNotificationActivated: (
+    callback: (target: NotificationConversationTarget) => void
+  ): (() => void) => {
+    notificationActivationSubscribers.add(callback);
+
+    const bufferedTargets = notificationActivationBuffer.splice(0);
+    for (const target of bufferedTargets) {
+      deliverNotificationActivation(callback, target);
+    }
+
+    return () => {
+      notificationActivationSubscribers.delete(callback);
+    };
+  },
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:get-version"),
   downloadUpdate: (): Promise<UpdateStatus> =>
     ipcRenderer.invoke("updater:download-update"),
@@ -876,6 +938,62 @@ export const windowApi = {
     domain: string
   ): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke("browser:cookie-delete", webContentsId, name, domain),
+  /** 内置浏览器 webview 密码助手 preload 的绝对路径（供 <webview preload> 使用）。 */
+  browserWebviewPreloadPath: join(__dirname, "webview-browser.mjs"),
+  /** 列出密码保险库中的全部记录（不含明文密码）。 */
+  browserPasswordsList: (): Promise<
+    {
+      id: string;
+      origin: string;
+      username: string;
+      createdAt: number;
+      updatedAt: number;
+    }[]
+  > => ipcRenderer.invoke("browser-passwords:list"),
+  /** 取单条密码记录的明文（密码管理 UI 显式查看时调用）。 */
+  browserPasswordGet: (
+    id: string
+  ): Promise<{ username: string; password: string } | null> =>
+    ipcRenderer.invoke("browser-passwords:get", id),
+  /** 保存/更新密码记录（同 origin + username 覆盖）。 */
+  browserPasswordSave: (payload: {
+    origin: string;
+    username: string;
+    password: string;
+  }): Promise<{ id: string; updated: boolean }> =>
+    ipcRenderer.invoke("browser-passwords:save", payload),
+  /** 删除一条密码记录。 */
+  browserPasswordDelete: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke("browser-passwords:delete", id),
+  /** 批量删除密码记录，返回实际删除数量。 */
+  browserPasswordDeleteBatch: (ids: string[]): Promise<number> =>
+    ipcRenderer.invoke("browser-passwords:delete-batch", ids),
+  /** 探测本机浏览器源（Chrome/Edge/Chromium/Firefox）及其数据量。 */
+  browserImportSources: (): Promise<
+    {
+      id: string;
+      name: string;
+      profile: string;
+      accountName: string;
+      passwordDb: string;
+      cookieDb: string;
+      passwordCount: number;
+      cookieCount: number;
+      note: string;
+    }[]
+  > => ipcRenderer.invoke("browser-import:sources"),
+  /** 从指定浏览器源导入密码到保险库。 */
+  browserImportPasswords: (
+    sourceId: string,
+    profile: string
+  ): Promise<{ total: number; imported: number; skipped: number }> =>
+    ipcRenderer.invoke("browser-import:passwords", sourceId, profile),
+  /** 从指定浏览器源导入 Cookie 到当前会话。 */
+  browserImportCookies: (
+    sourceId: string,
+    profile: string
+  ): Promise<{ total: number; imported: number; failed: number }> =>
+    ipcRenderer.invoke("browser-import:cookies", sourceId, profile),
   /** 执行白名单内的 CDP 命令（Accessibility.getFullAXTree / DOM.resolveNode / Runtime.callFunctionOn）。 */
   browserCdpCommand: (
     webContentsId: number,

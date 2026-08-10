@@ -170,8 +170,9 @@ The following files are also located in the `~/.snow/` directory:
 
 | File | Description |
 | --- | --- |
-| `config.json` | API key and model configuration (`snowcfg` field) |
-| `active-profile.json` | Currently active API profile (`activeProfile` field) |
+| `config.json` | API key and model configuration (`snowcfg` field; a CLI-compatible mirror of the **currently active profile** — the authoritative store for all profiles is the `api_configs` table in the app database) |
+| `active-profile.json` | Currently active API profile name (`activeProfile` field; CLI compatibility layer — at runtime the app database's `api_configs.is_active` is authoritative) |
+| App database `api_configs` table | **Authoritative store for API profiles** (`~/.snowapp/snowapp.db`, one row per profile, `profile_name` unique); agents can read/write it via `config-set scope=apiProfiles ...` (see [2-guides/3-configure-api-keys](../2-guides/3-configure-api-keys.md) section 5) |
 | `proxy-config.json` | Proxy and browser configuration |
 | `custom-headers.json` | Custom request header schemes |
 | `system-prompt.json` | System prompts |

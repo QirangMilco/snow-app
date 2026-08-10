@@ -13,6 +13,7 @@ import {
   formatMessageTime,
   formatToolResultsContent,
   getErrorMessage,
+  isResponseErrorStatus,
   parseToolCalls,
 } from "../utils/conversationHelpers";
 import {
@@ -167,6 +168,17 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         sessionRef.runId = currentRunId;
       }
 
+      // 宠物联动：本次 run 的唯一回合 id —— start/end 按 id 一一核销。
+      // 多会话并行、中止、被新发送顶替的 run 各自核销自己的回合，
+      // 不会互相污染计数（旧实现的匿名计数在这些路径上会永久漂移）。
+      const petTurnId = `turn-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 10)}`;
+      window.snow.notifyPetTurnStarted(
+        petTurnId,
+        options.kind === "review" ? "review" : "chat"
+      );
+
       // Reset pause state for a fresh send — the previous run may have
       // been paused and aborted without cleaning up the controller.
       ctx.updateSessionField(sessionKey, "isPaused", false);
@@ -269,7 +281,8 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
       const executeSubAgentActivation = createSubAgentActivation({
         ctx,
         requestToolAuthorizations,
-        model: options.model,
+        parentApiProfile: options.apiProfile,
+        parentModel: options.model,
         planApprovedSessionKeysRef,
       });
 
@@ -351,6 +364,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         }
 
         const response = await streamPromise;
+        const responseFailed = isResponseErrorStatus(response.status);
 
         const ref = ctx.sessionsRefData.current.get(effectiveKey);
         if (ref) {
@@ -470,7 +484,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             // subsequent AI iterations must NOT refresh the list to avoid
             // excessive re-sorting. Follow-up messages already refreshed the
             // list at send time (handleSendMessage).
-            if (response.status !== "error") {
+            if (!responseFailed) {
               const refreshId = response.conversationId;
               void window.snow
                 .getChatConversation(refreshId)
@@ -495,7 +509,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           if (
             isFirstMessage &&
             !summaryTriggered &&
-            response.status !== "error"
+            !responseFailed
           ) {
             summaryTriggered = true;
             const summaryConvId = response.conversationId;
@@ -550,7 +564,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         // message is now persisted via store_chat_exchange) and re-fetch.
         ctx.setConversationVersion((version) => version + 1);
 
-        if (response.tokenUsage && response.status !== "error") {
+        if (response.tokenUsage && !responseFailed) {
           ctx.updateSessionField(
             effectiveKey,
             "tokenUsage",
@@ -589,7 +603,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         if (
           loopWillContinue &&
           response.tokenUsage &&
-          response.status !== "error" &&
+          !responseFailed &&
           effectiveKey !== PENDING_SESSION_KEY
         ) {
           // Use the conversation-scoped profile (options.apiProfile) so the
@@ -701,12 +715,8 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           return;
         }
 
-        // Update assistant message with the persisted result. Failed responses
-        // still migrate the session, but remain visible locally as an error.
-        // Note: "incomplete" status (stream interrupted mid-response) is NOT
-        // treated as a hard failure — if tool calls were collected before the
-        // interruption, we still process them so the agent loop can continue.
-        const responseFailed = response.status === "error";
+        // Failed responses still migrate the session, but remain visible
+        // locally as an error. "incomplete" responses are partial but usable.
         ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
           currentMessages.map((currentMessage) => {
             if (currentMessage.id !== currentAssistantMessageId) {
@@ -1158,8 +1168,10 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         }
       };
 
+      let runFailed = false;
       void initCheckpointAndRun()
         .catch((error: unknown) => {
+          runFailed = true;
           ctx.updateSessionField(finalSessionKey, "isStreaming", false);
           ctx.updateSessionField(finalSessionKey, "streamStartedAt", 0);
           const ref = ctx.sessionsRefData.current.get(finalSessionKey);
@@ -1222,6 +1234,15 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           // isStreaming and the streaming id — cleaning them up here would
           // strip the running state from the UI (the stop button disappears)
           // even though the agent loop is still active.
+          //
+          // 宠物联动放在 ownsSession 守卫之外：本次 run 的回合必须与开始时
+          // 生成的 turnId 一一核销。被中止/顶替的 run 同样要回收自己的回合，
+          // 否则主进程计数泄漏，宠物会永久卡在 busy（多会话并行时尤其明显）。
+          window.snow.notifyPetTurnEnded(
+            petTurnId,
+            runFailed || isRunCancelled(finalSessionKey)
+          );
+
           const ownsSession = !!ref && ref.runId === currentRunId;
           if (ownsSession) {
             ref.isSending = false;
@@ -1289,7 +1310,11 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             !isRunCancelled(finalSessionKey)
           ) {
             const sessionState = ctx.sessionsRef.current?.[finalSessionKey];
-            ctx.notifyAiComplete(sessionState?.summary || undefined);
+            ctx.notifyAiComplete({
+              conversationId: finalSessionKey,
+              directoryId: sessionState?.directoryId ?? ctx.directoryId,
+              title: sessionState?.summary || undefined,
+            });
           }
         });
     },

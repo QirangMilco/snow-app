@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings,
   Trash2,
   ZoomIn,
 } from "lucide-react";
@@ -27,6 +28,7 @@ export type BrowserMenuProps = {
   homepage: string;
   onClearCache: () => void;
   onClearCookies: () => void;
+  onOpenSettings: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
   onZoomReset: () => void;
@@ -45,7 +47,7 @@ const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 5;
 const MENU_WIDTH = 200;
 const MENU_GAP = 4;
-const ESTIMATED_MENU_HEIGHT = 212;
+const ESTIMATED_MENU_HEIGHT = 268;
 
 const formatZoomPercent = (factor: number): string =>
   `${Math.round(factor * 100)}%`;
@@ -71,6 +73,7 @@ export const BrowserMenu = ({
   homepage,
   onClearCache,
   onClearCookies,
+  onOpenSettings,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -271,6 +274,18 @@ export const BrowserMenu = ({
                   </div>
                 )}
               </div>
+
+              <button
+                type="button"
+                className="browser-menu-item"
+                role="menuitem"
+                onClick={() => runAction(onOpenSettings)}
+              >
+                <Settings size={14} strokeWidth={1.8} />
+                <span className="browser-menu-label">
+                  {t("browser.browserSettings")}
+                </span>
+              </button>
 
               <div className="browser-menu-zoom-row">
                 <ZoomIn size={14} strokeWidth={1.8} />

@@ -24,8 +24,15 @@ export type DiffTabData = {
   diffLoading: boolean;
 };
 
+export type TerminalOpenOptions = {
+  ptyId?: string;
+  shellPath?: string;
+  sessionId?: string;
+};
+
 export type TerminalTabData = {
   cwd: string;
+  ptyId?: string;
   shellPath?: string;
   sessionId?: string;
 };
@@ -40,6 +47,8 @@ export type FileViewerTabData = {
   fileName: string;
   isSsh: boolean;
   sshSessionId?: string | null;
+  sshWorkspaceRoot?: string;
+  sshWorkspaceId?: string;
   focusLine?: number;
 };
 
@@ -83,13 +92,16 @@ export type OpenDiffTabCallback = (
   diffLoading: boolean
 ) => void;
 
-export type OpenFileDiffPreviewTabCallback = (data: FileDiffPreviewTabData) => void;
+export type OpenFileDiffPreviewTabCallback = (
+  data: FileDiffPreviewTabData
+) => void;
 
 export type OpenFileTabCallback = (
   filePath: string,
   fileName: string,
   isSsh: boolean,
-  sshSessionId?: string | null
+  sshSessionId?: string | null,
+  sshWorkspaceRoot?: string
 ) => void;
 
 export type { FileContentResult };

@@ -401,14 +401,15 @@ impl FilesystemService {
 
         // search_lines_variants: 每个元素是 (变体名, 行数组)
         let search_content_stripped = try_strip_line_prefixes(search_content);
-        let variants: Vec<(&str, Vec<&str>)> = vec![
-            ("exact", search_content.split('\n').collect()),
-        ]
-        .into_iter()
-        .chain(search_content_stripped.as_ref().map(|s| {
-            ("exact_after_stripping_prefixes", s.split('\n').collect())
-        }))
-        .collect();
+        let variants: Vec<(&str, Vec<&str>)> =
+            vec![("exact", search_content.split('\n').collect())]
+                .into_iter()
+                .chain(
+                    search_content_stripped
+                        .as_ref()
+                        .map(|s| ("exact_after_stripping_prefixes", s.split('\n').collect())),
+                )
+                .collect();
 
         // Step 1: 精确行级匹配
         // 在 file_lines 中查找与 search 某个变体完全相同的行序列（归一化比较）。
@@ -421,12 +422,9 @@ impl FilesystemService {
             // 收集所有匹配位置
             let mut match_positions: Vec<usize> = Vec::new();
             for start in 0..=(file_lines.len() - search_line_count) {
-                let all_match = search_lines
-                    .iter()
-                    .enumerate()
-                    .all(|(i, &sline)| {
-                        normalize_whitespace(&file_lines[start + i]) == normalize_whitespace(sline)
-                    });
+                let all_match = search_lines.iter().enumerate().all(|(i, &sline)| {
+                    normalize_whitespace(&file_lines[start + i]) == normalize_whitespace(sline)
+                });
                 if all_match {
                     match_positions.push(start);
                 }
@@ -436,10 +434,8 @@ impl FilesystemService {
                 let end_line = target_start + search_line_count;
 
                 // 行级替换：用 splice 替换目标行范围
-                let replacement_lines: Vec<String> = replace_content
-                    .split('\n')
-                    .map(str::to_owned)
-                    .collect();
+                let replacement_lines: Vec<String> =
+                    replace_content.split('\n').map(str::to_owned).collect();
                 let mut new_lines: Vec<String> = file_lines.iter().map(|s| s.to_string()).collect();
                 new_lines.splice(target_start..end_line, replacement_lines);
                 let new_content = new_lines.join("\n");
@@ -479,15 +475,50 @@ impl FilesystemService {
             }
         }
 
+        // Step 1.5: 字面子串匹配
+        // 覆盖 search_content 只是某一行片段（例如超长单行字符串中的一段）或
+        // 跨行片段的场景，这是整行精确/模糊匹配无法命中的情况。
+        if let Some((new_content, edit_start_line, edit_end_line, total_matches)) =
+            try_substring_replace(&content, search_content, &replace_content, occurrence)
+        {
+            let new_bytes =
+                encode_text_back(&new_content, original_encoding, had_bom).map_err(|e| {
+                    Error::new(
+                        Status::GenericFailure,
+                        format!(
+                            "Failed to encode edited content back to original encoding: {} (path: {})",
+                            e, file_path
+                        ),
+                    )
+                })?;
+            fs::write(&file_path, &new_bytes).map_err(|e| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Failed to write file: {} (path: {})", e, file_path),
+                )
+            })?;
+
+            let review =
+                build_edit_review_context_lines(&new_content, edit_start_line, edit_end_line);
+
+            return Ok(json!({
+                "success": true,
+                "totalMatches": total_matches,
+                "occurrence": occurrence,
+                "matchType": "substring",
+                "matchedLineStart": edit_start_line + 1,
+                "matchedLineEnd": edit_end_line + 1,
+                "review": review
+            }));
+        }
+
         // Step 2: 模糊行匹配（基于 Levenshtein 距离 + 变窗口 + 预过滤）
         if let Some((start_line, end_line, similarity)) =
             find_best_line_match_v2(search_content, &file_lines)
         {
             if similarity >= FUZZY_MATCH_THRESHOLD {
-                let replacement_lines: Vec<String> = replace_content
-                    .split('\n')
-                    .map(str::to_owned)
-                    .collect();
+                let replacement_lines: Vec<String> =
+                    replace_content.split('\n').map(str::to_owned).collect();
                 let mut new_lines: Vec<String> = file_lines.iter().map(|s| s.to_string()).collect();
                 new_lines.splice(start_line..end_line, replacement_lines);
                 let new_content = new_lines.join("\n");
@@ -784,10 +815,63 @@ fn try_strip_line_prefixes(text: &str) -> Option<String> {
     }
 }
 
+/// 尝试把 search_content 作为字面子串在完整文件内容中匹配并替换。
+/// 覆盖 search_content 只是某一行片段（例如超长单行字符串中的一段）或跨行
+/// 片段的场景，这是整行精确/模糊匹配无法命中的情况。先把 search_content 的
+/// 行尾适配为文件的行尾风格再做字面查找。成功时返回
+/// (新内容, 编辑起始行 0-based, 编辑结束行 0-based inclusive, 总匹配数)。
+fn try_substring_replace(
+    content: &str,
+    search_content: &str,
+    replace_content: &str,
+    occurrence: usize,
+) -> Option<(String, usize, usize, usize)> {
+    if search_content.is_empty() {
+        return None;
+    }
+    let adapted_search = adapt_line_endings(search_content, content);
+    if adapted_search.is_empty() {
+        return None;
+    }
+
+    // 收集所有非重叠出现位置（字节索引）。
+    let mut positions: Vec<usize> = Vec::new();
+    let mut cursor = 0usize;
+    while cursor <= content.len() {
+        match content[cursor..].find(&adapted_search) {
+            Some(rel) => {
+                let abs = cursor + rel;
+                positions.push(abs);
+                cursor = abs + adapted_search.len();
+            }
+            None => break,
+        }
+    }
+    if positions.is_empty() {
+        return None;
+    }
+
+    let target = *positions.get(occurrence.saturating_sub(1))?;
+    let end = target + adapted_search.len();
+
+    let mut new_content = String::with_capacity(content.len() + replace_content.len());
+    new_content.push_str(&content[..target]);
+    new_content.push_str(replace_content);
+    new_content.push_str(&content[end..]);
+
+    let edit_start_line = content[..target].matches('\n').count();
+    let edit_end_line = edit_start_line + replace_content.split('\n').count().saturating_sub(1);
+
+    Some((new_content, edit_start_line, edit_end_line, positions.len()))
+}
+
 /// 在文件行数组中，按行滑动窗口查找与 searchContent 最相似的区间。
 /// 基于 normalize_whitespace + Levenshtein 距离 + 变窗口 + 首行预过滤。
 /// 返回 (起始行号, 结束行号(不含), 相似度)，均为 0-indexed。
-fn find_best_line_match_v2(search_content: &str, file_lines: &[&str]) -> Option<(usize, usize, f64)> {
+fn find_best_line_match_v2(
+    search_content: &str,
+    file_lines: &[&str],
+) -> Option<(usize, usize, f64)> {
     let search_lines: Vec<&str> = search_content.split('\n').collect();
     if search_lines.is_empty() || file_lines.is_empty() {
         return None;
@@ -800,7 +884,8 @@ fn find_best_line_match_v2(search_content: &str, file_lines: &[&str]) -> Option<
 
     let threshold = FUZZY_MATCH_THRESHOLD;
     let normalized_search = normalize_whitespace(search_content);
-    let normalized_first_line = normalize_whitespace(search_lines.first().copied().unwrap_or_default());
+    let normalized_first_line =
+        normalize_whitespace(search_lines.first().copied().unwrap_or_default());
 
     // 变窗口：大代码块允许窗口大小浮动以改善边界对齐
     let window_delta = if base_window >= 10 {
@@ -816,7 +901,9 @@ fn find_best_line_match_v2(search_content: &str, file_lines: &[&str]) -> Option<
     for start_index in 0..=(file_lines.len() - base_window) {
         // 首行预过滤：首行相似度低于阈值则跳过
         let normalized_candidate_first = normalize_whitespace(file_lines[start_index]);
-        if compute_levenshtein_similarity(&normalized_first_line, &normalized_candidate_first, 0.5) < 0.5 {
+        if compute_levenshtein_similarity(&normalized_first_line, &normalized_candidate_first, 0.5)
+            < 0.5
+        {
             continue;
         }
 
@@ -1223,12 +1310,7 @@ fn is_image_file(path: &Path) -> bool {
             .and_then(|ext| ext.to_str())
             .map(str::to_lowercase)
             .as_deref(),
-        Some("png")
-            | Some("jpg")
-            | Some("jpeg")
-            | Some("gif")
-            | Some("webp")
-            | Some("bmp")
+        Some("png") | Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp")
     )
 }
 

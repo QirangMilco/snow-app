@@ -31,6 +31,7 @@ const PALETTE_KEYS: ReadonlyArray<keyof ThemePalette> = [
   "accentBlue",
   "accentBlueBg",
   "accentBlueText",
+  "accentColor",
   "onSolid",
   "selectionBg",
   "focusRing",

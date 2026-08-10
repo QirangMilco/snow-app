@@ -1,0 +1,40 @@
+/* 桌面宠物窗口样式 —— 独立于主应用 styles.css，保持宠物页面轻量。 */
+
+html,
+body,
+#pet-root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+.pet-window {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: transparent;
+  /* 交给操作系统做原生窗口拖拽：1:1 跟手、与 DPI 无关、无漂移。 */
+  -webkit-app-region: drag;
+}
+
+.pet-stage-canvas {
+  display: block;
+  -webkit-app-region: drag;
+  cursor: grab;
+}
+
+.pet-stage-canvas:active {
+  cursor: grabbing;
+}
+
+.pet-stage-error {
+  font-size: 11px;
+  color: rgba(128, 128, 128, 0.8);
+  align-self: center;
+}
