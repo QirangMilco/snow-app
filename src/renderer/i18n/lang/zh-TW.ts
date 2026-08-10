@@ -2633,6 +2633,14 @@ export const zhTW = {
   "settings.browserPasswordHide": "隱藏密碼",
   "settings.browserPasswordSearch": "搜尋網站或使用者名稱",
   "settings.browserPasswordSearchEmpty": "沒有相符的密碼",
+  "settings.browserPasswordsManualTitle": "管理已儲存的密碼",
+  "settings.browserPasswordSelectAll": "全選",
+  "settings.browserPasswordSelectRecord": "選擇此條密碼",
+  "settings.browserPasswordSelectedCount": "已選 {{count}} 項",
+  "settings.browserPasswordDeleteSelected": "刪除選中",
+  "settings.browserPasswordBatchDeleteTitle": "批次刪除密碼",
+  "settings.browserPasswordBatchDeleteMessage":
+    "確定刪除選中的 {{count}} 條密碼嗎？此操作無法撤銷。",
   "settings.browserImport": "匯入",
   "settings.browserImportHint":
     "匯入的密碼將以系統級加密存入密碼保險庫；Cookie 會寫入目前瀏覽器工作階段",
