@@ -29,6 +29,7 @@ type BtwEntry = {
  * - 不带工具（subAgentToolsJson: "[]"）
  * - 不打断主任务流，关闭即取消
  * - 浮层内支持连续追问：后续请求会携带本浮层内的问答历史
+ * - 关闭只隐藏浮层（组件常驻挂载），问答历史保留；重新打开可继续追问
  * 注意：请求的 token 用量仍会计入 usage 统计（与普通消息一致）。
  */
 export function BtwPanel({
@@ -62,7 +63,8 @@ export function BtwPanel({
     setAnswer("");
     setStatus("idle");
     setErrorMessage("");
-    setEntries([]);
+    // 保留 entries：组件常驻挂载，关闭（点击外部/Esc）只隐藏浮层；
+    // 重新打开时问答历史不丢失，可继续追问，也能再次转主消息。
     setIsOpen(true);
   }, []);
 
