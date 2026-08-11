@@ -1033,6 +1033,27 @@ export const GitGraph = ({
                 {hoveredCommit.date}
               </span>
             </div>
+            {(hoveredCommit.additions > 0 || hoveredCommit.deletions > 0) && (
+              <div className="git-graph-tooltip-row">
+                <span className="git-graph-tooltip-label">
+                  {t("git.graphTooltipStats")}
+                </span>
+                <span className="git-graph-tooltip-value">
+                  <span className="git-graph-stats">
+                    {hoveredCommit.additions > 0 && (
+                      <span className="git-graph-stats-add">
+                        +{hoveredCommit.additions}
+                      </span>
+                    )}
+                    {hoveredCommit.deletions > 0 && (
+                      <span className="git-graph-stats-del">
+                        -{hoveredCommit.deletions}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              </div>
+            )}
             {hoveredCommit.refs && (
               <div className="git-graph-tooltip-row">
                 <span className="git-graph-tooltip-label">

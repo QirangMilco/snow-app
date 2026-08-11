@@ -306,6 +306,59 @@ pub fn delete_sensitive_command_config(database_path: &Path, command_id: &str) -
         })
 }
 
+pub fn reset_sensitive_command_configs(database_path: &Path) -> Result<()> {
+    database::open_connection(database_path)
+        .and_then(|connection| reset_sensitive_command_configs_with_connection(&connection))
+        .map_err(|error| {
+            database::database_error(database_path, "reset sensitive command configs", error)
+        })
+}
+
+fn reset_sensitive_command_configs_with_connection(connection: &Connection) -> rusqlite::Result<()> {
+    // 移除所有非预设规则（手动添加、Snow CLI 导入等），只保留系统内置预设。
+    connection.execute(
+        "DELETE FROM sensitive_command_configs WHERE is_preset = 0",
+        [],
+    )?;
+
+    // 将每个预设行恢复为系统默认值（pattern/description/enabled/排序/来源），
+    // 缺失的预设（如新版本新增的内置规则）则补插。
+    for (index, command) in PRESET_SENSITIVE_COMMANDS.iter().enumerate() {
+        connection.execute(
+            "INSERT INTO sensitive_command_configs (
+               id,
+               command_id,
+               pattern,
+               description,
+               enabled,
+               is_preset,
+               sort_order,
+               source,
+               created_at,
+               updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, 'preset', datetime('now', 'localtime'), datetime('now', 'localtime'))
+             ON CONFLICT(command_id) DO UPDATE SET
+               pattern = excluded.pattern,
+               description = excluded.description,
+               enabled = excluded.enabled,
+               is_preset = 1,
+               sort_order = excluded.sort_order,
+               source = 'preset',
+               updated_at = datetime('now', 'localtime')",
+            params![
+                database::create_snowflake_id(),
+                command.command_id,
+                command.pattern,
+                command.description,
+                command.enabled as i32,
+                index as i32,
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn seed_defaults_with_connection(connection: &Connection) -> rusqlite::Result<()> {
     // 迁移：旧版内置 rm 规则的正则 "rm " 无词边界，会误匹配 arm64、warm、
     // --rm、--format 等任意包含 "rm " 的子串。仅当该预设行仍保留旧 pattern

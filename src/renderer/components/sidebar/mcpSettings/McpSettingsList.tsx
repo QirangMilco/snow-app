@@ -1,4 +1,5 @@
-import { Loader2, Pencil, Trash2, Wrench } from "lucide-react";
+import { ChevronRight, Loader2, Pencil, Search, Trash2, Wrench, X } from "lucide-react";
+import { useState } from "react";
 import { useI18n } from "../../../i18n";
 import type {
   ImportResourceRecord,
@@ -18,6 +19,14 @@ export type McpSettingsListItem = {
   importResource?: ImportResourceRecord;
 };
 
+const formatToolSchema = (inputSchemaJson: string): string => {
+  try {
+    return JSON.stringify(JSON.parse(inputSchemaJson), null, 2);
+  } catch {
+    return inputSchemaJson || "{}";
+  }
+};
+
 type McpSettingsListProps = {
   servers: McpSettingsListItem[];
   isBusy: boolean;
@@ -27,6 +36,15 @@ type McpSettingsListProps = {
   fetchingToolServerIds: ReadonlySet<string>;
   onToggleEnabled: (server: McpSettingsListItem) => void;
   onFetchTools: (server: McpSettingsListItem) => void;
+  onToggleTool: (
+    server: McpSettingsListItem,
+    tool: McpServerTool,
+    enabled: boolean
+  ) => void;
+  onToggleAllTools: (
+    server: McpSettingsListItem,
+    enabled: boolean
+  ) => void;
   onEdit: (server: McpSettingsListItem) => void;
   onDelete: (server: McpSettingsListItem) => void;
   onReleaseImportResource: (
@@ -45,11 +63,49 @@ export function McpSettingsList({
   fetchingToolServerIds,
   onToggleEnabled,
   onFetchTools,
+  onToggleTool,
+  onToggleAllTools,
   onEdit,
   onDelete,
   onReleaseImportResource,
 }: McpSettingsListProps): React.JSX.Element {
   const { t } = useI18n();
+  const [expandedServerIds, setExpandedServerIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [toolFilters, setToolFilters] = useState<Record<string, string>>({});
+  const [expandedToolNames, setExpandedToolNames] = useState<
+    Record<string, Set<string>>
+  >(() => ({}));
+
+  const toggleServerExpanded = (server: McpSettingsListItem): void => {
+    setExpandedServerIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(server.serverId)) {
+        next.delete(server.serverId);
+      } else {
+        next.add(server.serverId);
+      }
+      return next;
+    });
+  };
+
+  const setToolFilter = (serverId: string, value: string): void => {
+    setToolFilters((previous) => ({ ...previous, [serverId]: value }));
+  };
+
+  const toggleToolExpanded = (serverId: string, toolName: string): void => {
+    setExpandedToolNames((previous) => {
+      const current = previous[serverId] ?? new Set<string>();
+      const next = new Set(current);
+      if (next.has(toolName)) {
+        next.delete(toolName);
+      } else {
+        next.add(toolName);
+      }
+      return { ...previous, [serverId]: next };
+    });
+  };
 
   return (
     <div className="api-settings-form-section">
@@ -80,6 +136,15 @@ export function McpSettingsList({
             const isFetchingTools = fetchingToolServerIds.has(server.serverId);
             const tools = toolsByServerId[server.serverId];
             const toolCount = tools?.length;
+            const isExpanded = expandedServerIds.has(server.serverId);
+            const toolFilter = toolFilters[server.serverId] ?? "";
+            const normalizedFilter = toolFilter.trim().toLowerCase();
+            const filteredTools = (tools ?? []).filter(
+              (tool) =>
+                !normalizedFilter ||
+                tool.name.toLowerCase().includes(normalizedFilter) ||
+                tool.description.toLowerCase().includes(normalizedFilter)
+            );
             const fetchToolsLabel = globallyUnavailable
               ? t("settings.mcpGloballyDisabled", {
                   defaultValue: "Disabled in global scope",
@@ -121,7 +186,12 @@ export function McpSettingsList({
                 <div className="system-prompt-item-actions">
                   <button
                     className="mcp-tools-count-button"
-                    onClick={() => onFetchTools(server)}
+                    onClick={() => {
+                      if (tools === undefined) {
+                        onFetchTools(server);
+                      }
+                      toggleServerExpanded(server);
+                    }}
                     type="button"
                     aria-label={fetchToolsLabel}
                     title={fetchToolsLabel}
@@ -173,6 +243,173 @@ export function McpSettingsList({
                     onRelease={onReleaseImportResource}
                   />
                 </div>
+
+                {isExpanded && (
+                  <div className="mcp-server-expanded">
+                    <div className="mcp-server-expanded-header">
+                      <div className="mcp-tool-details-search">
+                        <Search size={12} strokeWidth={1.9} />
+                        <input
+                          type="text"
+                          value={toolFilter}
+                          onChange={(event) =>
+                            setToolFilter(server.serverId, event.target.value)
+                          }
+                          placeholder={t("settings.mcpToolFilterPlaceholder", {
+                            defaultValue: "Filter tools by name or description",
+                          })}
+                        />
+                        {toolFilter && (
+                          <button
+                            type="button"
+                            className="mcp-tool-details-search-clear"
+                            onClick={() => setToolFilter(server.serverId, "")}
+                            title={t("settings.mcpToolFilterClear", {
+                              defaultValue: "Clear filter",
+                            })}
+                          >
+                            <X size={12} strokeWidth={1.9} />
+                          </button>
+                        )}
+                      </div>
+                      <div className="mcp-server-expanded-bulk">
+                        <button
+                          type="button"
+                          className="api-settings-form-btn secondary compact"
+                          onClick={() => onToggleAllTools(server, true)}
+                          disabled={
+                            isBusy || !server.enabled || globallyUnavailable
+                          }
+                        >
+                          {t("settings.mcpToolsEnableAll", {
+                            defaultValue: "Enable all",
+                          })}
+                        </button>
+                        <button
+                          type="button"
+                          className="api-settings-form-btn secondary compact"
+                          onClick={() => onToggleAllTools(server, false)}
+                          disabled={
+                            isBusy || !server.enabled || globallyUnavailable
+                          }
+                        >
+                          {t("settings.mcpToolsDisableAll", {
+                            defaultValue: "Disable all",
+                          })}
+                        </button>
+                      </div>
+                    </div>
+
+                    {isFetchingTools ? (
+                      <div className="mcp-server-expanded-state">
+                        <Loader2 size={14} className="spin" />
+                      </div>
+                    ) : !tools || tools.length === 0 ? (
+                      <div className="mcp-tool-details-empty">
+                        {t("settings.mcpToolDetailsEmpty", {
+                          defaultValue: "This server did not return any tools.",
+                        })}
+                      </div>
+                    ) : filteredTools.length === 0 ? (
+                      <div className="mcp-tool-details-empty">
+                        {t("settings.mcpToolFilterEmpty", {
+                          defaultValue: "No tools match the current filter.",
+                        })}
+                      </div>
+                    ) : (
+                      <div className="mcp-server-expanded-tools">
+                        {filteredTools.map((tool) => {
+                          const isToolExpanded =
+                            expandedToolNames[server.serverId]?.has(tool.name) ??
+                            false;
+                          const toolToggleLabel = tool.enabled
+                            ? t("settings.mcpToolDisable", {
+                                defaultValue: "Disable tool",
+                              })
+                            : t("settings.mcpToolEnable", {
+                                defaultValue: "Enable tool",
+                              });
+                          const detailsLabel = isToolExpanded
+                            ? t("settings.mcpToolDetailsCollapse", {
+                                defaultValue: "Collapse details",
+                              })
+                            : t("settings.mcpToolDetailsExpand", {
+                                defaultValue: "View tool details",
+                              });
+                          return (
+                            <div className="mcp-tool-row" key={tool.name}>
+                              <button
+                                type="button"
+                                className="mcp-tool-row-main"
+                                aria-expanded={isToolExpanded}
+                                aria-label={detailsLabel}
+                                title={detailsLabel}
+                                onClick={() =>
+                                  toggleToolExpanded(
+                                    server.serverId,
+                                    tool.name
+                                  )
+                                }
+                              >
+                                <Wrench size={14} strokeWidth={1.9} />
+                                <div className="mcp-tool-row-content">
+                                  <strong>{tool.name}</strong>
+                                  <span>{tool.description || "-"}</span>
+                                </div>
+                                <ChevronRight
+                                  size={13}
+                                  strokeWidth={1.9}
+                                  className="mcp-tool-row-chevron"
+                                />
+                              </button>
+                              <label
+                                className="toggle-switch"
+                                aria-label={toolToggleLabel}
+                                title={toolToggleLabel}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={tool.enabled}
+                                  disabled={
+                                    isBusy ||
+                                    !server.globalEnabled ||
+                                    !server.enabled
+                                  }
+                                  hidden
+                                  onChange={(event) =>
+                                    onToggleTool(
+                                      server,
+                                      tool,
+                                      event.target.checked
+                                    )
+                                  }
+                                />
+                                <span className="toggle-slider" />
+                              </label>
+                              {isToolExpanded && (
+                                <div className="mcp-tool-row-details">
+                                  {tool.description ? (
+                                    <p>{tool.description}</p>
+                                  ) : null}
+                                  <div className="mcp-tool-row-schema">
+                                    <span>
+                                      {t("settings.mcpToolSchemaTitle", {
+                                        defaultValue: "Input schema",
+                                      })}
+                                    </span>
+                                    <pre>
+                                      {formatToolSchema(tool.inputSchemaJson)}
+                                    </pre>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })

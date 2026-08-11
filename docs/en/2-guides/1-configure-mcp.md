@@ -6,7 +6,7 @@ MCP (Model Context Protocol) servers provide external tools to the AI. Snow App 
 
 | Entry | Storage and activation semantics |
 | --- | --- |
-| **Settings → MCP Settings** (settings page id: `mcp-settings`) | Manages the app database directly; supports global/project servers, server toggles, and project tool toggles. |
+| **Settings → MCP Settings** (settings page id: `mcp-settings`) | Manages the app database directly; supports global/project servers, and server and tool toggles (global + project). |
 | Agent `config` service | Global `settings.mcpServers` is synchronized into the app database and written to `~/.snow/settings.json`; project scope writes directly to the app database. |
 | Manual `~/.snow/settings.json` editing | Changes only the Snow CLI shared file; run **Sync Snow CLI MCP settings** in MCP Settings afterward. |
 
@@ -163,31 +163,43 @@ Snow App uses the same lifecycle strategy for `stdio` and HTTP:
 
 Up to four servers are discovered concurrently. One server's failure is logged and skipped without preventing tools from other servers from registering.
 
-## 7. Project server and tool disables
+## 7. Enablement conditions and tool disables
 
 An effective tool must satisfy all of these conditions:
 
 - The server configuration is not `enabled: false`;
 - For a global external server, the current project has not disabled that server;
+- The global scope has not disabled that tool (global tool toggle, effective for all projects);
 - The current project has not disabled that exact full public tool name;
 - A project-owned server is itself enabled. Project-owned servers do not use the global-server project toggle, but their individual tools can still be disabled.
 
-A server appearing in Settings therefore does not guarantee that its tools enter the current Agent context. After changing project toggles, fetch tools again and use the actual full name in a sub-agent's `toolsJson` or a Skill's `allowed-tools`.
+A server appearing in Settings therefore does not guarantee that its tools enter the current Agent context. After changing global or project toggles, fetch tools again and use the actual full name in a sub-agent's `toolsJson` or a Skill's `allowed-tools`.
 
-## 8. Privacy, credentials, and supply-chain risk
+## 8. Tool-level toggles
 
-### 8.1 Credentials are not automatically safe
+The MCP Settings panel supports **tool-level toggles**: each server row shows a tool-count button; clicking it expands that server's tool list.
+
+- Each tool can be enabled/disabled independently; **global-scope** toggles apply to every project, **project-scope** toggles apply only to the current project, and both share the same storage as the **Project MCP** popup in the chat composer;
+- **Enable all / Disable all** batch buttons and search filtering by name/description are provided; clicking a tool row shows its details (full description and parameter schema);
+- Disable semantics are a **blacklist**: everything is enabled by default and only disabled tools enter the blacklist;
+- Server-level and tool-level toggles are an **AND** relationship: when a server is disabled, all of its tools are unavailable even if their tool-level toggles are still enabled.
+
+Tool-level toggles (global and project) are managed by the MCP Settings panel and stored in the app database; they are **not written to settings.json** and are not configured through the `config` service (`config-list`/`config-get`/`config-set`) — UI only.
+
+## 9. Privacy, credentials, and supply-chain risk
+
+### 9.1 Credentials are not automatically safe
 
 - `env` and `headers` are stored as configuration and sent to the external process or HTTP service;
 - `config` guarantees masking for dedicated sensitive keys such as `apiKey` and `visionApiKey`, but `settings.mcpServers` as a whole is not a sensitive key. **Do not assume MCP `env` or `headers` are automatically hidden in config reads**;
 - Never put tokens in documentation, chat, screenshots, repositories, or shareable project configuration. Prefer controlled environment injection, short-lived least-privilege tokens, and server-side secret management;
 - Do not ask the agent to echo a credential to “verify” it. Use a read-only health check to verify authorization.
 
-### 8.2 Tool-result privacy
+### 9.2 Tool-result privacy
 
 Snow App masks a tool result only when privacy settings are enabled **and** that exact full tool name is selected in the tool-result masking list. API masking falls back to local rules on failure. An external MCP tool not selected there is not automatically masked. Limit query scope for database, filesystem, log, and SaaS tools and minimize sensitive data before it reaches model context.
 
-### 8.3 Trust commands and servers
+### 9.3 Trust commands and servers
 
 - A stdio command runs with the current user's permissions and can access files and networks available to that user;
 - An HTTP service receives tool arguments and may log requests;
@@ -195,13 +207,13 @@ Snow App masks a tool result only when privacy settings are enabled **and** that
 - Avoid untrusted `npx -y` packages, unknown scripts, and plaintext HTTP;
 - Disable write/delete tools first and expose only the minimum set needed for the task.
 
-## 9. Actual temporary-backup semantics
+## 10. Actual temporary-backup semantics
 
 For global file-backed config writes, Snow App creates a pre-write backup under `~/.snow/.config-backups/` and atomically replaces the target file. **After a successful write, that backup is removed immediately**. It is a temporary write-safety net, not dependable version history. A failed or concurrent operation may leave a backup; cleanup keeps at most 10 leftovers per file.
 
 Project MCP uses a database full-replace flow and should not rely on the file backup above. Before a major change, use `config-get` to preserve an approved, non-sensitive copy. Do not copy plaintext credentials into chat or documentation.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
@@ -217,7 +229,7 @@ Project MCP uses a database full-replace flow and should not rely on the file ba
 | `Transport closed` | Snow App reconnects with legacy mode and retries once; persistent failures require child-process, server-log, or SDK investigation. |
 | Credentials appear in a config read | MCP `env`/`headers` are not guaranteed to be masked; rotate exposed credentials and switch to secure injection. |
 
-## 11. References
+## 12. References
 
 - [settings.json reference](../3-reference/1-settings-json-reference.md)
 - [Built-in tools reference](../3-reference/2-builtin-tools-reference.md)

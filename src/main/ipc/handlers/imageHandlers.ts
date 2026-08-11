@@ -1,6 +1,6 @@
 import { ipcMain } from "electron";
 import { readFile } from "fs/promises";
-import { dirname, join, normalize, sep } from "path";
+import { join, normalize, sep } from "path";
 import type { NativeBridge } from "../../native/types";
 
 /**
@@ -30,17 +30,16 @@ export const registerImageHandlers = (native: NativeBridge): void => {
         return null;
       }
       try {
-        const storageInfo = await native.initializeAppStorage();
+        const uploadRoot = await native.getUploadRoot();
         let filePath: string;
         if (isAbsolute) {
           filePath = normalize(normalized);
         } else {
           // normalized 已带 upload/ 前缀（如 upload/2026-08-05/xxx.jpg），
-          // 必须基于数据库目录拼接，不能再拼一次 uploadRoot，否则会出现
-          // uploadRoot\upload\... 双重前缀导致文件读不到（历史 bug）。
-          const dbDir = dirname(storageInfo.databasePath);
-          const uploadRoot = join(dbDir, "upload");
-          filePath = normalize(join(dbDir, normalized));
+          // 直接基于上传根目录拼接（根目录已含用户自定义或默认位置，不能再拼
+          // 一次 uploadRoot，否则会出现 uploadRoot\upload\... 双重前缀导致
+          // 文件读不到（历史 bug）。
+          filePath = normalize(join(uploadRoot, normalized));
           // 二次校验：解析后的路径必须仍在 upload 目录内
           const rootPrefix = uploadRoot.endsWith(sep)
             ? uploadRoot

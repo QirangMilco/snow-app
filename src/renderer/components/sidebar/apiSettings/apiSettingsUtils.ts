@@ -56,6 +56,13 @@ export const extractGoogleSearchFromConfigJson = (
   configJson: string
 ): boolean => readSnowcfg(configJson).googleSearch === true;
 
+/** 读取 1M 上下文开关（snowcfg.enable1mContext）。
+ *  开启后所有 anthropic 请求都会携带 context-1m beta 头，
+ *  与模型名 `[1M]` 标记互为兜底（任一成立即生效）。 */
+export const extractOneMContextFromConfigJson = (
+  configJson: string
+): boolean => readSnowcfg(configJson).enable1mContext === true;
+
 /** 读取 gemini 视觉（图片模型）渠道的谷歌搜索联网开关（snowcfg.visionGoogleSearch） */
 export const extractVisionGoogleSearchFromConfigJson = (
   configJson: string
@@ -242,9 +249,11 @@ export const emptyApiConfigForm = (
   autoCompressThreshold: String(DEFAULT_AUTO_COMPRESS_THRESHOLD_PERCENT),
   maxRetries: "5",
   retryBaseDelayMs: "3000",
+  partialRetryMaxChars: "1000",
   systemPromptIdsJson: "",
   customHeaderSchemeId: "",
   thinkingValue: DEFAULT_THINKING_VALUE,
+  oneMContext: false,
   responsesVerbosity: "",
   responsesFastMode: false,
   googleSearch: false,
@@ -301,6 +310,7 @@ export function toApiConfigPayload(
       responsesVerbosity: data.responsesVerbosity || undefined,
       responsesFastMode: data.responsesFastMode,
       googleSearch: data.googleSearch,
+      enable1mContext: data.oneMContext,
       visionGoogleSearch: data.visionGoogleSearch,
       visionThinking: data.visionThinkingEnabled
         ? {
@@ -335,6 +345,7 @@ export function toApiConfigPayload(
     autoCompressThreshold: autoCompressThresholdTokens,
     maxRetries: parseOptionalInteger(data.maxRetries),
     retryBaseDelayMs: parseOptionalInteger(data.retryBaseDelayMs),
+    partialRetryMaxChars: parseOptionalInteger(data.partialRetryMaxChars),
     systemPromptIdsJson: data.systemPromptIdsJson,
     customHeaderSchemeId: data.customHeaderSchemeId,
     configJson,

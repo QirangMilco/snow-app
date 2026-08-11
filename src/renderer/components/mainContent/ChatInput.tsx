@@ -9,6 +9,7 @@ export const ChatInput = ({
   projectName,
   conversationId,
   onSend,
+  onNavigateToView,
   isStreaming = false,
   isAborting = false,
   onAbort,
@@ -16,6 +17,8 @@ export const ChatInput = ({
   draftToRestore = null,
   autoSendToken = 0,
   onDraftRestored,
+  autoSendOverride = null,
+  onAutoSendOverrideConsumed,
   saveInputDraft,
   getInputDraft,
   clearInputDraft,
@@ -51,6 +54,8 @@ export const ChatInput = ({
     draftToRestore,
     autoSendToken,
     onDraftRestored,
+    autoSendOverride,
+    onAutoSendOverrideConsumed,
     saveInputDraft,
     getInputDraft,
     clearInputDraft,
@@ -63,6 +68,7 @@ export const ChatInput = ({
       projectName={projectName}
       btwConversationId={conversationId}
       btwOnSendToChat={(message) => onSend?.(message, {})}
+      onNavigateToView={onNavigateToView}
       {...controller}
       tokenUsage={tokenUsage}
       pendingMessages={pendingMessages}

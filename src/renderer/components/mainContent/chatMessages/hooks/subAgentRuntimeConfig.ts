@@ -9,6 +9,9 @@ export type SubAgentRuntimeConfig = {
   apiSource: "parent" | "agent";
   apiProfile: string;
   model: string;
+  /** Inherited from the parent conversation's per-send override (scheduled
+   *  tasks). Undefined = use the profile's configured thinking strength. */
+  thinkingStrength?: string;
   systemPrompt: string;
   toolsJson: string;
 };
@@ -18,6 +21,7 @@ export type ResolveSubAgentRuntimeConfigInput = {
   apiConfigs: readonly ApiConfigRecord[];
   parentApiProfile?: string;
   parentModel?: string;
+  parentThinkingStrength?: string;
 };
 
 const normalizeNonEmpty = (value: string | undefined): string =>
@@ -46,6 +50,7 @@ export const resolveSubAgentRuntimeConfig = ({
   apiConfigs,
   parentApiProfile,
   parentModel,
+  parentThinkingStrength,
 }: ResolveSubAgentRuntimeConfigInput): SubAgentRuntimeConfig => {
   const agentId = normalizeNonEmpty(config.agentId);
   const agentName = normalizeNonEmpty(config.name);
@@ -96,6 +101,7 @@ export const resolveSubAgentRuntimeConfig = ({
     apiSource,
     apiProfile,
     model,
+    thinkingStrength: normalizeNonEmpty(parentThinkingStrength) || undefined,
     systemPrompt: config.systemPrompt.trim(),
     toolsJson: config.toolsJson,
   };

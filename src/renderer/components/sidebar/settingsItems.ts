@@ -16,6 +16,7 @@ import {
   PawPrint,
   Plug,
   ScrollText,
+  Settings2,
   Sparkles,
   ShieldAlert,
   Terminal,
@@ -206,6 +207,13 @@ export const SETTINGS_ITEMS: SettingsItem[] = [
     labelKey: "settings.systemLogs",
     defaultLabel: "System logs",
     view: "system-logs",
+  },
+  {
+    id: "general",
+    icon: Settings2,
+    labelKey: "settings.generalSettings",
+    defaultLabel: "General settings",
+    view: "general-settings",
   },
 ];
 

@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   SmilePlus,
   ListChecks,
+  Archive,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -30,6 +31,8 @@ type ChatItemMenuProps = {
   /** 确认删除；deleteImages=true 表示同时级联删除图库图片 */
   onDelete: (deleteImages: boolean) => void;
   onExport: (format: ExportFormat) => void;
+  /** 归档会话（置顶会话不提供归档入口，由父组件控制不传入） */
+  onArchive?: () => void;
   onEnterMultiSelect?: () => void;
   onOpenChange?: (isOpen: boolean) => void;
   /** 右键菜单锚点（光标位置）：非空时菜单以该点定位并保持打开 */
@@ -47,6 +50,7 @@ export function ChatItemMenu({
   onSetEmoji,
   onDelete,
   onExport,
+  onArchive,
   onEnterMultiSelect,
   onOpenChange,
   contextMenuAnchor = null,
@@ -208,6 +212,12 @@ export function ChatItemMenu({
   const handleMultiSelect = (): void => {
     onEnterMultiSelect?.();
     setIsButtonOpen(false);
+  };
+
+  const handleArchive = (): void => {
+    onArchive?.();
+    setIsButtonOpen(false);
+    onContextMenuCloseRef.current?.();
   };
 
   const handleDeleteClick = (): void => {
@@ -377,6 +387,21 @@ export function ChatItemMenu({
                       className="chat-item-menu-sub-arrow"
                     />
                   </button>
+                  {onArchive ? (
+                    <button
+                      type="button"
+                      className="chat-item-menu-item"
+                      onClick={handleArchive}
+                      role="menuitem"
+                    >
+                      <Archive size={13} />
+                      <span>
+                        {t("sidebar.chatActionArchive", {
+                          defaultValue: "Archive",
+                        })}
+                      </span>
+                    </button>
+                  ) : null}
                   {onEnterMultiSelect ? (
                     <button
                       type="button"

@@ -28,6 +28,16 @@ tools of the built-in `browser` server and typical workflows.
 
 ## 2. Typical Workflows
 
+```mermaid
+flowchart TD
+    A[browser-create instance<br/>returns instanceId] --> B[browser-navigate to the page]
+    B --> C[Inspect page state<br/>snapshot / ax / console / network]
+    C --> D[Interact with the page<br/>click / type / wait / select / hover]
+    D --> E{More actions needed?}
+    E -- yes --> B
+    E -- no --> F[Screenshot to confirm + close<br/>screenshot / close]
+```
+
 ### 2.1 Open a page
 
 ```text

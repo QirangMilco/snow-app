@@ -60,6 +60,10 @@ export type GitLogEntry = {
   message: string;
   refs: string;
   parents: string[];
+  /** 本次提交新增的行数（来自 git log --shortstat）。 */
+  additions: number;
+  /** 本次提交删除的行数（来自 git log --shortstat）。 */
+  deletions: number;
 };
 export type GitCommitFile = {
   path: string;

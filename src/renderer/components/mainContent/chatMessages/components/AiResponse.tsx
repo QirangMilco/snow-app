@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { useI18n } from "../../../../i18n";
 import { AiResponseActions } from "./AiResponseActions";
@@ -69,6 +69,9 @@ export const AiResponse = memo(
     isRetrying = false,
     retryAttempt,
     retryError,
+    incompleteVariant,
+    interruptionReason,
+    recoveryOutcome,
     showActions = true,
     toolCalls = [],
     hookExecutions = [],
@@ -86,6 +89,36 @@ export const AiResponse = memo(
     const normalizedSummary = summary.trim();
     const summaryClassName = "ai-message-summary";
     const hasToolCalls = toolCalls.length > 0;
+    const incompleteVariantMessage =
+      incompleteVariant === "partial_content"
+        ? t("chat.incomplete.variant.partialContent")
+        : incompleteVariant === "thinking_only"
+          ? t("chat.incomplete.variant.thinkingOnly")
+          : incompleteVariant === "tool_call"
+            ? t("chat.incomplete.variant.toolCall")
+            : incompleteVariant === "empty"
+              ? t("chat.incomplete.variant.empty")
+              : null;
+    const incompleteReasonMessage =
+      interruptionReason === "unexpected_eof"
+        ? t("chat.incomplete.reason.unexpectedEof")
+        : interruptionReason === "read_error"
+          ? t("chat.incomplete.reason.readError")
+          : interruptionReason === "idle_timeout"
+            ? t("chat.incomplete.reason.idleTimeout")
+            : interruptionReason === "explicit_incomplete"
+              ? t("chat.incomplete.reason.explicitIncomplete")
+              : interruptionReason === "output_limit"
+                ? t("chat.incomplete.reason.outputLimit")
+                : null;
+    const recoveryOutcomeMessage =
+      recoveryOutcome === "partial_threshold"
+        ? t("chat.incomplete.outcome.partialThreshold")
+        : recoveryOutcome === "retry_exhausted"
+          ? t("chat.incomplete.outcome.retryExhausted")
+          : recoveryOutcome === "non_retriable"
+            ? t("chat.incomplete.outcome.nonRetriable")
+            : null;
 
     const sensitiveCommandAuthorizations = useMemo(
       () =>
@@ -242,9 +275,37 @@ export const AiResponse = memo(
           ) : isStreaming ? (
             <StreamCursor />
           ) : null}
+
+          {/* 6. Persisted incomplete notice */}
+          {incompleteVariantMessage ? (
+            <div className="response-incomplete-notice" role="status">
+              <TriangleAlert
+                aria-hidden="true"
+                className="response-incomplete-notice-icon"
+                size={16}
+                strokeWidth={1.8}
+              />
+              <div className="response-incomplete-notice-content">
+                <strong className="response-incomplete-notice-title">
+                  {t("chat.incomplete.title")}
+                </strong>
+                <span>{incompleteVariantMessage}</span>
+                {incompleteReasonMessage ? (
+                  <span className="response-incomplete-notice-detail">
+                    {incompleteReasonMessage}
+                  </span>
+                ) : null}
+                {recoveryOutcomeMessage ? (
+                  <span className="response-incomplete-notice-detail">
+                    {recoveryOutcomeMessage}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {/* 6. Actions */}
+        {/* 7. Actions */}
         {showActions && conversationId && onFork ? (
           <AiResponseActions
             content={normalizedSummary}

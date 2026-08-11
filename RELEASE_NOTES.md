@@ -1,5 +1,24 @@
 # Release Notes
 
+## v0.1.24
+
+## New Features
+
+- **Session Archiving**: Conversations can be archived to a separate cold database — archive, restore, and delete sessions without bloating the main database.
+- **Custom Storage Directories**: Checkpoint and upload directories are now configurable, with migration of existing data to the new locations.
+- **Sidebar Browser Multi-Tab**: The sidebar browser panel supports multiple tabs for easier multi-page work.
+- **API Configuration Guide Bar**: When no API is configured, a guide bar appears to walk users through the setup.
+- **Image Library Lightbox Details**: The lightbox detail panel is now collapsible/expandable.
+- **Pet Review Status**: Pet turn tracking was refactored and gained a review status.
+
+## Improvements
+
+- Command search enhanced in the chat input command panel; imagegen MCP server now exposes its name; unused imports removed.
+
+## Bug Fixes
+
+- Empty-content detection in the chat input no longer misfires.
+
 ## v0.1.23
 
 ## New Features
@@ -25,6 +44,7 @@
 - Ctrl/Cmd+click on a message link no longer navigates the current window (frontend reload) and stops streaming/generation previews; links now open in the app browser panel.
 - ImageGen settings toggles were invisible due to a slider class-name mismatch; the class names are aligned.
 - Responses API failed terminal events are handled correctly (event/stream/retry paths).
+- **Mid-stream retry**: Streaming responses interrupted mid-stream (network `terminated` / non-user-cancel `aborted`) now retry automatically based on what was already received — partial tool calls always retry (a truncated tool call is unusable), short partial text retries, and long partial text (≥ 1000 chars) is kept as an incomplete-but-usable result to avoid double token cost. User cancellation and retry-budget exhaustion keep the previous keep-partial behavior. Covers Chat Completions / Anthropic / Responses / Gemini streams.
 - The Git tab stays visible when it is the only open tab.
 - Chat deletion confirmation dialog is reused consistently (single/batch).
 

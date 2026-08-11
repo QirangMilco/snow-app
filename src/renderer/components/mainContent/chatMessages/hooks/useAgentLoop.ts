@@ -13,9 +13,9 @@ import {
   formatMessageTime,
   formatToolResultsContent,
   getErrorMessage,
-  isResponseErrorStatus,
   parseToolCalls,
 } from "../utils/conversationHelpers";
+import { resolveResponseDisposition } from "../utils/responseDisposition";
 import {
   appendHookExecutionToMessage,
   buildHookExecRecord,
@@ -145,7 +145,19 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
       }
 
       const isFirstMessage = ctx.activeConversationIdRef.current === undefined;
-      const sessionDirId = existingRef?.directoryId ?? ctx.directoryId;
+      // Consume the one-shot target project set by handleNewChat(directoryId)
+      // (e.g. a scheduled task firing for its bound project) so the new
+      // PENDING session lands in the task's project instead of the currently
+      // active one. Cleared immediately — it applies to this send only.
+      const pendingDirId = ctx.pendingDirectoryIdRef.current;
+      ctx.pendingDirectoryIdRef.current = undefined;
+      const sessionDirId =
+        existingRef?.directoryId ?? pendingDirId ?? ctx.directoryId;
+      // One-shot scheduled-task name (set by buildFromContent) consumed here so
+      // the new session can show a "triggered by scheduled task" banner in the
+      // message list. Cleared immediately — it applies to this send only.
+      const pendingTaskName = ctx.pendingTaskNameRef.current;
+      ctx.pendingTaskNameRef.current = undefined;
 
       // Reset only this session's approval for the new user task. Other
       // conversations may still be executing their independently approved plan.
@@ -202,6 +214,15 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
       };
 
       ctx.updateSessionField(sessionKey, "isStreaming", true);
+      // Stamp the session with the scheduled-task trigger info (if any) so the
+      // message list can render a "triggered by task" banner. Only on the
+      // first message — a task firing always starts a brand-new conversation.
+      if (isFirstMessage && pendingTaskName) {
+        ctx.updateSessionField(sessionKey, "triggeredByTask", {
+          name: pendingTaskName,
+          triggeredAt: new Date().toISOString(),
+        });
+      }
       // Reset per-run and per-iteration probes before the first model request.
       resetRunStreamMetrics(ctx, sessionKey);
       // Anchor the wall-clock start of the accumulating elapsed timer once
@@ -283,6 +304,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         requestToolAuthorizations,
         parentApiProfile: options.apiProfile,
         parentModel: options.model,
+        parentThinkingStrength: options.thinkingStrength,
         planApprovedSessionKeysRef,
       });
 
@@ -341,6 +363,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
             messages: requestMessages,
             model: options.model,
             apiProfile: options.apiProfile,
+            thinkingStrength: options.thinkingStrength,
             conversationId: currentConversationId,
             directoryId: sessionDirId,
             checkpointId,
@@ -364,7 +387,8 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         }
 
         const response = await streamPromise;
-        const responseFailed = isResponseErrorStatus(response.status);
+        const responseDisposition = resolveResponseDisposition(response);
+        const responseFailed = responseDisposition.kind === "error";
 
         const ref = ctx.sessionsRefData.current.get(effectiveKey);
         if (ref) {
@@ -509,7 +533,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           if (
             isFirstMessage &&
             !summaryTriggered &&
-            !responseFailed
+            responseDisposition.kind === "complete"
           ) {
             summaryTriggered = true;
             const summaryConvId = response.conversationId;
@@ -572,11 +596,45 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
           );
         }
 
-        // Parse tool calls early: the auto-compaction gate below must know
-        // whether the agent loop will actually continue before compacting.
-        // (Marking the first call as running happens later in the tool
-        // executor; parsing itself is side-effect free.)
-        const toolCalls = parseToolCalls(response.toolCallsJson);
+        // A final incomplete-like response is terminal for this model
+        // iteration. Rust owns transport retries, so the renderer only keeps
+        // safe display data and must not parse tools, compact, or recurse.
+        if (responseDisposition.kind === "incomplete") {
+          ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
+            currentMessages.map((currentMessage) =>
+              currentMessage.id === currentAssistantMessageId
+                ? {
+                    ...currentMessage,
+                    content:
+                      response.content || currentMessage.content || "",
+                    thinking:
+                      response.thinking ||
+                      currentMessage.thinking ||
+                      undefined,
+                    timestamp: formatMessageTime(),
+                    status: "incomplete" as const,
+                    incompleteVariant: responseDisposition.variant,
+                    interruptionReason: responseDisposition.reason,
+                    recoveryOutcome: responseDisposition.recoveryOutcome,
+                    responseId: response.id || undefined,
+                    model: response.model || options.model,
+                    toolCalls: undefined,
+                    isRetrying: false,
+                    retryAttempt: undefined,
+                    retryError: undefined,
+                  }
+                : currentMessage
+            )
+          );
+          return;
+        }
+
+        // Only complete responses may expose executable tool calls. Error
+        // responses keep their existing terminal path with an empty tool list.
+        const toolCalls =
+          responseDisposition.kind === "complete"
+            ? parseToolCalls(response.toolCallsJson)
+            : [];
         const visibleToolCalls = toolCalls;
 
         // Auto-compaction check: when the active API config has
@@ -716,7 +774,7 @@ export const useAgentLoop = (params: UseAgentLoopParams) => {
         }
 
         // Failed responses still migrate the session, but remain visible
-        // locally as an error. "incomplete" responses are partial but usable.
+        // locally as an error. Complete responses are finalized as sent.
         ctx.updateSessionMessages(effectiveKey, (currentMessages) =>
           currentMessages.map((currentMessage) => {
             if (currentMessage.id !== currentAssistantMessageId) {

@@ -46,6 +46,14 @@ For a first-time setup, complete these steps in order:
 3. **Optional — configure a proxy**: open Settings → Proxy & Browser if your network requires one;
 4. **Optional — configure MCP servers**: open Settings → MCP Settings to add external tool services.
 
+```mermaid
+flowchart LR
+    A[Install<br/>Windows / macOS / Linux] --> B[First run<br/>learn the three-pane layout]
+    B --> C[Basic configuration<br/>API key → workspace directory]
+    C --> D[Optional configuration<br/>proxy / MCP servers]
+    D --> E[First conversation<br/>send a message and explore]
+```
+
 | Task | Guide |
 | --- | --- |
 | Configure MCP servers | [Configure MCP Servers](2-guides/1-configure-mcp.md) |

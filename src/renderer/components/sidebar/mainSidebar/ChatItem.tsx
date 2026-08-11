@@ -30,6 +30,10 @@ type ChatItemProps = {
   /** 确认删除；deleteImages=true 表示同时级联删除图库图片 */
   onDelete: (deleteImages: boolean) => void;
   onExport: (format: ExportFormat) => void;
+  /** 归档会话（置顶会话不传入，不提供归档入口） */
+  onArchive?: () => void;
+  /** 归档进行中（含 VACUUM 收缩文件阶段）：菜单按钮显示 loading，防止重复操作 */
+  isArchiving?: boolean;
   onEnterMultiSelect?: () => void;
   onToggleSelect?: () => void;
   onSelect?: () => void;
@@ -51,6 +55,8 @@ export function ChatItem({
   onSetEmoji,
   onDelete,
   onExport,
+  onArchive,
+  isArchiving = false,
   onEnterMultiSelect,
   onToggleSelect,
   onSelect,
@@ -136,6 +142,9 @@ export function ChatItem({
   };
 
   const isPinned = conversation.status === "pin";
+  // 运行中的会话（流式输出中或等待输入）不提供操作菜单，
+  // 避免运行中的会话被删除造成数据混乱
+  const isRunning = isStreaming || isAttentionRequired;
   const isForked = conversation.forkedFromConversationId !== "";
   const hasEmoji = conversation.emoji.trim() !== "";
   const displayName =
@@ -155,13 +164,13 @@ export function ChatItem({
   const statusLabel = showAttentionStatus
     ? t("sidebar.chatStatusNeedsAction", { defaultValue: "Needs action" })
     : showCompletedStatus
-      ? t("sidebar.chatStatusCompleted", { defaultValue: "Completed" })
-      : null;
+    ? t("sidebar.chatStatusCompleted", { defaultValue: "Completed" })
+    : null;
   const statusDescription = showAttentionStatus
     ? t("sidebar.chatStatusWaitingForReviewOrInput", {
         defaultValue: "Waiting for review or input",
       })
-    : (statusLabel ?? "");
+    : statusLabel ?? "";
 
   const now = new Date();
   const parsedDate = parseDbTimestamp(conversation.updatedAt);
@@ -184,8 +193,8 @@ export function ChatItem({
 
   // 右键 == 三点按钮菜单：在光标位置弹出同一份操作菜单
   const handleContextMenu = (event: React.MouseEvent): void => {
-    // 编辑/多选模式下不拦截右键，保留系统菜单（输入框复制粘贴等）
-    if (isEditing || isMultiSelectMode) {
+    // 编辑/多选/运行中模式下不拦截右键，保留系统菜单（输入框复制粘贴等）
+    if (isEditing || isMultiSelectMode || isRunning) {
       return;
     }
     event.preventDefault();
@@ -246,10 +255,10 @@ export function ChatItem({
             showAttentionStatus
               ? " attention-required"
               : showStreamingStatus
-                ? " streaming"
-                : showCompletedStatus
-                  ? " completed"
-                  : ""
+              ? " streaming"
+              : showCompletedStatus
+              ? " completed"
+              : ""
           }${showDefaultIcon && isForked ? " forked" : ""}${
             showDefaultIcon && hasSubAgents ? " has-sub-agents" : ""
           }${showDefaultIcon && hasEmoji ? " has-emoji" : ""}`}
@@ -333,26 +342,37 @@ export function ChatItem({
           </>
         )}
       </div>
-      {!isEditing && !isMultiSelectMode && (
+      {!isEditing && !isMultiSelectMode && !isRunning && (
         <span
           className="chat-item-menu-wrapper"
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          <ChatItemMenu
-            conversationId={conversation.conversationId}
-            isPinned={isPinned}
-            emoji={conversation.emoji}
-            onPin={onPin}
-            onRename={handleRenameStart}
-            onSetEmoji={onSetEmoji}
-            onDelete={onDelete}
-            onExport={onExport}
-            onEnterMultiSelect={onEnterMultiSelect}
-            onOpenChange={setIsMenuOpen}
-            contextMenuAnchor={contextMenuAnchor}
-            onContextMenuClose={() => setContextMenuAnchor(null)}
-          />
+          {isArchiving ? (
+            <Loader2
+              size={14}
+              className="spin"
+              aria-label={t("sidebar.chatActionArchiving", {
+                defaultValue: "Archiving...",
+              })}
+            />
+          ) : (
+            <ChatItemMenu
+              conversationId={conversation.conversationId}
+              isPinned={isPinned}
+              emoji={conversation.emoji}
+              onPin={onPin}
+              onRename={handleRenameStart}
+              onSetEmoji={onSetEmoji}
+              onDelete={onDelete}
+              onExport={onExport}
+              onArchive={onArchive}
+              onEnterMultiSelect={onEnterMultiSelect}
+              onOpenChange={setIsMenuOpen}
+              contextMenuAnchor={contextMenuAnchor}
+              onContextMenuClose={() => setContextMenuAnchor(null)}
+            />
+          )}
         </span>
       )}
     </div>

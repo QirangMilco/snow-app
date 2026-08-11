@@ -466,6 +466,31 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
     }
   );
 
+  ipcMain.handle(
+    "scheduled-task:run-pre-script",
+    (
+      _event,
+      command: unknown,
+      cwd: unknown,
+      timeoutMs: unknown,
+      envJson: unknown
+    ) => {
+      if (typeof command !== "string" || !command.trim()) {
+        throw new Error("Pre-script command is required");
+      }
+      if (typeof cwd !== "string" || !cwd.trim()) {
+        throw new Error("Pre-script cwd is required");
+      }
+      const timeout =
+        typeof timeoutMs === "number" && Number.isFinite(timeoutMs)
+          ? Math.round(timeoutMs)
+          : 60_000;
+      const env =
+        typeof envJson === "string" ? envJson : "{}";
+      return native.runPreScript(command.trim(), cwd.trim(), timeout, env);
+    }
+  );
+
   ipcMain.handle("mcp:list-tools", () => native.listMcpTools());
   ipcMain.handle("skills:list", (_event, projectId: unknown) => {
     if (
@@ -634,6 +659,71 @@ export const registerNativeHandlers = (native: NativeBridge): void => {
       return native.setMcpProjectToolEnabled(
         projectId.trim(),
         toolName.trim(),
+        enabled
+      );
+    }
+  );
+  ipcMain.handle(
+    "mcp:set-tool-enabled",
+    (_event, toolName: unknown, enabled: unknown) => {
+      if (typeof toolName !== "string" || !toolName.trim()) {
+        throw new Error("MCP tool name is required");
+      }
+      if (typeof enabled !== "boolean") {
+        throw new Error("MCP tool enabled state must be a boolean");
+      }
+
+      return native.setMcpToolEnabled(toolName.trim(), enabled);
+    }
+  );
+  ipcMain.handle(
+    "mcp:set-tools-enabled",
+    (_event, toolNames: unknown, enabled: unknown) => {
+      if (
+        !Array.isArray(toolNames) ||
+        toolNames.length === 0 ||
+        toolNames.some(
+          (name) => typeof name !== "string" || !name.trim()
+        )
+      ) {
+        throw new Error(
+          "MCP tool names must be a non-empty array of strings"
+        );
+      }
+      if (typeof enabled !== "boolean") {
+        throw new Error("MCP tool enabled state must be a boolean");
+      }
+
+      return native.setMcpToolsEnabled(
+        toolNames.map((name) => name.trim()),
+        enabled
+      );
+    }
+  );
+  ipcMain.handle(
+    "mcp:set-project-tools-enabled",
+    (_event, projectId: unknown, toolNames: unknown, enabled: unknown) => {
+      if (typeof projectId !== "string" || !projectId.trim()) {
+        throw new Error("Project id is required");
+      }
+      if (
+        !Array.isArray(toolNames) ||
+        toolNames.length === 0 ||
+        toolNames.some(
+          (name) => typeof name !== "string" || !name.trim()
+        )
+      ) {
+        throw new Error(
+          "MCP tool names must be a non-empty array of strings"
+        );
+      }
+      if (typeof enabled !== "boolean") {
+        throw new Error("MCP tool enabled state must be a boolean");
+      }
+
+      return native.setMcpProjectToolsEnabled(
+        projectId.trim(),
+        toolNames.map((name) => name.trim()),
         enabled
       );
     }

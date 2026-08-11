@@ -266,8 +266,11 @@ async fn review_results(query: &str, results: &[SearchResult]) -> Result<ReviewO
         ));
     }
 
-    let retry_options =
-        RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
+    let retry_options = RetryOptions::from_config(
+        api_config.max_retries,
+        api_config.retry_base_delay_ms,
+        api_config.partial_retry_max_chars,
+    );
 
     let review_text = match api_config.request_method.as_str() {
         "responses" => {
@@ -416,6 +419,15 @@ async fn review_via_anthropic(
         ));
     }
 
+    // `[1M]` 后缀是 Claude Code 生态的本地上下文能力声明：发送前剥离，
+    // 并附带 context-1m beta 头显式启用 1M 上下文（与主流程一致）。
+    // 生效条件：模型名带标记，或档案开关 snowcfg.enable1mContext 开启。
+    let enable_one_m_context = crate::api::anthropic::payload::has_one_m_context_marker(model)
+        || crate::api::anthropic::payload::config_json_enables_one_m_context(
+            &api_config.config_json,
+        );
+    let model = crate::api::anthropic::payload::strip_one_m_context_marker(model);
+
     let user_content = build_review_user_content(query, results);
     let payload = json!({
         "model": model,
@@ -430,7 +442,7 @@ async fn review_via_anthropic(
     let body: Value = send_review_request_with_retry(
         &client,
         &endpoint,
-        build_anthropic_header_map(api_key, custom_headers)?,
+        build_anthropic_header_map(api_key, custom_headers, enable_one_m_context)?,
         &payload,
         retry_options,
     )
@@ -817,6 +829,7 @@ fn build_header_map(api_key: &str, custom_headers: &HashMap<String, String>) -> 
 fn build_anthropic_header_map(
     api_key: &str,
     custom_headers: &HashMap<String, String>,
+    enable_one_m_context: bool,
 ) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -828,6 +841,38 @@ fn build_anthropic_header_map(
         })?,
     );
 
+    // 1M 上下文：模型名带 `[1M]` 标记时注入 context-1m beta 头（与主流程
+    // api/anthropic/stream.rs 的 build_header_map 保持一致），并与用户
+    // 自定义的 anthropic-beta 头逗号合并，避免互相覆盖。
+    let mut reserved_keys: Vec<&str> = vec![
+        "content-type",
+        "accept-encoding",
+        "x-api-key",
+        "authorization",
+    ];
+    if enable_one_m_context {
+        reserved_keys.push("anthropic-beta");
+        let user_beta = custom_headers
+            .iter()
+            .find(|(key, _)| key.trim().eq_ignore_ascii_case("anthropic-beta"))
+            .map(|(_, value)| value.trim())
+            .filter(|value| !value.is_empty());
+        let beta_value = match user_beta {
+            Some(extra) => format!(
+                "{},{}",
+                crate::api::anthropic::payload::ANTHROPIC_ONE_M_CONTEXT_BETA,
+                extra
+            ),
+            None => crate::api::anthropic::payload::ANTHROPIC_ONE_M_CONTEXT_BETA.to_string(),
+        };
+        headers.insert(
+            HeaderName::from_static("anthropic-beta"),
+            HeaderValue::from_str(&beta_value).map_err(|error| {
+                Error::from_reason(format!("Invalid anthropic-beta header value: {}", error))
+            })?,
+        );
+    }
+
     for (key, value) in custom_headers {
         let trimmed_key = key.trim();
         let trimmed_value = value.trim();
@@ -835,9 +880,9 @@ fn build_anthropic_header_map(
             continue;
         }
 
-        if trimmed_key.eq_ignore_ascii_case("content-type")
-            || trimmed_key.eq_ignore_ascii_case("accept-encoding")
-            || trimmed_key.eq_ignore_ascii_case("x-api-key")
+        if reserved_keys
+            .iter()
+            .any(|reserved| trimmed_key.eq_ignore_ascii_case(reserved))
         {
             continue;
         }

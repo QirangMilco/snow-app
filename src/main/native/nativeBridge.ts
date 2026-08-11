@@ -453,6 +453,12 @@ export const loadNativeBridge = (): NativeBridge => {
             "Rust native bridge is required to delete sensitive command configs"
           )
         ),
+      resetSensitiveCommandConfigs: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to reset sensitive command configs"
+          )
+        ),
       listProjectSensitiveCommandConfigs: () =>
         Promise.reject(
           new Error(
@@ -575,6 +581,30 @@ export const loadNativeBridge = (): NativeBridge => {
         Promise.reject(
           new Error(
             "Rust native bridge is required to batch delete conversations"
+          )
+        ),
+      archiveConversations: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to archive conversations"
+          )
+        ),
+      listArchivedConversationsPaginated: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to list archived conversations paginated"
+          )
+        ),
+      restoreArchivedConversations: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to restore archived conversations"
+          )
+        ),
+      deleteArchivedConversations: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to delete archived conversations"
           )
         ),
       listChatMessages: () =>
@@ -772,6 +802,22 @@ export const loadNativeBridge = (): NativeBridge => {
             "Rust native bridge is required to update project MCP tools"
           )
         ),
+      setMcpToolEnabled: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to update MCP tools")
+        ),
+      setMcpToolsEnabled: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to batch update MCP tools"
+          )
+        ),
+      setMcpProjectToolsEnabled: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to batch update project MCP tools"
+          )
+        ),
       authorizeSensitiveCommand: () =>
         Promise.reject(
           new Error(
@@ -956,6 +1002,10 @@ export const loadNativeBridge = (): NativeBridge => {
         Promise.reject(
           new Error("Rust native bridge is required to write app logs")
         ),
+      runPreScript: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to run pre-scripts")
+        ),
       listAppLogs: () =>
         Promise.reject(
           new Error("Rust native bridge is required to list app logs")
@@ -991,6 +1041,32 @@ export const loadNativeBridge = (): NativeBridge => {
       getMemoCountSummary: () =>
         Promise.reject(
           new Error("Rust native bridge is required to count memos")
+        ),
+      listScheduledTasks: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to list scheduled tasks")
+        ),
+      upsertScheduledTask: () =>
+        Promise.reject(
+          new Error(
+            "Rust native bridge is required to save scheduled tasks"
+          )
+        ),
+      deleteScheduledTask: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to delete scheduled tasks")
+        ),
+      clearScheduledTasks: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to clear scheduled tasks")
+        ),
+      appendScheduledTaskRun: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to record task runs")
+        ),
+      finalizeScheduledTaskRun: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to finalize task runs")
         ),
       sha256File: () =>
         Promise.reject(
@@ -1071,6 +1147,46 @@ export const loadNativeBridge = (): NativeBridge => {
       rollbackImageLibraryMigration: () =>
         Promise.reject(
           new Error("Rust native bridge is required to migrate image library")
+        ),
+      getCheckpointDir: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to read checkpoint dir")
+        ),
+      setCheckpointDir: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to write checkpoint dir")
+        ),
+      getUploadDir: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to read upload dir")
+        ),
+      setUploadDir: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to write upload dir")
+        ),
+      getCheckpointRoot: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to read checkpoint root")
+        ),
+      getUploadRoot: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to read upload root")
+        ),
+      prepareStorageMigration: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to migrate storage dirs")
+        ),
+      migrateStorageChunk: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to migrate storage dirs")
+        ),
+      commitStorageMigration: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to migrate storage dirs")
+        ),
+      rollbackStorageMigration: () =>
+        Promise.reject(
+          new Error("Rust native bridge is required to migrate storage dirs")
         ),
       browserImportListSources: () =>
         Promise.reject(

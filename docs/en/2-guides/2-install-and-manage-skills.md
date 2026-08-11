@@ -15,6 +15,13 @@ With a project context, Snow App scans in the following order. **A later Skill w
 | 3 | `<project>/.agents/skills/` | Project | Higher than global directories |
 | 4 | `<project>/.snow/skills/` | Project; project GitHub install target | Highest |
 
+```mermaid
+flowchart LR
+    A[~/.agents/skills/<br/>global user level, lowest] --> B[~/.snow/skills/<br/>global + GitHub global install]
+    B --> C[<project>/.agents/skills/<br/>project level]
+    C --> D[<project>/.snow/skills/<br/>project + GitHub project install, highest]
+```
+
 Without a project context, only the two global directories are scanned. Scanning is recursive: every directory that contains `SKILL.md` is a Skill. **The Skill ID is the path relative to the scan root**, normalized to `/`. For example:
 
 ```text

@@ -119,10 +119,9 @@ pub(super) fn process_responses_sse_event_block(
             // Tool-call argument deltas. The Responses API streams function
             // arguments as they are generated.
             //
-            // We also accumulate the argument fragments per output item
-            // index so that, if the stream is interrupted before
-            // `output_item.done`, we can still reconstruct the tool call
-            // with its (possibly partial) arguments.
+            // Accumulate argument fragments per output item index as pending
+            // state. The collector uses this map only to block usable partial;
+            // it is never promoted unless `output_item.done` finalizes it.
             "response.function_call_arguments.delta" => {
                 let args_delta = read_stream_text_delta(event.get("delta"));
                 if !args_delta.is_empty() {
@@ -138,8 +137,8 @@ pub(super) fn process_responses_sse_event_block(
                     }
                 }
             }
-            // Track newly added function_call output items so we can
-            // reconstruct them (name + call_id) if the stream ends
+            // Track newly added function_call output items in the pending map.
+            // Only `response.output_item.done` moves a tool into `tool_calls`.
             "response.output_item.added" => {
                 if let Some(item) = event.get("item") {
                     let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
@@ -198,21 +197,22 @@ pub(super) fn process_responses_sse_event_block(
             }
             "response.completed" | "response.incomplete" | "response.failed" => {
                 *stream_completed_normally = true;
+                *response_status = match event_type {
+                    "response.incomplete" => "incomplete",
+                    "response.failed" => "failed",
+                    _ => "completed",
+                }
+                .to_string();
                 if let Some(response) = event.get("response") {
                     *response_id =
                         read_response_string(response, "id").unwrap_or_else(|| response_id.clone());
                     *response_model = read_response_string(response, "model")
                         .unwrap_or_else(|| response_model.clone());
-                    *response_status =
-                        read_response_string(response, "status").unwrap_or_else(|| {
-                            if event_type == "response.failed" {
-                                "failed".to_string()
-                            } else if event_type == "response.incomplete" {
-                                "incomplete".to_string()
-                            } else {
-                                response_status.clone()
-                            }
-                        });
+                    if let Some(status) = read_response_string(response, "status").filter(|status| {
+                        matches!(status.as_str(), "completed" | "incomplete" | "failed")
+                    }) {
+                        *response_status = status;
+                    }
                     *token_usage = extract_token_usage(response);
                     *completed_response = Some(response.clone());
                 }
@@ -234,6 +234,9 @@ pub(super) fn process_responses_sse_event_block(
         }
 
         raw_events.push(event);
+        if *stream_completed_normally {
+            break;
+        }
     }
 
     (content_delta_out, thinking_delta_out)
@@ -568,4 +571,96 @@ pub(super) fn collect_output_text(value: Option<&Value>, chunks: &mut Vec<String
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::Value;
+
+    use super::process_responses_sse_event_block;
+    use crate::storage::services::chat_conversations::ChatTokenUsage;
+
+    fn parse_block(
+        event_block: &str,
+        tool_calls: &mut Vec<Value>,
+        pending_tools: &mut HashMap<u64, (Value, String)>,
+    ) -> (String, bool) {
+        let mut raw_events = Vec::new();
+        let mut content_chunks = Vec::new();
+        let mut thinking_chunks = Vec::new();
+        let mut reasoning_items = Vec::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut response_status = String::from("completed");
+        let mut token_usage = ChatTokenUsage::default();
+        let mut completed_response = None;
+        let mut stream_completed = false;
+        let mut reasoning_text_streamed = false;
+
+        process_responses_sse_event_block(
+            event_block,
+            &mut raw_events,
+            &mut content_chunks,
+            &mut thinking_chunks,
+            tool_calls,
+            &mut reasoning_items,
+            pending_tools,
+            &mut response_id,
+            &mut response_model,
+            &mut response_status,
+            &mut token_usage,
+            &mut completed_response,
+            &mut stream_completed,
+            &mut reasoning_text_streamed,
+        );
+
+        (response_status, stream_completed)
+    }
+
+    #[test]
+    fn completed_incomplete_and_failed_events_are_terminal() {
+        for (event_type, status) in [
+            ("response.completed", "completed"),
+            ("response.incomplete", "incomplete"),
+            ("response.failed", "failed"),
+        ] {
+            let with_payload = format!(
+                "data: {{\"type\":\"{event_type}\",\"response\":{{\"status\":\"{status}\"}}}}"
+            );
+            let without_payload = format!("data: {{\"type\":\"{event_type}\"}}");
+
+            for block in [with_payload, without_payload] {
+                assert_eq!(
+                    parse_block(&block, &mut Vec::new(), &mut HashMap::new()),
+                    (status.to_string(), true)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pending_tool_is_only_finalized_by_output_item_done() {
+        let mut tool_calls = Vec::new();
+        let mut pending_tools = HashMap::new();
+        let pending_block = concat!(
+            r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"run"}}"#,
+            "\n",
+            r#"data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{"}"#
+        );
+
+        parse_block(pending_block, &mut tool_calls, &mut pending_tools);
+        assert!(tool_calls.is_empty());
+        assert_eq!(pending_tools.len(), 1);
+
+        parse_block(
+            r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","call_id":"call-1","name":"run","arguments":"{}"}}"#,
+            &mut tool_calls,
+            &mut pending_tools,
+        );
+        assert_eq!(tool_calls.len(), 1);
+        assert!(pending_tools.is_empty());
+    }
+}
+
 

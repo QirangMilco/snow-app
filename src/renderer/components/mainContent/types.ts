@@ -23,4 +23,5 @@ export type MainContentView =
   | "pets-settings"
   | "usage-settings"
   | "builtin-services-settings"
-  | "system-logs";
+  | "system-logs"
+  | "general-settings";

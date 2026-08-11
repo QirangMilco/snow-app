@@ -1,4 +1,4 @@
-import { Download, Folder, Globe2, Loader2, Plus, X } from "lucide-react";
+import { Download, Folder, Globe2, Loader2, Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WorkspaceDirectoryRecord } from "../../../preload";
 import { useI18n } from "../../i18n";
@@ -46,6 +46,7 @@ export function SensitiveCommandsPanel({
   const [draft, setDraft] = useState<SensitiveCommandDraft | null>(null);
   const [commandPendingDeletion, setCommandPendingDeletion] =
     useState<SensitiveCommandListItem | null>(null);
+  const [resetPending, setResetPending] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const loadGenerationRef = useRef(0);
@@ -434,6 +435,38 @@ export function SensitiveCommandsPanel({
     void handleDelete(command);
   };
 
+  const handleReset = async (): Promise<void> => {
+    if (isBusy) {
+      return;
+    }
+
+    setResetPending(false);
+    setIsSaving(true);
+    setDraft(null);
+    setError("");
+    setStatus("");
+
+    try {
+      const items = await window.snow.resetSensitiveCommandConfigs();
+      setCommands(items);
+      setStatus(
+        t("settings.sensitiveCommandResetSuccess", {
+          defaultValue: "Reset sensitive command rules to system defaults.",
+        })
+      );
+    } catch (resetError) {
+      setError(
+        resetError instanceof Error
+          ? resetError.message
+          : t("settings.sensitiveCommandResetError", {
+              defaultValue: "Failed to reset sensitive command rules",
+            })
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const isGlobalScope = activeScope === "global";
   const globalListItems: SensitiveCommandListItem[] = commands.map(
     (command) => ({
@@ -534,7 +567,7 @@ export function SensitiveCommandsPanel({
         specialLabel={specialLabel}
       />
 
-      <div className="api-settings-actions">
+      <div className="api-settings-actions sensitive-commands-actions">
         {isGlobalScope && (
           <button
             className="api-settings-action-btn primary"
@@ -550,6 +583,24 @@ export function SensitiveCommandsPanel({
             <span>
               {t("settings.syncSnowCliSensitiveCommands", {
                 defaultValue: "Sync Snow CLI sensitive commands",
+              })}
+            </span>
+          </button>
+        )}
+        {isGlobalScope && (
+          <button
+            className="api-settings-action-btn secondary"
+            onClick={() => setResetPending(true)}
+            type="button"
+            disabled={isBusy}
+            title={t("settings.sensitiveCommandReset", {
+              defaultValue: "Reset to system defaults",
+            })}
+          >
+            <RotateCcw size={15} />
+            <span>
+              {t("settings.sensitiveCommandReset", {
+                defaultValue: "Reset to system defaults",
               })}
             </span>
           </button>
@@ -709,6 +760,23 @@ export function SensitiveCommandsPanel({
         onConfirm={confirmDelete}
         onCancel={() => setCommandPendingDeletion(null)}
         variant="danger"
+      />
+      <ConfirmDialog
+        open={resetPending}
+        title={t("settings.sensitiveCommandResetConfirmTitle", {
+          defaultValue: "Reset sensitive command rules",
+        })}
+        message={t("settings.sensitiveCommandResetConfirm", {
+          defaultValue:
+            "Reset all sensitive command rules to system defaults? Custom rules will be removed and preset rules will be restored.",
+        })}
+        confirmLabel={t("settings.sensitiveCommandReset", {
+          defaultValue: "Reset to system defaults",
+        })}
+        cancelLabel={t("settings.cancel", { defaultValue: "Cancel" })}
+        onConfirm={() => void handleReset()}
+        onCancel={() => setResetPending(false)}
+        variant="warning"
       />
     </div>
   );

@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, FileX2, ListChecks } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import type { ToolCallInfo } from "../utils/conversationTypes";
 import { ToolCallNode } from "./shared/ToolCallNode";
+import { decodeEscapedNewlines, JsonTreeView } from "./shared/JsonTreeView";
 
 type ConfigToolCallProps = {
   toolCall: ToolCallInfo;
@@ -55,21 +56,7 @@ const extractEntries = (data: Record<string, unknown>): unknown[] => {
   return [];
 };
 
-/**
- * 值美化：将转义存储的 `\n` / `\r\n` 还原为真实换行（仅在字符串不含真实换行时）。
- * 例如 personalization 的 role 规则全文以转义形式落盘，直接展示会挤成一行。
- */
-const decodeEscapedNewlines = (text: string): string => {
-  if (text.includes("\n") || !text.includes("\\n")) {
-    return text;
-  }
-  return text
-    .replace(/\\r\\n/g, "\n")
-    .replace(/\\n/g, "\n")
-    .replace(/\\t/g, "\t");
-};
-
-/** get / set 成功后对 value 字段的美化展示。 */
+/** get / set 成功后对 value 字段的美化展示（字符串转义解码见 shared/JsonTreeView）。 */
 const ValuePreview = ({ value }: { value: unknown }): React.JSX.Element | null => {
   const { t } = useI18n();
   if (value === null || value === undefined) {
@@ -81,9 +68,7 @@ const ValuePreview = ({ value }: { value: unknown }): React.JSX.Element | null =
         <span className="tool-call-section-label">
           {t("toolCall.common.result")}
         </span>
-        <pre className="tool-call-section-pre">
-          {JSON.stringify(value, null, 2)}
-        </pre>
+        <JsonTreeView data={value} />
       </section>
     );
   }
@@ -117,19 +102,22 @@ const ValuePreview = ({ value }: { value: unknown }): React.JSX.Element | null =
   );
 };
 
-/** 提取条目数组里每项的 key / scope / agentId 等标识字段。 */
+/**
+ * 提取条目数组里每项的 key / name / hookType 等标识字段。
+ * scope 放最后：多为 "project" / "global" 之类低辨识度值，避免标签重复。
+ */
 const entryLabel = (entry: unknown): string | undefined => {
   if (!isRecord(entry)) {
     return undefined;
   }
   return (
     asString(entry.key) ??
-    asString(entry.scope) ??
+    asString(entry.name) ??
     asString(entry.agentId) ??
     asString(entry.skillId) ??
     asString(entry.hookType) ??
-    asString(entry.name) ??
     asString(entry.fileName) ??
+    asString(entry.scope) ??
     undefined
   );
 };
@@ -225,9 +213,7 @@ export const ConfigToolCall = ({
       : [];
 
   const resultText =
-    parsedResult.type === "success"
-      ? JSON.stringify(parsedResult.data, null, 2)
-      : parsedResult.type === "raw"
+    parsedResult.type === "raw"
       ? parsedResult.text
       : "";
 
@@ -274,6 +260,13 @@ export const ConfigToolCall = ({
         (operation === "set" || operation === "get") &&
         "value" in parsedResult.data) ? (
           <ValuePreview value={parsedResult.data.value} />
+        ) : parsedResult.type === "success" ? (
+          <section className="tool-call-section">
+            <span className="tool-call-section-label">
+              {t("toolCall.common.result")}
+            </span>
+            <JsonTreeView data={parsedResult.data} />
+          </section>
         ) : resultText ? (
           <section className="tool-call-section">
             <span className="tool-call-section-label">

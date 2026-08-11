@@ -96,6 +96,8 @@ const ChatContentBody = ({
     tokenUsage,
     draftToRestore,
     autoSendToken,
+    pendingAutoSendOverride,
+    setPendingAutoSendOverride,
     clearDraftToRestore,
     saveInputDraft,
     getInputDraft,
@@ -1085,6 +1087,7 @@ const ChatContentBody = ({
             projectName={activeDirectory?.name}
             conversationId={activeConversationId}
             onSend={handleSendWithScroll}
+            onNavigateToView={onNavigateToView}
             isStreaming={isStreaming}
             isAborting={isAborting}
             onAbort={handleAbort}
@@ -1092,6 +1095,8 @@ const ChatContentBody = ({
             draftToRestore={draftToRestore}
             autoSendToken={autoSendToken}
             onDraftRestored={clearDraftToRestore}
+            autoSendOverride={pendingAutoSendOverride}
+            onAutoSendOverrideConsumed={() => setPendingAutoSendOverride(null)}
             saveInputDraft={saveInputDraft}
             getInputDraft={getInputDraft}
             clearInputDraft={clearInputDraft}

@@ -106,6 +106,8 @@ export const configApi = {
     commandId: string
   ): Promise<SensitiveCommandConfigRecord[]> =>
     ipcRenderer.invoke("sensitive-command-configs:delete", commandId),
+  resetSensitiveCommandConfigs: (): Promise<SensitiveCommandConfigRecord[]> =>
+    ipcRenderer.invoke("sensitive-command-configs:reset"),
   importSnowCliSensitiveCommandConfig: (): Promise<
     SensitiveCommandConfigRecord[]
   > => ipcRenderer.invoke("sensitive-command-configs:import-snow-cli"),

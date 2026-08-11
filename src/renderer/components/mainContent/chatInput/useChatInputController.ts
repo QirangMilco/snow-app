@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { BrainCircuit } from "lucide-react";
-import type { ApiConfigRecord, Model } from "../../../../preload";
+import type { ApiConfigRecord, Model, ScheduledTaskRunOptions } from "../../../../preload";
 import { useI18n } from "../../../i18n";
 import { shortcutEvents } from "../../shortcutEvents";
 import {
@@ -31,6 +31,7 @@ import type {
 } from "./types";
 import {
   buildSegmentsHtml,
+  isEditableContentEmpty,
   parseContentSegments,
   renumberImageChips,
 } from "./fileTagUtils";
@@ -43,6 +44,8 @@ type UseChatInputControllerParams = {
   draftToRestore?: string | null;
   autoSendToken?: number;
   onDraftRestored?: () => void;
+  autoSendOverride?: ScheduledTaskRunOptions | null;
+  onAutoSendOverrideConsumed?: () => void;
   saveInputDraft?: (conversationId: string | undefined, content: string) => void;
   getInputDraft?: (conversationId: string | undefined) => string | undefined;
   clearInputDraft?: (conversationId: string | undefined) => void;
@@ -68,6 +71,8 @@ export const useChatInputController = ({
   draftToRestore = null,
   autoSendToken = 0,
   onDraftRestored,
+  autoSendOverride = null,
+  onAutoSendOverrideConsumed,
   saveInputDraft,
   getInputDraft,
   clearInputDraft,
@@ -136,6 +141,9 @@ export const useChatInputController = ({
       cancel: t("common.cancel", { defaultValue: "Cancel" }),
       confirm: t("common.confirm", { defaultValue: "Confirm" }),
       retry: t("common.retry", { defaultValue: "Retry" }),
+      noApiConfig: t("chat.noApiConfig", {
+        defaultValue: "No API configuration found. Please configure one in Settings first.",
+      }),
     }),
     [t]
   );
@@ -192,6 +200,10 @@ export const useChatInputController = ({
             configs.find((config) => config.isActive) ?? configs[0] ?? null;
         }
         if (!runtimeConfig) {
+          // 空配置（初次安装）走专门的友好错误，UI 据此展示引导提示。
+          if (configs.length === 0 && !subAgentConversation) {
+            throw new Error("NO_API_CONFIG");
+          }
           throw new Error(
             requestedProfile
               ? `API profile is not available: ${requestedProfile}`
@@ -213,7 +225,9 @@ export const useChatInputController = ({
 
         const message =
           error instanceof Error
-            ? error.message
+            ? error.message === "NO_API_CONFIG"
+              ? labels.noApiConfig
+              : error.message
             : "Failed to load API configuration";
         setRuntimeApiConfig(null);
         setSelectedApiProfile("");
@@ -234,7 +248,7 @@ export const useChatInputController = ({
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, labels]);
 
   const loadModels = useCallback(
     async (force = false) => {
@@ -354,7 +368,9 @@ export const useChatInputController = ({
       // 固定 chip 宽度，确保 hover 显示 remove 按钮时布局不跳动、
       // 名字能正确省略。与新输入时 syncContent -> renumberImageChips 一致。
       renumberImageChips(textarea);
-      textarea.dataset.empty = draftToRestore.trim() === "" ? "true" : "false";
+      textarea.dataset.empty = isEditableContentEmpty(draftToRestore)
+        ? "true"
+        : "false";
       requestAnimationFrame(() => {
         adjustHeight();
         textarea.focus();
@@ -372,7 +388,19 @@ export const useChatInputController = ({
         if (autoSendToken > 0) {
           const message = draftToRestore.trim();
           if (message) {
-            onSend?.(message, { model: selectedModel || undefined });
+            // Scheduled-task runs may carry per-send overrides (API profile /
+            // model / thinking strength). They win over the input's current
+            // selection so the fired conversation runs on the task's
+            // configured provider; the override is consumed right after so it
+            // never leaks into later manual sends.
+            onSend?.(message, {
+              model: autoSendOverride?.model || selectedModel || undefined,
+              apiProfile:
+                autoSendOverride?.apiProfile ||
+                selectedApiProfile ||
+                undefined,
+              thinkingStrength: autoSendOverride?.thinkingStrength || undefined,
+            });
           }
           setValue("");
           // The queued content was sent; do not keep it as a per-conversation
@@ -381,12 +409,13 @@ export const useChatInputController = ({
           textarea.innerHTML = "";
           textarea.dataset.empty = "true";
           adjustHeight();
+          onAutoSendOverrideConsumed?.();
         }
       });
     }
 
     onDraftRestored?.();
-  }, [draftToRestore, onDraftRestored, adjustHeight, autoSendToken, onSend, selectedModel, conversationId, clearInputDraft]);
+  }, [draftToRestore, onDraftRestored, adjustHeight, autoSendToken, onSend, selectedModel, selectedApiProfile, autoSendOverride, onAutoSendOverrideConsumed, conversationId, clearInputDraft]);
 
   const handleChange = useCallback(
     (nextValue: string) => {
@@ -408,8 +437,9 @@ export const useChatInputController = ({
 
         textareaRef.current.innerHTML = html;
         renumberImageChips(textareaRef.current);
-        textareaRef.current.dataset.empty =
-          content.trim() === "" ? "true" : "false";
+        textareaRef.current.dataset.empty = isEditableContentEmpty(content)
+          ? "true"
+          : "false";
         requestAnimationFrame(() => {
           adjustHeight();
           textareaRef.current?.focus();
@@ -448,6 +478,12 @@ export const useChatInputController = ({
       return;
     }
 
+    // 未配置任何 API（初次安装）时阻止发送，避免直接落到后端报错；
+    // 引导提示由 ChatInputView 的空配置条展示。
+    if (apiConfigs.length === 0 || !runtimeApiConfig) {
+      return;
+    }
+
     // The selected profile is conversation-scoped: for a brand-new
     // conversation it is carried on the request so the backend binds the
     // created conversation to this provider; for existing conversations the
@@ -468,7 +504,7 @@ export const useChatInputController = ({
         adjustHeight();
       });
     }
-  }, [adjustHeight, onSend, selectedModel, selectedApiProfile, value, conversationId, clearInputDraft]);
+  }, [adjustHeight, onSend, selectedModel, selectedApiProfile, value, conversationId, clearInputDraft, apiConfigs.length, runtimeApiConfig]);
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {

@@ -15,6 +15,16 @@ page=codebase-settings`) and configure the embedding model (see the
 `codebase` field of `settings.json`; structure is documented in
 `3-config-file-field-reference`). The first index may take a few minutes.
 
+```mermaid
+flowchart TD
+    A[Settings → Codebase Settings<br/>enable indexing for the project] --> B[Configure the embedding model<br/>codebase field of settings.json]
+    B --> C[First index<br/>may take a few minutes]
+    C --> D{Index built?}
+    D -- yes --> E[codebase-search exposed<br/>semantic search available]
+    D -- no --> F[Wait for indexing<br/>tool unavailable meanwhile]
+    F --> C
+```
+
 ### 1.2 Tool
 
 | Tool | Purpose |

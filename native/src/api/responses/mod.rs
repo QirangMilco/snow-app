@@ -21,7 +21,10 @@ use tokio_util::sync::CancellationToken;
 use crate::api::conversation::{
     prepare_context_request, resolve_sub_agent_tools, ConversationContextRequest,
 };
-use crate::api::retry::{resolve_stream_idle_timeout_sec, RetryOptions};
+use crate::api::retry::{
+    classify_final_stream_warning, resolve_stream_idle_timeout_sec, FinalStreamWarningDisposition,
+    RetryOptions,
+};
 use crate::storage::services::app_logs::{log_api_error, log_api_warning, maybe_log_api_request};
 use crate::storage::services::chat_conversations::{
     store_chat_exchange, ChatContextMessage, StoreChatExchangeInput,
@@ -94,6 +97,10 @@ pub struct ResponsesApiRequest {
     /// When true, replace the built-in system prompt with the Goal Mode prompt
     /// that instructs the AI to work autonomously toward a defined objective.
     pub goal_mode: Option<bool>,
+    /// Per-request thinking strength override ("none" | "low" | "medium" |
+    /// "high" | custom). Applied in-memory over the resolved profile's
+    /// config_json; never mutates the stored profile.
+    pub thinking_strength: Option<String>,
     /// Project ROLE.md content of an SSH (`ssh://`) workspace, resolved by the
     /// Electron main process over SSH (mirrors RoleEditorPanel's access path).
     /// Absent for local workspaces — Rust reads the file itself.
@@ -126,6 +133,8 @@ pub struct ResponsesApiResult {
     pub thinking: String,
     pub model: String,
     pub status: String,
+    pub interruption_reason: Option<String>,
+    pub recovery_outcome: Option<String>,
     pub tool_calls_json: String,
     pub token_usage: TokenUsage,
     pub persisted_user_message_ids: Vec<String>,
@@ -324,8 +333,11 @@ async fn create_response_async(
         tools,
         &prepared_request.user_system_prompts,
     )?;
-    let retry_options =
-        RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
+    let retry_options = RetryOptions::from_config(
+        api_config.max_retries,
+        api_config.retry_base_delay_ms,
+        api_config.partial_retry_max_chars,
+    );
     let stream_idle_timeout_sec =
         resolve_stream_idle_timeout_sec(api_config.stream_idle_timeout_sec);
     let request_payload_json = serde_json::to_string(&payload).unwrap_or_default();
@@ -364,31 +376,67 @@ async fn create_response_async(
     // See chat/mod.rs: assistant raw_events are not needed for replay, so we
     // skip serializing the full SSE chunk array to avoid DB bloat.
     let raw_response_json = "{}";
+    let transport_interruption_reason = streamed_response
+        .interruption_reason
+        .filter(|reason| reason.is_transport());
+    let interruption_reason = streamed_response
+        .interruption_reason
+        .map(|reason| reason.as_code().to_string());
+    let recovery_outcome = streamed_response
+        .recovery_outcome
+        .map(|outcome| outcome.as_code().to_string());
 
-    for parse_error in &streamed_response.tool_parse_errors {
-        log_api_warning(
-            &database_path,
-            "create_response_stream_with_context",
-            "Tool call JSON parse failed after streaming",
-            parse_error,
-        );
+    if transport_interruption_reason.is_none() {
+        for parse_error in &streamed_response.tool_parse_errors {
+            log_api_warning(
+                &database_path,
+                "create_response_stream_with_context",
+                "Tool call JSON parse failed after streaming",
+                parse_error,
+            );
+        }
     }
 
-    if streamed_response.status != "cancelled"
-        && streamed_response.content.is_empty()
-        && streamed_response.thinking.is_empty()
-        && streamed_response.tool_calls_json == "[]"
-        && streamed_response.reasoning_items_json == "[]"
-    {
-        log_api_warning(
-            &database_path,
-            "create_response_stream_with_context",
-            "AI returned empty response",
-            &format!(
-                "model={}, status={}",
-                streamed_response.model, streamed_response.status
-            ),
-        );
+    let has_response_payload = !streamed_response.content.is_empty()
+        || !streamed_response.thinking.is_empty()
+        || streamed_response.tool_calls_json != "[]"
+        || streamed_response.reasoning_items_json != "[]";
+    match classify_final_stream_warning(
+        &streamed_response.status,
+        streamed_response.interruption_reason,
+        has_response_payload,
+    ) {
+        FinalStreamWarningDisposition::TransportInterrupted(reason) => {
+            log_api_warning(
+                &database_path,
+                "create_response_stream_with_context",
+                "AI response stream interrupted",
+                &format!(
+                    "provider=openai, request_method=responses, reason={}, outcome={}, model={}, status={}, conversation_id={}, response_id={}, content_chars={}, thinking_chars={}, duration_ms={}",
+                    reason.as_code(),
+                    recovery_outcome.as_deref().unwrap_or(""),
+                    model,
+                    streamed_response.status,
+                    prepared_request.conversation_id,
+                    streamed_response.id,
+                    streamed_response.content.chars().count(),
+                    streamed_response.thinking.chars().count(),
+                    streamed_response.total_duration_ms,
+                ),
+            );
+        }
+        FinalStreamWarningDisposition::EmptyResponse => {
+            log_api_warning(
+                &database_path,
+                "create_response_stream_with_context",
+                "AI returned empty response",
+                &format!(
+                    "model={}, status={}",
+                    streamed_response.model, streamed_response.status
+                ),
+            );
+        }
+        FinalStreamWarningDisposition::None => {}
     }
 
     let persisted_user_message_ids = if !skip_context && !request.skip_persist.unwrap_or(false) {
@@ -400,9 +448,11 @@ async fn create_response_async(
                 response_content: &streamed_response.content,
                 response_id: &streamed_response.id,
                 checkpoint_id: request.checkpoint_id.as_deref().unwrap_or(""),
-                model,
+                model: &model,
                 api_profile_name: &api_config.profile_name,
                 status: &streamed_response.status,
+                interruption_reason: interruption_reason.as_deref(),
+                recovery_outcome: recovery_outcome.as_deref(),
                 raw_response_json: &raw_response_json,
                 token_usage: streamed_response.token_usage,
                 response_thinking: &streamed_response.thinking,
@@ -428,6 +478,8 @@ async fn create_response_async(
         // unreliable across providers and may carry date-stamped aliases).
         model: model.to_string(),
         status: streamed_response.status,
+        interruption_reason,
+        recovery_outcome,
         tool_calls_json: streamed_response.tool_calls_json,
         token_usage: TokenUsage {
             input_tokens: streamed_response.token_usage.input_tokens,

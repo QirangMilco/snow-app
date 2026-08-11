@@ -26,6 +26,8 @@ import {
  * 默认按键绑定：用于"恢复默认"操作。
  * 与 Rust seed 默认值保持一致。
  * cycleApiProfile 平台相关：macOS 用 Ctrl+P，其他平台用 Alt+P。
+ * toggleWindow 用 mod+shift+h（全局生效，由主进程 globalShortcut 注册）。
+ * togglePet 用 mod+shift+p（仅台前生效，由渲染进程快捷键触发）。
  */
 const DEFAULT_KEYS: Record<KeyboardShortcutAction, string> = {
   cancelSession: "escape",
@@ -35,6 +37,8 @@ const DEFAULT_KEYS: Record<KeyboardShortcutAction, string> = {
   cycleProject: "mod+backtick",
   openProjectExplorer: "mod+d",
   cycleApiProfile: isMacOS() ? "ctrl+p" : "alt+p",
+  toggleWindow: "mod+shift+h",
+  togglePet: "mod+shift+p",
 };
 
 type KeyboardShortcutsSettingsPanelProps = {
@@ -243,23 +247,28 @@ export function KeyboardShortcutsSettingsPanel({
                   )}
                 </button>
 
-                {/* 仅前台开关 + 恢复默认 */}
+                {/* 仅前台开关 + 恢复默认。
+                    toggleWindow 不显示"仅前台"开关：它由主进程 globalShortcut
+                    注册，本质就是全局生效（窗口隐藏时也要能呼出），
+                    该开关对它无意义。 */}
                 <div className="shortcut-toggles">
-                  <label className="toggle-switch shortcut-foreground-switch">
-                    <input
-                      type="checkbox"
-                      checked={config.foregroundOnly}
-                      onChange={handleForegroundOnlyChange(action)}
-                      disabled={!config.enabled}
-                      hidden
-                    />
-                    <span className="toggle-slider" />
-                    <span>
-                      {t("settings.shortcutForegroundOnly", {
-                        defaultValue: "Foreground only",
-                      })}
-                    </span>
-                  </label>
+                  {action !== "toggleWindow" && (
+                    <label className="toggle-switch shortcut-foreground-switch">
+                      <input
+                        type="checkbox"
+                        checked={config.foregroundOnly}
+                        onChange={handleForegroundOnlyChange(action)}
+                        disabled={!config.enabled}
+                        hidden
+                      />
+                      <span className="toggle-slider" />
+                      <span>
+                        {t("settings.shortcutForegroundOnly", {
+                          defaultValue: "Foreground only",
+                        })}
+                      </span>
+                    </label>
+                  )}
                   {config.key !== DEFAULT_KEYS[action] && (
                     <button
                       className="icon-btn ghost shortcut-reset-btn"

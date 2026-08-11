@@ -2,7 +2,7 @@ import { app, BrowserWindow, nativeTheme, type WebContents } from "electron";
 import { APP_WINDOW_ICON_PATH } from "../app/constants";
 
 /**
- * 内置浏览器（<webview>）弹出窗口管理。
+ * 内置浏览器（<webview>）弹出窗口与标签页管理。
  *
  * 背景：guest 页面调用 window.open() 或点击 target=_blank 时（典型场景如
  * Google 账号登录弹出的 OAuth 窗口），Electron 37 的 <webview> 标签已不再
@@ -13,12 +13,22 @@ import { APP_WINDOW_ICON_PATH } from "../app/constants";
  * 须用字符串值/ref callback 写入，见 BrowserPanelContent.tsx），请求才会
  * 进入下面的处理流程。
  *
- * 这里在 guest webContents 上注册 setWindowOpenHandler 并返回
- * { action: "allow", overrideBrowserWindowOptions }，由 Electron 创建真正的
- * 弹出 BrowserWindow：
- *   - 保留 window.opener / postMessage 关系（OAuth 弹出登录依赖它）；
- *   - 与 webview 共享同一 session（cookie 同步，登录态互通）；
- *   - 弹出窗口内的二次 window.open 递归走同一逻辑。
+ * 这里在 guest webContents 上注册 setWindowOpenHandler，按打开方式分流：
+ *
+ * 1. 窗口级弹出（disposition 为 new-popup，或 features 显式声明
+ *    popup=yes / width / height，如 OAuth 弹窗）：
+ *    返回 { action: "allow", overrideBrowserWindowOptions }，由 Electron
+ *    创建真正的弹出 BrowserWindow：
+ *      - 保留 window.opener / postMessage 关系（OAuth 弹出登录依赖它）；
+ *      - 与 webview 共享同一 session（cookie 同步，登录态互通）；
+ *      - 弹出窗口内的二次 window.open 递归走同一逻辑。
+ *
+ * 2. 标签页级打开（target=_blank、window.open 无 features 等）：
+ *    侧边浏览器已在渲染端实现标签页维度，此类请求不再弹真实窗口，
+ *    而是返回 { action: "deny" }，并通过 IPC 通知宿主渲染进程在
+ *    BrowserPanelContent 内部新建一个标签页（由 guest 的 webContents id
+ *    路由到对应的浏览器实例）。这样 _blank 链接会在侧边栏内以标签页
+ *    形式打开，而不是突兀地弹出一个独立窗口。
  */
 
 const DEFAULT_POPUP_WIDTH = 800;
@@ -27,6 +37,9 @@ const MIN_POPUP_WIDTH = 320;
 const MIN_POPUP_HEIGHT = 240;
 const MAX_POPUP_WIDTH = 1600;
 const MAX_POPUP_HEIGHT = 1200;
+
+/** 通知宿主渲染进程：guest 请求在侧边浏览器内新建标签页。 */
+export const BROWSER_OPEN_TAB_CHANNEL = "browser:open-tab";
 
 const popupWindows = new Set<BrowserWindow>();
 
@@ -68,11 +81,57 @@ const computeCenteredPosition = (
 };
 
 /**
- * 为指定 webContents（webview guest 或已创建的弹出窗口）注册弹出窗口处理：
- * window.open / target=_blank 统一创建真实的 BrowserWindow。
+ * 判断一次 window.open / target=_blank 是否属于「窗口级弹出」。
+ *
+ * 窗口级弹出 = 调用方显式要求独立窗口（disposition 为 new-popup，或
+ * features 里声明 popup=yes / width / height）。这类请求（典型如 OAuth
+ * 登录弹窗）需要保留 window.opener 关系，创建真实 BrowserWindow。
+ *
+ * 其余（target=_blank 链接、window.open 无 features）语义上都是「新标签
+ * 页」，交由渲染端在侧边浏览器内部打开。
  */
-export const attachBrowserPopupWindowHandler = (contents: WebContents): void => {
-  contents.setWindowOpenHandler(({ features }) => {
+const isWindowPopupRequest = (
+  disposition: string,
+  features: string
+): boolean => {
+  if (disposition === "new-popup") {
+    return true;
+  }
+  if (/\bpopup\s*=\s*(?:yes|1|true)/i.test(features)) {
+    return true;
+  }
+  if (/\b(?:width|height)\s*=/.test(features)) {
+    return true;
+  }
+  return false;
+};
+
+/**
+ * 为指定 webContents（webview guest 或已创建的弹出窗口）注册弹出处理：
+ * 窗口级弹出创建真实 BrowserWindow；标签页级打开 deny 并通知渲染端建 tab。
+ */
+export const attachBrowserPopupWindowHandler = (
+  contents: WebContents,
+  options?: { openTabsInSidebar?: boolean }
+): void => {
+  contents.setWindowOpenHandler(({ url, disposition, features }) => {
+    // 侧边浏览器 webview：非窗口级弹出一律在侧边栏内新建标签页，
+    // 由渲染端 BrowserPanelContent 根据 guest webContents id 路由。
+    if (
+      options?.openTabsInSidebar &&
+      !isWindowPopupRequest(disposition, features)
+    ) {
+      const host = contents.hostWebContents;
+      if (host && !host.isDestroyed()) {
+        host.send(BROWSER_OPEN_TAB_CHANNEL, {
+          guestWebContentsId: contents.id,
+          url,
+          disposition,
+        });
+      }
+      return { action: "deny" };
+    }
+
     const { width, height } = parseWindowFeatures(features);
     const opener = BrowserWindow.fromWebContents(contents);
     return {
@@ -112,17 +171,23 @@ export const attachBrowserPopupWindowHandler = (contents: WebContents): void => 
       popupWindows.delete(win);
     });
     // 弹出窗口内的 window.open 递归走同一处理逻辑。
+    // 注意：不传 openTabsInSidebar —— 弹出窗口内的 target=_blank / window.open
+    // 继续创建新的弹出窗口（保持 window.opener 链，OAuth 流程中二次弹窗常见），
+    // 不会错误地路由到侧边浏览器的标签页（该 guest 的 webContents id 不在
+    // 渲染端任何浏览器实例的注册表里）。
     attachBrowserPopupWindowHandler(win.webContents);
   });
 };
 
-/** 初始化：为所有 webview guest 注册弹出窗口处理（幂等）。 */
+/** 初始化：为所有 webview guest 注册弹出处理（幂等）。 */
 export const initBrowserPopupHandler = (): void => {
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() !== "webview") {
       return;
     }
-    attachBrowserPopupWindowHandler(contents);
+    // webview guest 启用标签页分流：窗口级弹出建真实窗口，
+    // 其余打开方式由渲染端在侧边浏览器内部新建标签页。
+    attachBrowserPopupWindowHandler(contents, { openTabsInSidebar: true });
   });
 };
 

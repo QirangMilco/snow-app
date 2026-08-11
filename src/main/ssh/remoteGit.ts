@@ -664,6 +664,7 @@ export const remoteGetGitLog = async (
       "log",
       "--all",
       "--decorate=full",
+      "--shortstat",
       "--pretty=format:%H%x1f%h%x1f%an%x1f%ae%x1f%ad%x1f%s%x1f%D%x1f%P",
       "--date=iso",
       "--skip",
@@ -677,27 +678,54 @@ export const remoteGetGitLog = async (
 
   const entries: GitLogEntry[] = [];
 
+  // `--shortstat` appends a diffstat line (e.g. "1 file changed,
+  // 5 insertions(+), 2 deletions(-)") after each commit's pretty line so the
+  // renderer can show per-commit added/removed line counts. Merge commits
+  // with no changes produce no shortstat line (counts stay 0).
   for (const line of output.split("\n")) {
     if (!line) {
       continue;
     }
     const parts = line.split("\x1f");
-    if (parts.length < 8) {
-      continue;
+    if (parts.length >= 8) {
+      entries.push({
+        hash: parts[0],
+        shortHash: parts[1],
+        author: parts[2],
+        email: parts[3],
+        date: parts[4],
+        message: parts[5],
+        refs: parts[6],
+        parents: parts[7].split(/\s+/).filter(Boolean),
+        additions: 0,
+        deletions: 0,
+      });
+    } else {
+      const lastEntry = entries[entries.length - 1];
+      if (lastEntry) {
+        lastEntry.additions = parseShortstatCount(line, "insertion");
+        lastEntry.deletions = parseShortstatCount(line, "deletion");
+      }
     }
-    entries.push({
-      hash: parts[0],
-      shortHash: parts[1],
-      author: parts[2],
-      email: parts[3],
-      date: parts[4],
-      message: parts[5],
-      refs: parts[6],
-      parents: parts[7].split(/\s+/).filter(Boolean),
-    });
   }
 
   return entries;
+};
+
+/** 解析 git `--shortstat` 行中 `keyword` 前的数字（"5 insertions(+)" → 5）。 */
+const parseShortstatCount = (line: string, keyword: string): number => {
+  let result = 0;
+  let rest = line;
+  let idx = rest.indexOf(keyword);
+  while (idx !== -1) {
+    const match = rest.slice(0, idx).match(/(\d+)\s*$/);
+    if (match) {
+      result = parseInt(match[1], 10);
+    }
+    rest = rest.slice(idx + keyword.length);
+    idx = rest.indexOf(keyword);
+  }
+  return result;
 };
 
 export const remoteGetCommitFiles = async (

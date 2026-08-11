@@ -53,6 +53,10 @@ const DEFAULT_THEME_SETTING_VALUE: &str = "{\"mode\":\"system\",\"presetId\":\"s
 
 const PROJECT_MCP_SETTING_NAME: &str = "Project MCP scope";
 const PROJECT_MCP_SETTING_CODE_PREFIX: &str = "project_mcp_scope_";
+
+const GLOBAL_MCP_SETTING_NAME: &str = "Global MCP scope";
+const GLOBAL_MCP_SETTING_CODE: &str = "mcp_global_scope";
+
 const PROJECT_SKILLS_SETTING_NAME: &str = "Project Skills scope";
 const PROJECT_SKILLS_SETTING_CODE_PREFIX: &str = "project_skills_scope_";
 
@@ -79,6 +83,12 @@ pub struct McpProjectScopeSettings {
     /// with `DEFAULT_DISABLED_BUILTIN_SERVERS`: a server in that list is
     /// only enabled when it appears here.
     pub enabled_server_ids: BTreeSet<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct McpGlobalScopeSettings {
+    pub disabled_tool_names: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -723,6 +733,21 @@ pub fn set_mcp_project_tool_enabled(
     write_mcp_project_scope_settings(database_path, &settings)
 }
 
+/// 批量启停项目作用域下的工具：一次读改写，避免逐工具多次写库。
+pub fn set_mcp_project_tools_enabled(
+    database_path: &Path,
+    project_id: &str,
+    tool_names: &[String],
+    enabled: bool,
+) -> Result<()> {
+    let mut settings = get_mcp_project_scope_settings(database_path, project_id)?;
+    for tool_name in tool_names {
+        let normalized_tool_name = normalize_required_value(tool_name, "MCP tool name")?;
+        settings.set_tool_enabled(&normalized_tool_name, enabled);
+    }
+    write_mcp_project_scope_settings(database_path, &settings)
+}
+
 fn write_mcp_project_scope_settings(
     database_path: &Path,
     settings: &McpProjectScopeSettings,
@@ -738,6 +763,68 @@ fn write_mcp_project_scope_settings(
         database_path,
         PROJECT_MCP_SETTING_NAME,
         &setting_code,
+        &setting_value,
+    )
+}
+
+/// 全局 MCP 工具级 scope：无记录时返回默认（空黑名单 = 全部启用）。
+pub fn get_mcp_global_scope_settings(database_path: &Path) -> Result<McpGlobalScopeSettings> {
+    let Some(raw_value) = get_system_setting_value(database_path, GLOBAL_MCP_SETTING_CODE)? else {
+        return Ok(McpGlobalScopeSettings::default());
+    };
+
+    let settings = serde_json::from_str::<McpGlobalScopeSettings>(&raw_value).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to parse global MCP scope settings: {error}"),
+        )
+    })?;
+    Ok(settings)
+}
+
+pub fn set_mcp_global_tool_enabled(
+    database_path: &Path,
+    tool_name: &str,
+    enabled: bool,
+) -> Result<()> {
+    let normalized_tool_name = normalize_required_value(tool_name, "MCP tool name")?;
+    let mut settings = get_mcp_global_scope_settings(database_path)?;
+    update_disabled_set(&mut settings.disabled_tool_names, &normalized_tool_name, enabled);
+    write_mcp_global_scope_settings(database_path, &settings)
+}
+
+/// 批量启停全局作用域下的工具：一次读改写，避免逐工具多次写库。
+pub fn set_mcp_global_tools_enabled(
+    database_path: &Path,
+    tool_names: &[String],
+    enabled: bool,
+) -> Result<()> {
+    let mut settings = get_mcp_global_scope_settings(database_path)?;
+    for tool_name in tool_names {
+        let normalized_tool_name = normalize_required_value(tool_name, "MCP tool name")?;
+        update_disabled_set(
+            &mut settings.disabled_tool_names,
+            &normalized_tool_name,
+            enabled,
+        );
+    }
+    write_mcp_global_scope_settings(database_path, &settings)
+}
+
+fn write_mcp_global_scope_settings(
+    database_path: &Path,
+    settings: &McpGlobalScopeSettings,
+) -> Result<()> {
+    let setting_value = serde_json::to_string(settings).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Failed to serialize global MCP scope settings: {error}"),
+        )
+    })?;
+    set_system_setting(
+        database_path,
+        GLOBAL_MCP_SETTING_NAME,
+        GLOBAL_MCP_SETTING_CODE,
         &setting_value,
     )
 }

@@ -13,10 +13,12 @@ import {
   Folder,
   Keyboard,
   Loader2,
+  Plug,
   Radio,
   RefreshCw,
   Search,
   Send,
+  Settings,
   Square,
   X,
   Zap,
@@ -28,6 +30,7 @@ import { Modal } from "../../common/Modal";
 import type { ChatInputViewProps } from "./types";
 import { BtwPanel } from "./BtwPanel";
 import { TEXT_SNIPPET_THRESHOLD } from "./constants";
+import { ThinkingStrengthMenu } from "./ThinkingStrengthMenu";
 import { TokenUsageRing } from "./TokenUsageRing";
 import {
   CHIPS_CLIPBOARD_TYPE,
@@ -44,6 +47,7 @@ import {
   createWebTagChipHtml,
   insertHtmlAtSelection,
   insertLineBreak,
+  isEditableContentEmpty,
   parseContentSegments,
   readEditableContent,
   readEditableContentAsPlainText,
@@ -96,6 +100,7 @@ export const ChatInputView = ({
   placeholder,
   projectId,
   projectName,
+  onNavigateToView,
   value,
   textareaRef,
   apiConfigs,
@@ -226,17 +231,8 @@ export const ChatInputView = ({
     setIsFileChangesOpen(true);
   }, []);
   const [isReviewOpen, setIsReviewOpen] = useState(false);
-  const [isCustomThinkingMode, setIsCustomThinkingMode] = useState(false);
-  const [customThinkingValue, setCustomThinkingValue] = useState("");
   // 模型列表搜索关键词，仅 model 视图生效
   const [modelSearchQuery, setModelSearchQuery] = useState("");
-
-  // 菜单关闭时退出自定义思考强度输入
-  useEffect(() => {
-    if (!isModelMenuOpen) {
-      setIsCustomThinkingMode(false);
-    }
-  }, [isModelMenuOpen]);
 
   // 关闭菜单或离开模型列表视图时清空搜索词
   useEffect(() => {
@@ -441,9 +437,6 @@ export const ChatInputView = ({
   );
 
   const modelDropdownDir = useDropdownDirection(dropdownRef, isModelMenuOpen);
-  const isCustomThinkingValue = !thinkingOptions.some(
-    (option) => option.value === thinkingValue
-  );
 
   // 模型列表模糊过滤：关键词对 id / ownedBy 做不区分大小写的包含匹配
   const filteredModels = useMemo(() => {
@@ -470,8 +463,9 @@ export const ChatInputView = ({
       renumberImageChips();
       const content = readEditableContent(textareaRef.current);
       handleChange(content);
-      textareaRef.current.dataset.empty =
-        content.trim() === "" ? "true" : "false";
+      textareaRef.current.dataset.empty = isEditableContentEmpty(content)
+        ? "true"
+        : "false";
     }
   }, [handleChange, renumberImageChips, textareaRef]);
 
@@ -1888,37 +1882,6 @@ export const ChatInputView = ({
     [onSendPendingMessageNow]
   );
 
-  const handleOpenCustomThinking = useCallback(() => {
-    setCustomThinkingValue(isCustomThinkingValue ? thinkingValue : "");
-    setIsCustomThinkingMode(true);
-  }, [isCustomThinkingValue, thinkingValue]);
-
-  const handleConfirmCustomThinking = useCallback(async () => {
-    const nextValue = customThinkingValue.trim();
-    if (!nextValue || isSavingThinking) {
-      return;
-    }
-
-    await handleSelectThinking(nextValue);
-    setIsCustomThinkingMode(false);
-  }, [customThinkingValue, handleSelectThinking, isSavingThinking]);
-
-  const handleCustomThinkingKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLInputElement>) => {
-      if (event.key === "Enter") {
-        if (event.nativeEvent.isComposing) {
-          return;
-        }
-
-        event.preventDefault();
-        void handleConfirmCustomThinking();
-      } else if (event.key === "Escape") {
-        setIsCustomThinkingMode(false);
-      }
-    },
-    [handleConfirmCustomThinking]
-  );
-
   return (
     <div className="input-area">
       <ProjectMcpPanel
@@ -2082,6 +2045,26 @@ export const ChatInputView = ({
                   </div>
                 )}
               </div>
+            ) : null}
+          </div>
+        ) : null}
+        {apiConfigs.length === 0 && !isSubAgentConversation && !isLoadingApiConfig ? (
+          <div className="api-config-empty-banner" role="status">
+            <Plug size={14} className="api-config-empty-icon" aria-hidden="true" />
+            <span className="api-config-empty-text">
+              {t("chat.noApiConfigBanner", {
+                defaultValue: "尚未配置 AI API，请先添加 API 配置后再开始对话",
+              })}
+            </span>
+            {onNavigateToView ? (
+              <button
+                type="button"
+                className="api-config-empty-btn"
+                onClick={() => onNavigateToView("api-settings")}
+              >
+                <Settings size={13} aria-hidden="true" />
+                {t("chat.configureApi", { defaultValue: "前往设置" })}
+              </button>
             ) : null}
           </div>
         ) : null}
@@ -2335,11 +2318,18 @@ export const ChatInputView = ({
                   aria-label={labels.selectModel}
                   aria-expanded={isModelMenuOpen}
                   onClick={handleToggleModelMenu}
-                  disabled={isStreaming || isSubAgentConversation}
+                  disabled={
+                    isStreaming ||
+                    isSubAgentConversation ||
+                    apiConfigs.length === 0 ||
+                    !runtimeApiConfig
+                  }
                   title={
                     isSubAgentConversation
                       ? t("chat.subAgentModelFixed")
-                      : labels.selectModel
+                      : apiConfigs.length === 0 || !runtimeApiConfig
+                        ? labels.noApiConfig
+                        : labels.selectModel
                   }
                   type="button"
                 >
@@ -2714,124 +2704,18 @@ export const ChatInputView = ({
                           </div>
                         </>
                       ))}
-                    {modelMenuView === "thinking" &&
-                      (isCustomThinkingMode ? (
-                        <>
-                          <div className="model-menu-header">
-                            <button
-                              aria-label={t("common.back")}
-                              className="model-menu-back"
-                              onClick={() => setModelMenuView("root")}
-                              type="button"
-                            >
-                              <ChevronLeft size={14} />
-                            </button>
-                            <span>{t("chat.customThinkingStrength")}</span>
-                          </div>
-                          <div className="model-manual-input thinking-custom-input">
-                            <input
-                              autoFocus
-                              value={customThinkingValue}
-                              onChange={(event) =>
-                                setCustomThinkingValue(event.target.value)
-                              }
-                              onKeyDown={handleCustomThinkingKeyDown}
-                              placeholder={t("chat.customThinkingPlaceholder")}
-                              className="model-manual-field thinking-custom-field"
-                              maxLength={64}
-                            />
-                            <div className="model-manual-actions thinking-custom-actions">
-                              <button
-                                className="model-manual-btn thinking-custom-btn secondary"
-                                onClick={() => setIsCustomThinkingMode(false)}
-                                type="button"
-                              >
-                                {labels.cancel}
-                              </button>
-                              <button
-                                className="model-manual-btn thinking-custom-btn primary"
-                                onClick={() =>
-                                  void handleConfirmCustomThinking()
-                                }
-                                disabled={
-                                  !customThinkingValue.trim() ||
-                                  isSavingThinking
-                                }
-                                type="button"
-                              >
-                                {labels.confirm}
-                              </button>
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="model-menu-header">
-                            <button
-                              aria-label={t("common.back")}
-                              className="model-menu-back"
-                              onClick={() => setModelMenuView("root")}
-                              type="button"
-                            >
-                              <ChevronLeft size={14} />
-                            </button>
-                            <span>{t("chat.thinkingStrength")}</span>
-                            <small>{requestMethod}</small>
-                          </div>
-                          <div className="model-dropdown-list">
-                            {thinkingOptions.map((option) => {
-                              const ThinkingOptionIcon = option.icon;
-
-                              return (
-                                <button
-                                  key={option.value}
-                                  className={`model-dropdown-item ${
-                                    thinkingValue === option.value
-                                      ? "active"
-                                      : ""
-                                  }`}
-                                  onClick={() =>
-                                    void handleSelectThinking(option.value)
-                                  }
-                                  type="button"
-                                >
-                                  <span className="model-dropdown-item-name with-icon">
-                                    <ThinkingOptionIcon
-                                      size={14}
-                                      className="thinking-option-icon"
-                                    />
-                                    <span>{option.label}</span>
-                                  </span>
-                                  {thinkingValue === option.value && (
-                                    <Check
-                                      size={14}
-                                      className="model-dropdown-check"
-                                    />
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div className="model-dropdown-footer">
-                            <button
-                              className={`model-dropdown-action ${
-                                isCustomThinkingValue ? "active" : ""
-                              }`}
-                              onClick={handleOpenCustomThinking}
-                              type="button"
-                            >
-                              <Keyboard size={14} />
-                              <span>{t("chat.customThinking")}</span>
-                              {isCustomThinkingValue && (
-                                <Check
-                                  size={14}
-                                  className="model-dropdown-check"
-                                />
-                              )}
-                            </button>
-                          </div>
-                        </>
-                      ))}
+                    {modelMenuView === "thinking" && (
+                      <ThinkingStrengthMenu
+                        open={isModelMenuOpen}
+                        value={thinkingValue}
+                        options={thinkingOptions}
+                        subtitle={requestMethod}
+                        showBack
+                        onBack={() => setModelMenuView("root")}
+                        onSelect={(value) => void handleSelectThinking(value)}
+                        saving={isSavingThinking}
+                      />
+                    )}
                     </div>
                 )}
               </div>
@@ -2866,7 +2750,12 @@ export const ChatInputView = ({
                   aria-label="Send"
                   title="Send"
                   onClick={handleSend}
-                  disabled={!value.trim() || isCompacting}
+                  disabled={
+                    !value.trim() ||
+                    isCompacting ||
+                    apiConfigs.length === 0 ||
+                    !runtimeApiConfig
+                  }
                   type="button"
                 >
                   <ArrowUp size={16} />

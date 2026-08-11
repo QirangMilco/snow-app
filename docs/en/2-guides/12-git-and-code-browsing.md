@@ -39,6 +39,17 @@ A manual refresh reloads both status and the graph when Graph is active.
 - **Synchronization**: the toolbar provides pull, push, and manual status refresh. When the panel opens it also runs a background fetch immediately and repeats it every 60 seconds while the window is visible. Successful fetches refresh ahead/behind counts for both local and SSH repositories; unattended errors such as offline, authentication, or no remote are ignored;
 - **Feedback**: ahead/behind counts appear at the top and a behind badge decorates pull. Pull/push failures are shown to the user, while background fetch never interrupts the panel.
 
+```mermaid
+flowchart TD
+    A[Stage files<br/>at least one staged file] --> B{Commit message}
+    B -- AI generated --> C[Click the star button<br/>reads the staged diff, basicModel streams it]
+    C --> D[Generated text lands in the input<br/>still editable by hand]
+    B -- manual --> D
+    D --> E[Commit<br/>non-empty message]
+    E --> F[pull / push sync<br/>panel background-fetches every 60s]
+    F --> G[Feedback<br/>ahead/behind badges, failures shown]
+```
+
 > **AI collaboration**: after the AI changes files, use `/file-changes` in chat or the Git panel to inspect and stage them. Asking the AI to execute Git commands in a terminal is separate from using these panel controls and remains subject to tool authorization and sensitive-command policy.
 
 ## 2. Project Explorer and Workspace Search

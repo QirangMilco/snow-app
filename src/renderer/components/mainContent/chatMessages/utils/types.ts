@@ -1,4 +1,9 @@
 import type { HookExecutionRecord, ToolCallInfo } from "./conversationTypes";
+import type {
+  IncompleteVariant,
+  NormalizedInterruptionReason,
+  NormalizedRecoveryOutcome,
+} from "./responseDisposition";
 export type UserMessageProps = {
   content: string;
   isStreaming: boolean;
@@ -21,6 +26,9 @@ export type AiResponseProps = {
   isRetrying?: boolean;
   retryAttempt?: number;
   retryError?: string;
+  incompleteVariant?: IncompleteVariant;
+  interruptionReason?: NormalizedInterruptionReason;
+  recoveryOutcome?: NormalizedRecoveryOutcome;
   /**
    * Cumulative token count produced by the Rust backend for the current
    * streaming iteration. Forwarded to {@link StreamCursor} so the progress

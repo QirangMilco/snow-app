@@ -7,7 +7,9 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::storage::services::checkpoint::CheckpointWorktreeCapture;
-use crate::storage::services::system_settings::McpProjectScopeSettings;
+use crate::storage::services::system_settings::{
+    McpGlobalScopeSettings, McpProjectScopeSettings,
+};
 
 enum ToolCheckpointCapture {
     None,
@@ -30,8 +32,8 @@ use super::servers::filesystem::FilesystemService;
 use super::servers::grep::GrepService;
 use super::servers::imagegen::ImageGenService;
 use super::servers::remote_workspace::{
-    is_ssh_path, resolve_remote_project_workspace, resolve_remote_workspace_path,
-    RemoteWorkspaceCallback,
+    is_ssh_path, is_windows_absolute_path, resolve_remote_project_workspace,
+    resolve_remote_workspace_path, RemoteWorkspaceCallback,
 };
 use super::servers::skills::SkillsService;
 use super::servers::terminal::{TerminalCommandCallback, TerminalService};
@@ -51,6 +53,14 @@ pub struct McpToolDefinition {
 
 #[napi(object)]
 pub struct McpProjectToolStatus {
+    pub name: String,
+    pub description: String,
+    pub input_schema_json: String,
+    pub enabled: bool,
+}
+
+#[napi(object)]
+pub struct McpToolStatus {
     pub name: String,
     pub description: String,
     pub input_schema_json: String,
@@ -134,9 +144,10 @@ pub async fn list_mcp_tools() -> napi::Result<Vec<McpToolDefinition>> {
 
 pub async fn list_mcp_server_tools(
     config_server_id: String,
-) -> napi::Result<Vec<McpToolDefinition>> {
+) -> napi::Result<Vec<McpToolStatus>> {
     let tools = super::external::discover_server_tools(None, &config_server_id).await?;
-    Ok(to_tool_definitions(&tools))
+    let global_scope = load_global_scope().await?;
+    Ok(to_tool_statuses(&tools, global_scope.as_ref()))
 }
 
 pub async fn list_mcp_project_servers(
@@ -349,6 +360,108 @@ pub async fn set_mcp_project_tool_enabled(
     .await
 }
 
+/// 全局启停单个工具：校验工具存在于全局可见的工具集（内置或全局外部服务器）。
+pub async fn set_mcp_tool_enabled(tool_name: String, enabled: bool) -> napi::Result<()> {
+    let tool_name = required_value(tool_name, "MCP tool name")?;
+    ensure_global_tool_exists(&tool_name).await?;
+
+    with_database_path(move |database_path| {
+        crate::storage::services::system_settings::set_mcp_global_tool_enabled(
+            &database_path,
+            &tool_name,
+            enabled,
+        )
+    })
+    .await
+}
+
+/// 全局批量启停工具：逐个校验存在性，全部通过后一次写入存储。
+pub async fn set_mcp_tools_enabled(tool_names: Vec<String>, enabled: bool) -> napi::Result<()> {
+    for tool_name in &tool_names {
+        let tool_name = required_value(tool_name.clone(), "MCP tool name")?;
+        ensure_global_tool_exists(&tool_name).await?;
+    }
+
+    with_database_path(move |database_path| {
+        crate::storage::services::system_settings::set_mcp_global_tools_enabled(
+            &database_path,
+            &tool_names,
+            enabled,
+        )
+    })
+    .await
+}
+
+/// 项目批量启停工具：逐个校验存在性（builtin/external 分支），全部通过后一次写入存储。
+pub async fn set_mcp_project_tools_enabled(
+    project_id: String,
+    tool_names: Vec<String>,
+    enabled: bool,
+) -> napi::Result<()> {
+    let project_id = required_value(project_id, "Project id")?;
+    for tool_name in &tool_names {
+        let tool_name = required_value(tool_name.clone(), "MCP tool name")?;
+        let tool_exists = if let Some(server_id) = server_id_from_tool_name(&tool_name) {
+            if get_builtin_servers_with_tools()
+                .iter()
+                .any(|(builtin_server_id, _)| builtin_server_id == server_id)
+            {
+                get_builtin_tools()
+                    .iter()
+                    .any(|tool| tool.full_name() == tool_name)
+            } else {
+                super::external::resolve_project_scope_server(Some(&project_id), &tool_name)
+                    .await?
+                    .is_some()
+            }
+        } else {
+            false
+        };
+        if !tool_exists {
+            return Err(Error::new(
+                Status::InvalidArg,
+                format!("Unknown MCP project tool: {tool_name}"),
+            ));
+        }
+    }
+
+    with_database_path(move |database_path| {
+        crate::storage::services::system_settings::set_mcp_project_tools_enabled(
+            &database_path,
+            &project_id,
+            &tool_names,
+            enabled,
+        )
+    })
+    .await
+}
+
+/// 校验工具存在于全局可见的工具集（内置工具或已配置的全局外部服务器）中。
+async fn ensure_global_tool_exists(tool_name: &str) -> Result<()> {
+    if let Some(server_id) = server_id_from_tool_name(tool_name) {
+        if get_builtin_servers_with_tools()
+            .iter()
+            .any(|(builtin_server_id, _)| builtin_server_id == server_id)
+        {
+            if get_builtin_tools()
+                .iter()
+                .any(|tool| tool.full_name() == tool_name)
+            {
+                return Ok(());
+            }
+        } else if super::external::resolve_project_scope_server(None, tool_name)
+            .await?
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
+    Err(Error::new(
+        Status::InvalidArg,
+        format!("Unknown MCP tool: {tool_name}"),
+    ))
+}
+
 fn to_tool_definitions(tools: &[McpTool]) -> Vec<McpToolDefinition> {
     tools
         .iter()
@@ -378,6 +491,26 @@ fn to_project_tool_statuses(
         .collect()
 }
 
+/// 工具状态转换：enabled 反映全局 scope 黑名单（默认全部启用）。
+fn to_tool_statuses(
+    tools: &[McpTool],
+    global_scope: Option<&McpGlobalScopeSettings>,
+) -> Vec<McpToolStatus> {
+    tools
+        .iter()
+        .map(|tool| {
+            let full_name = tool.full_name();
+            McpToolStatus {
+                enabled: !global_scope
+                    .is_some_and(|scope| scope.disabled_tool_names.contains(&full_name)),
+                name: full_name,
+                description: tool.description.clone(),
+                input_schema_json: serialize_input_schema(tool),
+            }
+        })
+        .collect()
+}
+
 fn serialize_input_schema(tool: &McpTool) -> String {
     serde_json::to_string(&tool.input_schema).unwrap_or_else(|_| "{}".to_string())
 }
@@ -399,6 +532,7 @@ pub async fn collect_all_mcp_tools(
     include_plan_mode_tool: bool,
 ) -> Result<Vec<McpTool>> {
     let scope = load_project_scope(project_id).await?;
+    let global_scope = load_global_scope().await?;
 
     // 内置服务全局开关：被禁用的服务其工具不进入模型可见列表。
     let builtin_statuses = load_builtin_services_status().await?;
@@ -411,8 +545,12 @@ pub async fn collect_all_mcp_tools(
     // Image generation tool is only exposed when at least one channel
     // (OpenAI / Gemini) is configured and enabled in Settings -> Image
     // generation; when both are unconfigured the tool disappears entirely.
-    let imagegen_configured =
-        tokio::task::spawn_blocking(|| crate::mcp::servers::imagegen::is_imagegen_configured())
+    // The non-sensitive summary of the current default channel is also
+    // loaded here (single blocking read) and injected into the tool
+    // definition so the agent sees the real model/provider instead of
+    // guessing from static text (issue #63).
+    let imagegen_context =
+        tokio::task::spawn_blocking(|| crate::mcp::servers::imagegen::default_channel_context())
             .await
             .map_err(|error| {
                 Error::new(
@@ -420,6 +558,7 @@ pub async fn collect_all_mcp_tools(
                     format!("Failed to check image generation configuration: {error}"),
                 )
             })??;
+    let imagegen_configured = imagegen_context.is_some();
 
     let mut tools = get_builtin_tools()
         .into_iter()
@@ -445,18 +584,36 @@ pub async fn collect_all_mcp_tools(
             if tool.server_id == "imagegen" && !imagegen_configured {
                 return false;
             }
-            tool_is_enabled(tool, scope.as_ref())
+            tool_is_enabled(tool, global_scope.as_ref(), scope.as_ref())
         })
         .collect::<Vec<_>>();
 
+    // Inject the current default image channel summary (non-sensitive, no
+    // API key) into the imagegen-generate description so the agent can see
+    // the actual configured channel/provider/model/size/quality.
+    if let Some(context) = imagegen_context {
+        if let Some(tool) = tools.iter_mut().find(|tool| {
+            tool.server_id == "imagegen" && tool.name == super::servers::imagegen::TOOL_GENERATE
+        }) {
+            tool.description =
+                format!("{}\n\nCurrent configuration:\n{}", tool.description, context);
+        }
+    }
+
     if let Some(skill_tool) = SkillsService::new().tool(project_id).await? {
-        if tool_is_enabled(&skill_tool, scope.as_ref()) {
+        if tool_is_enabled(&skill_tool, global_scope.as_ref(), scope.as_ref()) {
             tools.push(skill_tool);
         }
     }
 
     match super::external::discover_tools(project_id, scope.as_ref()).await {
-        Ok(external_tools) => tools.extend(external_tools),
+        // External tools are already filtered by the project scope inside
+        // discover_tools; apply the global blacklist on top.
+        Ok(external_tools) => tools.extend(
+            external_tools
+                .into_iter()
+                .filter(|tool| tool_is_enabled(tool, global_scope.as_ref(), None)),
+        ),
         Err(error) => eprintln!("Failed to discover external MCP tools: {error}"),
     }
     Ok(tools)
@@ -572,7 +729,18 @@ pub async fn collect_allowed_mcp_tools(
 /// (saving tokens) until the user opts in.
 const DEFAULT_DISABLED_SERVER_IDS: &[&str] = &["terminal"];
 
-fn tool_is_enabled(tool: &McpTool, scope: Option<&McpProjectScopeSettings>) -> bool {
+fn tool_is_enabled(
+    tool: &McpTool,
+    global_scope: Option<&McpGlobalScopeSettings>,
+    scope: Option<&McpProjectScopeSettings>,
+) -> bool {
+    // The global blacklist has the highest priority: a tool disabled
+    // globally stays disabled regardless of project scope.
+    if global_scope
+        .is_some_and(|global| global.disabled_tool_names.contains(&tool.full_name()))
+    {
+        return false;
+    }
     // Default-disabled servers are excluded when there is no project
     // scope (no project context = user hasn't opted in).
     if DEFAULT_DISABLED_SERVER_IDS.contains(&tool.server_id.as_str()) {
@@ -614,11 +782,19 @@ fn builtin_server_name(server_id: &str) -> &str {
         "codelens" => "CodeLens",
         "terminal" => "Terminal Control",
         "config" => "Config",
+        "imagegen" => "Image Generation",
         _ => server_id,
     }
 }
 
 async fn ensure_project_tool_enabled(project_id: Option<&str>, tool_name: &str) -> Result<()> {
+    let global_scope = load_global_scope().await?;
+    if global_scope.is_some_and(|scope| scope.disabled_tool_names.contains(tool_name)) {
+        return Err(Error::new(
+            Status::GenericFailure,
+            format!("MCP tool is disabled globally: {tool_name}"),
+        ));
+    }
     let Some(scope) = load_project_scope(project_id).await? else {
         return Ok(());
     };
@@ -676,6 +852,15 @@ async fn load_project_scope(project_id: Option<&str>) -> Result<Option<McpProjec
             &project_id,
         )
         .map(Some)
+    })
+    .await
+}
+
+/// 加载全局 MCP 工具级 scope（无记录时 storage 层返回默认空黑名单）。
+async fn load_global_scope() -> Result<Option<McpGlobalScopeSettings>> {
+    with_database_path(move |database_path| {
+        crate::storage::services::system_settings::get_mcp_global_scope_settings(&database_path)
+            .map(Some)
     })
     .await
 }
@@ -1288,6 +1473,11 @@ async fn prepare_remote_workspace_args(
     let Some(path) = args.get(path_field).and_then(Value::as_str) else {
         return Ok((args, false));
     };
+    // Windows 盘符与 UNC 路径属于 App Host（本机）路径，不能拼入 SSH
+    // 工作区；直接走本机通道，由 Electron 在本机读取。
+    if is_windows_absolute_path(path) {
+        return Ok((args, false));
+    }
     let remote_project_workspace = resolve_remote_project_workspace(project_id).await?;
     if is_ssh_path(path) {
         if let Some(workspace_path) = remote_project_workspace.as_deref() {

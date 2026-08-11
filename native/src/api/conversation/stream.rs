@@ -22,6 +22,76 @@ fn normalize_non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
+/// Applies a per-request thinking strength override onto a profile's
+/// config_json (in-memory only — the stored profile is never mutated).
+/// Mirrors the renderer's configThinking.ts: the thinking section matching
+/// the request method is replaced with the override; "none" disables thinking
+/// (enabled: false). The provider payload builders
+/// (build_chat_reasoning_effort / build_responses_reasoning /
+/// build_anthropic_thinking / build_gemini_thinking_config) then pick up the
+/// override naturally.
+fn apply_thinking_strength_override(
+    config_json: &str,
+    request_method: &str,
+    strength: &str,
+) -> String {
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(config_json).unwrap_or_else(|_| serde_json::json!({}));
+    let enabled = strength != "none";
+
+    if !parsed
+        .get("snowcfg")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        parsed["snowcfg"] = serde_json::json!({});
+    }
+    let snowcfg = parsed["snowcfg"].as_object_mut();
+
+    if let Some(snowcfg) = snowcfg {
+        match request_method {
+            "anthropic" => {
+                snowcfg.insert(
+                    "thinking".to_string(),
+                    serde_json::json!({
+                        "type": "adaptive",
+                        "enabled": enabled,
+                        "effort": strength,
+                    }),
+                );
+            }
+            "gemini" => {
+                snowcfg.insert(
+                    "geminiThinking".to_string(),
+                    serde_json::json!({
+                        "enabled": enabled,
+                        "thinkingLevel": strength,
+                    }),
+                );
+            }
+            "responses" => {
+                snowcfg.insert(
+                    "responsesReasoning".to_string(),
+                    serde_json::json!({
+                        "enabled": enabled,
+                        "effort": strength,
+                    }),
+                );
+            }
+            _ => {
+                snowcfg.insert(
+                    "chatThinking".to_string(),
+                    serde_json::json!({
+                        "enabled": enabled,
+                        "reasoning_effort": strength,
+                    }),
+                );
+            }
+        }
+    }
+
+    serde_json::to_string(&parsed).unwrap_or_else(|_| config_json.to_string())
+}
+
 fn resolve_sub_agent_profile(
     explicit_api_profile: Option<&str>,
     deprecated_config_profile: Option<&str>,
@@ -154,12 +224,24 @@ pub async fn create_response_stream(
 
     let cancel_token = crate::api::cancel::create_and_register(&stream_id);
 
-    let result = match context.api_config.request_method.as_str() {
+    // Per-request thinking strength override (e.g. scheduled-task runs):
+    // overlay it onto the resolved profile's config_json in memory so the
+    // provider payload builders pick it up. The stored profile is untouched.
+    let mut api_config = context.api_config;
+    if let Some(strength) = normalize_non_empty(request.thinking_strength.as_deref()) {
+        api_config.config_json = apply_thinking_strength_override(
+            &api_config.config_json,
+            &api_config.request_method,
+            strength,
+        );
+    }
+
+    let result = match api_config.request_method.as_str() {
         "chat" => {
             create_chat_completion_response_stream(
                 request,
                 context.database_path,
-                context.api_config,
+                api_config,
                 context.custom_headers,
                 on_chunk,
                 cancel_token.clone(),
@@ -170,7 +252,7 @@ pub async fn create_response_stream(
             create_response_stream_with_context(
                 request,
                 context.database_path,
-                context.api_config,
+                api_config,
                 context.custom_headers,
                 on_chunk,
                 cancel_token.clone(),
@@ -181,7 +263,7 @@ pub async fn create_response_stream(
             create_anthropic_response_stream(
                 request,
                 context.database_path,
-                context.api_config,
+                api_config,
                 context.custom_headers,
                 on_chunk,
                 cancel_token.clone(),
@@ -192,7 +274,7 @@ pub async fn create_response_stream(
             create_gemini_response_stream(
                 request,
                 context.database_path,
-                context.api_config,
+                api_config,
                 context.custom_headers,
                 on_chunk,
                 cancel_token.clone(),
@@ -365,6 +447,8 @@ pub async fn create_response_stream(
                 thinking: String::new(),
                 model: failure_model,
                 status: "error".to_string(),
+                interruption_reason: None,
+                recovery_outcome: None,
                 tool_calls_json: "[]".to_string(),
                 token_usage: crate::api::responses::TokenUsage {
                     input_tokens: 0,

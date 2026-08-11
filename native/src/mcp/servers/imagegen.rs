@@ -32,7 +32,7 @@ use super::super::service::McpService;
 use super::super::tools::McpTool;
 
 const SERVER_ID: &str = "imagegen";
-const TOOL_GENERATE: &str = "generate";
+pub const TOOL_GENERATE: &str = "generate";
 /// 视觉分析工具：读取项目中的图片（如 UI 设计稿）并用视觉模型生成描述，
 /// 供主模型理解设计后编码还原（前端页面等）。
 const TOOL_DESCRIBE: &str = "image-describe";
@@ -1056,7 +1056,7 @@ impl McpService for ImageGenService {
         vec![McpTool {
             server_id: SERVER_ID.to_string(),
             name: TOOL_GENERATE.to_string(),
-            description: "Generate or edit image(s) using the INDEPENDENT image-generation configuration from Settings -> Image generation (separate from the conversation API; no built-in default model). TEXT-TO-IMAGE: pass only `prompt`. IMAGE-TO-IMAGE (edit / reference / restyle): pass `images` (reference images extracted from the user's attached images — either base64 from the @@image:...@@ tags, or the exact [Reference image #N for imagegen-generate: {...}] JSON blocks present in textified user messages when the main model is text-only) plus an edit `prompt`; the server resolves `path` references itself, so you NEVER need to copy huge base64 strings. OpenAI uses POST /v1/images/edits, Gemini embeds inlineData parts. Supported backends: OpenAI-compatible (gpt-image / dall-e) and Google Gemini Imagen (optional Google Search grounding). Provider auto-detected from the configured base URL unless overridden. USE THIS when the user asks to create, draw, generate, render, edit, restyle, or vary an image — ESPECIALLY when the user attached reference image(s): edit/vary THOSE images (image-to-image) instead of generating a new image from the text description alone. RENDERING RULE: after the tool returns, the generated image(s) are automatically shown to the user via a dedicated image UI component -- you MUST NOT use Markdown image syntax (![...](path)) to display them, and you MUST NOT echo the returned file paths back to the user; just reply with a natural, brief text response (e.g. what you drew, or asking if they want changes). TRANSPARENT BACKGROUND: when the user needs a transparent-background image (desktop pet, sticker, logo overlay, PNG cutout), pass background=\"transparent\" AND outputFormat=\"png\" AND prefer model gpt-image-1, the only model that can actually output transparency. gpt-image-2 CANNOT produce transparent backgrounds: requesting \"transparent\" there is silently downgraded to \"opaque\", so never expect transparency from gpt-image-2. dall-e-3 and Gemini ignore the background parameter entirely (always opaque). If the configured/available model cannot do transparency, tell the user and either switch to gpt-image-1 or generate with a plain solid background instead. MULTIPLE IMAGES / PARALLEL GENERATION: ONE call generates ONE image. To produce several images (e.g. a set with different styles or themes), call this tool MULTIPLE TIMES in parallel — one call per image, each with its own single `prompt` (and its own `images` group when editing). Parallel generation is ONLY possible through multiple separate calls: do NOT pass several prompts, a batch of styles, or `n` > 1 in a single call. (The legacy `n` / `prompts` / `requestImages` parameters remain accepted for backward compatibility but are NOT the way to generate multiple different images.)"
+            description: "Generate or edit image(s) using the INDEPENDENT image-generation configuration from Settings -> Image generation (separate from the conversation API; no built-in default model). TEXT-TO-IMAGE: pass only `prompt`. IMAGE-TO-IMAGE (edit / reference / restyle): pass `images` (reference images extracted from the user's attached images — either base64 from the @@image:...@@ tags, or the exact [Reference image #N for imagegen-generate: {...}] JSON blocks present in textified user messages when the main model is text-only) plus an edit `prompt`; the server resolves `path` references itself, so you NEVER need to copy huge base64 strings. OpenAI uses POST /v1/images/edits, Gemini embeds inlineData parts. Supported backends: OpenAI-compatible (gpt-image / dall-e) and Google Gemini Imagen (optional Google Search grounding). Provider auto-detected from the configured base URL unless overridden. IMPORTANT: your current default channel, provider, model, size and quality are listed at the end of this description under \"Current configuration:\". For normal requests OMIT both `model` and `provider` so the configured defaults are inherited — only pass them when the user EXPLICITLY asks to override the model or channel (e.g. \"use Gemini\", \"use gpt-image-2\"); guessing models from this static text is what causes 404s. USE THIS when the user asks to create, draw, generate, render, edit, restyle, or vary an image — ESPECIALLY when the user attached reference image(s): edit/vary THOSE images (image-to-image) instead of generating a new image from the text description alone. RENDERING RULE: after the tool returns, the generated image(s) are automatically shown to the user via a dedicated image UI component -- you MUST NOT use Markdown image syntax (![...](path)) to display them, and you MUST NOT echo the returned file paths back to the user; just reply with a natural, brief text response (e.g. what you drew, or asking if they want changes). TRANSPARENT BACKGROUND: when the user needs a transparent-background image (desktop pet, sticker, logo overlay, PNG cutout), pass background=\"transparent\" AND outputFormat=\"png\" AND prefer model gpt-image-1, the only model that can actually output transparency. gpt-image-2 CANNOT produce transparent backgrounds: requesting \"transparent\" there is silently downgraded to \"opaque\", so never expect transparency from gpt-image-2. dall-e-3 and Gemini ignore the background parameter entirely (always opaque). If the configured/available model cannot do transparency, tell the user and either switch to gpt-image-1 or generate with a plain solid background instead. MULTIPLE IMAGES / PARALLEL GENERATION: ONE call generates ONE image. To produce several images (e.g. a set with different styles or themes), call this tool MULTIPLE TIMES in parallel — one call per image, each with its own single `prompt` (and its own `images` group when editing). Parallel generation is ONLY possible through multiple separate calls: do NOT pass several prompts, a batch of styles, or `n` > 1 in a single call. (The legacy `n` / `prompts` / `requestImages` parameters remain accepted for backward compatibility but are NOT the way to generate multiple different images.)"
                 .to_string(),
             input_schema: json!({
                 "type": "object",
@@ -1105,11 +1105,11 @@ impl McpService for ImageGenService {
                     },
                     "model": {
                         "type": "string",
-                        "description": "Image model to override the one configured in Settings -> Image generation. OpenAI: gpt-image-1, gpt-image-2, dall-e-3. Gemini (recommended Nano Banana family): gemini-3.1-flash-image (Nano Banana 2, default pick), gemini-3.1-flash-lite-image (Nano Banana 2 Lite, fastest/cheapest, 1K only), gemini-3-pro-image (Nano Banana Pro, up to 14 reference images + 4K + interleaved text), gemini-2.5-flash-image (legacy). NOTE: Imagen models are deprecated and shut down 2026-08-17. CAPABILITY RULES (sending unsupported requests yields a 400): dall-e-3 is text-to-image ONLY (no reference images) and always generates exactly 1 image (n>1 is clamped to 1); imagen models are text-to-image only too; gpt-image / Nano Banana / gemini-2.5-flash-image accept reference images. Omit to use the configured model. TRANSPARENT BACKGROUND: only gpt-image-1 can output transparent PNGs; gpt-image-2 and dall-e-3 cannot (transparent falls back to opaque), Gemini is always opaque — pick gpt-image-1 whenever the user asks for a transparent background / cutout / sticker / desktop pet.",
+                        "description": "Image model to override the one configured in Settings -> Image generation. OpenAI: gpt-image-1, gpt-image-2, dall-e-3. Gemini (recommended Nano Banana family): gemini-3.1-flash-image (Nano Banana 2, default pick), gemini-3.1-flash-lite-image (Nano Banana 2 Lite, fastest/cheapest, 1K only), gemini-3-pro-image (Nano Banana Pro, up to 14 reference images + 4K + interleaved text), gemini-2.5-flash-image (legacy). NOTE: Imagen models are deprecated and shut down 2026-08-17. CAPABILITY RULES (sending unsupported requests yields a 400): dall-e-3 is text-to-image ONLY (no reference images) and always generates exactly 1 image (n>1 is clamped to 1); imagen models are text-to-image only too; gpt-image / Nano Banana / gemini-2.5-flash-image accept reference images. TRANSPARENT BACKGROUND: only gpt-image-1 can output transparent PNGs; gpt-image-2 and dall-e-3 cannot (transparent falls back to opaque), Gemini is always opaque — pick gpt-image-1 whenever the user asks for a transparent background / cutout / sticker / desktop pet. IMPORTANT: only set this when the user EXPLICITLY asks to override the configured model (see \"Current configuration:\" at the end of the tool description); for normal requests OMIT it so the configured default is inherited. Passing a model that does not match the selected channel's protocol fails locally instead of being sent upstream.",
                     },
                     "provider": {
                         "type": "string",
-                        "description": "Image channel override: a channel ID or channel name configured in Settings -> Image generation (config-list scope=imagegen lists them), or a protocol type \"openai\" (OpenAI-compatible Images API) / \"gemini\" (Google Gemini Imagen) to pick the first usable channel of that type. Omit or \"auto\" to use the first usable channel.",
+                        "description": "Image channel override: a channel ID or channel name configured in Settings -> Image generation (config-list scope=imagegen lists them), or a protocol type \"openai\" (OpenAI-compatible Images API) / \"gemini\" (Google Gemini Imagen) to pick the first usable channel of that type. Omit or \"auto\" to use the current default channel (see \"Current configuration:\" at the end of the tool description). IMPORTANT: only set this when the user EXPLICITLY asks to override the channel; for normal requests OMIT it. If you must override the model, prefer passing `provider` together with it so the model is sent to the right channel.",
                         "default": "auto"
                     },
                     "size": {
@@ -1990,12 +1990,54 @@ pub fn is_imagegen_configured() -> napi::Result<bool> {
     Ok(load_imagegen_settings()?.has_enabled_channel())
 }
 
+/// 当前默认（第一个可用）渠道的非敏感摘要，注入到 imagegen-generate 工具
+/// 定义中，让 Agent 看到实际配置而不再从静态说明里猜测模型/渠道。
+/// 返回 None 表示没有任何可用渠道（此时工具不应暴露）。
+/// 绝不包含 API Key、Base URL 等敏感信息。调用方应通过 spawn_blocking
+/// 执行（内部有 SQLite 读取）。
+pub fn default_channel_context() -> napi::Result<Option<String>> {
+    let settings = load_imagegen_settings()?;
+    let Some(channel) = settings.channels.iter().find(|channel| channel.is_usable()) else {
+        return Ok(None);
+    };
+    let mut parts = vec![format!(
+        "Current default image channel: {}",
+        channel.display_name()
+    )];
+    let channel_id = channel.id.trim();
+    if !channel_id.is_empty() {
+        parts.push(format!("Channel ID: {channel_id}"));
+    }
+    parts.push(format!("Provider: {}", channel.provider));
+    parts.push(format!("Configured model: {}", channel.model.trim()));
+    let default_size = channel.default_size.trim();
+    if !default_size.is_empty() {
+        parts.push(format!("Default size: {default_size}"));
+    }
+    let default_quality = channel.default_quality.trim();
+    if !default_quality.is_empty() {
+        parts.push(format!("Default quality: {default_quality}"));
+    }
+    parts.push(
+        "For normal requests OMIT both `model` and `provider` to inherit these configured defaults; only pass them when the user explicitly asks to override the model or channel."
+            .to_string(),
+    );
+    Ok(Some(parts.join("\n")))
+}
+
 /// 解析生图渠道：显式 `provider` 参数优先；`auto`/缺省时选择第一个可用
 /// 渠道（按设置中的渠道顺序）。`provider` 参数支持三种匹配方式：
 /// - 协议类型："openai" / "gemini"（匹配该协议的第一个可用渠道）
 /// - 渠道 ID（设置面板自动生成，config-list 可查）
 /// - 渠道名称（用户自定义显示名）
 /// 渠道未启用或凭据不全时报错并列出可用渠道，方便 agent 修正参数。
+///
+/// 显式 `model` 与渠道的一致性保护（issue #63）：
+/// - `auto`/缺省 + 显式 model：优先路由到「配置模型与显式模型相同」的可用
+///   渠道；找不到时对「明显跨协议」组合（Gemini 模型名发给 OpenAI 渠道等）
+///   本地报错，而不是发到上游后得到 404。
+/// - 显式 `provider` + 显式 model：尊重显式选择，不做跨协议拦截（OpenAI
+///   兼容中转站可能使用 gemini-* 等自定义模型名）。
 fn resolve_channel<'a>(
     args: &Value,
     settings: &'a ImageGenSettings,
@@ -2005,6 +2047,14 @@ fn resolve_channel<'a>(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty() && *value != "auto")
+        .map(str::to_string);
+
+    // 显式 model（Agent 猜测或用户明确要求覆盖时才会出现）
+    let explicit_model = args
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(str::to_string);
 
     match requested.as_deref() {
@@ -2031,14 +2081,58 @@ fn resolve_channel<'a>(
                 ))),
             }
         }
-        None => match settings.channels.iter().find(|channel| channel.is_usable()) {
-            Some(channel) => Ok((channel.provider.as_str(), channel)),
-            None => Err(Error::from_reason(format!(
-                "No image generation channel configured. Configure at least one channel in Settings -> Image generation (API key + model), then the imagegen-generate tool becomes available. {}",
-                available_channels_summary(settings)
-            ))),
-        },
+        None => {
+            // auto / 缺省 + 显式 model：先尝试路由到配置模型匹配的渠道
+            if let Some(model) = explicit_model.as_deref() {
+                if let Some(channel) = settings.channels.iter().find(|channel| {
+                    channel.is_usable() && channel.model.trim().eq_ignore_ascii_case(model)
+                }) {
+                    return Ok((channel.provider.as_str(), channel));
+                }
+            }
+            let Some(channel) = settings.channels.iter().find(|channel| channel.is_usable()) else {
+                return Err(Error::from_reason(format!(
+                    "No image generation channel configured. Configure at least one channel in Settings -> Image generation (API key + model), then the imagegen-generate tool becomes available. {}",
+                    available_channels_summary(settings)
+                )));
+            };
+            // 明显跨协议错配：本地拦截，避免把 Gemini 模型名发给
+            // OpenAI-compatible 渠道后得到上游 404。
+            if let Some(model) = explicit_model.as_deref() {
+                if let Some(reason) = cross_protocol_mismatch(model, &channel.provider) {
+                    return Err(Error::from_reason(format!(
+                        "Model \"{model}\" does not match the default image channel \"{}\" (provider: {}, configured model: {}). {reason} Omit `model` to inherit the configured default, or pass `provider` with a channel that supports this model. {}",
+                        channel.display_name(),
+                        channel.provider,
+                        channel.model.trim(),
+                        available_channels_summary(settings)
+                    )));
+                }
+            }
+            Ok((channel.provider.as_str(), channel))
+        }
     }
+}
+
+/// 显式 model 与渠道协议「明显」跨协议错配的检测。仅拦截关键词级别的
+/// 冲突（Gemini/Imagen 模型名发给 OpenAI 渠道、OpenAI 模型名发给 Gemini
+/// 渠道），避免误伤自定义模型名；显式指定 provider 时不调用（用户明确
+/// 选择渠道，即使模型名奇怪也应尊重，例如 OpenAI 兼容中转站）。
+fn cross_protocol_mismatch(model: &str, provider: &str) -> Option<String> {
+    let model_lower = model.to_lowercase();
+    if provider == "openai" && (model_lower.starts_with("gemini") || model_lower.contains("imagen"))
+    {
+        return Some(format!(
+            "\"{model}\" is a Google Gemini/Imagen model name, which is incompatible with the OpenAI-compatible Images API."
+        ));
+    }
+    if provider == "gemini" && (model_lower.starts_with("gpt-image") || model_lower.starts_with("dall-e"))
+    {
+        return Some(format!(
+            "\"{model}\" is an OpenAI model name, which is incompatible with the Gemini Imagen API."
+        ));
+    }
+    None
 }
 
 /// 可用渠道摘要（列出 id / 名称 / 协议，帮助 agent 通过 provider 参数指定渠道）。

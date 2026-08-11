@@ -6,6 +6,7 @@ mod git;
 mod ide;
 mod images;
 mod pets;
+pub(crate) mod pre_script;
 mod sample;
 mod sphere_layout;
 mod storage;

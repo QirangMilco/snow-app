@@ -57,11 +57,16 @@ const clamp = (value: number, min: number, max: number): number =>
  * 此组件运行在 KeyboardShortcutsProvider 和 ChatConversationProvider 内部，
  * 负责：
  * 1. 调用 useKeyboardShortcuts() 启动 document keydown 监听
- * 2. 注册 6 个快捷键动作的处理器：
+ * 2. 注册快捷键动作的处理器：
  *    - cancelSession：直接调用 handleAbort
- *    - 其余 5 个：通过 shortcutEvents 事件总线分发到各目标组件
+ *    - openSearch / openMemo / openTodo / cycleProject /
+ *      openProjectExplorer / cycleApiProfile：通过 shortcutEvents
+ *      事件总线分发到各目标组件
+ *    - togglePet：读取宠物设置并取反（主进程负责创建/收起宠物窗口）
  *
  * 注册通过 registerHandler 完成，handler 使用 ref 保持最新值。
+ * 注：toggleWindow 不在此注册——它由主进程 globalShortcut 处理，
+ * 窗口隐藏时也要能呼出，渲染进程 keydown 无法覆盖该场景。
  */
 const ShortcutHandlerBridge = (): null => {
   const { registerHandler } = useKeyboardShortcutsSettings();
@@ -101,6 +106,13 @@ const ShortcutHandlerBridge = (): null => {
     const unsubCycleApiProfile = registerHandler("cycleApiProfile", () => {
       shortcutEvents.emit("open-api-profile-menu");
     });
+    const unsubTogglePet = registerHandler("togglePet", () => {
+      // 切换宠物启停：读取当前设置并取反，主进程 pets:set-enabled
+      // 负责创建/收起宠物窗口。
+      void window.snow.getPetSettings().then((petSettings) => {
+        void window.snow.setPetEnabled(!petSettings.enabled);
+      });
+    });
 
     return () => {
       unsubCancel();
@@ -110,6 +122,7 @@ const ShortcutHandlerBridge = (): null => {
       unsubCycle();
       unsubExplorer();
       unsubCycleApiProfile();
+      unsubTogglePet();
     };
   }, [registerHandler]);
 

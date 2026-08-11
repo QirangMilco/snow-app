@@ -4,11 +4,17 @@ import type {
   ChatConversationRecord,
   ChatMessageRecord,
   CheckpointFileChange,
+  ScheduledTaskRunOptions,
   TokenUsage,
   UserQuestionRequest,
 } from "../../../../../preload";
 import type { NotificationConversationTarget } from "../../../../../shared/notification";
 import type { Dispatch, SetStateAction } from "react";
+import type {
+  IncompleteVariant,
+  NormalizedInterruptionReason,
+  NormalizedRecoveryOutcome,
+} from "./responseDisposition";
 
 export type UserQuestionState = {
   questionId: string;
@@ -110,7 +116,10 @@ export type ChatConversationMessage = {
   content: string;
   thinking?: string;
   timestamp: string;
-  status?: "sending" | "sent" | "error";
+  status?: "sending" | "sent" | "incomplete" | "error";
+  incompleteVariant?: IncompleteVariant;
+  interruptionReason?: NormalizedInterruptionReason;
+  recoveryOutcome?: NormalizedRecoveryOutcome;
   responseId?: string;
   model?: string;
   toolCalls?: ToolCallInfo[];
@@ -235,6 +244,15 @@ export type ConversationSessionState = {
    *  the external vision model; cleared when the textify pass finishes
    *  (phase done/error) so the intermediate status card disappears. */
   visionAnalysis?: VisionAnalysisState;
+  /** Present when this conversation was created by a scheduled task firing.
+   *  Rendered as an informational banner at the top of the message list so
+   *  the user can see which task triggered the run and when. */
+  triggeredByTask?: {
+    /** The scheduled task's display name. */
+    name: string;
+    /** ISO timestamp (UTC) when the task fired. */
+    triggeredAt: string;
+  };
 };
 
 export type ConversationSessionRef = {
@@ -460,6 +478,16 @@ export type ConversationContextValue = {
   // Refs
   sessionsRefData: RefValue<Map<string, ConversationSessionRef>>;
   activeConversationIdRef: RefValue<string | undefined>;
+  /** One-shot target directory for the next new-chat send. Set by
+   *  handleNewChat(directoryId) (e.g. a scheduled task firing for its bound
+   *  project) and consumed by handleSendMessage so the new PENDING session
+   *  is created in the target project instead of the currently active one. */
+  pendingDirectoryIdRef: RefValue<string | undefined>;
+  /** One-shot name of the scheduled task that triggered the next new-chat
+   *  send. Set by buildFromContent(taskName) and consumed by
+   *  handleSendMessage to stamp the new session with `triggeredByTask` so the
+   *  message list can show "triggered by scheduled task" feedback. */
+  pendingTaskNameRef: RefValue<string | undefined>;
   selectionRequestIdRef: RefValue<number>;
   /** In-flight initial history loads keyed by conversationId. Selections of
    *  the same conversation share a single load so switching away and back
@@ -625,6 +653,11 @@ export type UseChatConversationResult = {
   /** External-vision textify progress for the active conversation. Present
    *  while the backend describes user images with the external vision model. */
   visionAnalysis: VisionAnalysisState | undefined;
+  /** Scheduled-task trigger info for the active conversation (present when
+   *  the conversation was created by a scheduled task firing). */
+  triggeredByTask:
+    | { name: string; triggeredAt: string }
+    | undefined;
   forkedFromConversationId: string | undefined;
   forkMessageCount: number | undefined;
   streamingConversationIds: Set<string>;
@@ -650,7 +683,10 @@ export type UseChatConversationResult = {
     tokenUsage?: TokenUsage | null,
     directoryId?: string
   ) => Promise<void>;
-  handleNewChat: () => void;
+  /** directoryId: optional target project for the new conversation (used by
+   *  scheduled tasks so the fired conversation lands in the task's bound
+   *  project even when the user is viewing another project). */
+  handleNewChat: (directoryId?: string) => void;
   refreshConversations: () => void;
   /** 同步更新内存中某会话的 summary（如重命名会话后让 TopBar 标题即时刷新）。 */
   updateConversationSummary: (conversationId: string, summary: string) => void;
@@ -673,7 +709,25 @@ export type UseChatConversationResult = {
   saveInputDraft: (conversationId: string | undefined, content: string) => void;
   getInputDraft: (conversationId: string | undefined) => string | undefined;
   clearInputDraft: (conversationId: string | undefined) => void;
-  buildFromContent: (content: string) => void;
+  /** directoryId: optional target project for the new conversation; when
+   *  omitted the currently active project is used. options: optional one-shot
+   *  overrides (set by scheduled tasks) consumed by the next auto-send — the
+   *  fired conversation then uses the configured API profile / advanced model /
+   *  thinking strength, while basicModel applies only to its first title.
+   *  taskName: optional scheduled-task name, shown on the fired conversation's
+   *  message-list "triggered by scheduled task" banner. */
+  buildFromContent: (
+    content: string,
+    directoryId?: string,
+    options?: ScheduledTaskRunOptions,
+    taskName?: string
+  ) => void;
+  /** One-shot per-send override queued by buildFromContent for the ChatInput's
+   *  auto-send. Cleared once consumed (onAutoSendOverrideConsumed). */
+  pendingAutoSendOverride: ScheduledTaskRunOptions | null;
+  setPendingAutoSendOverride: (
+    options: ScheduledTaskRunOptions | null
+  ) => void;
   handleRollback: (messageId: string) => void;
   rollbackPreview: RollbackPreview | null;
   confirmRollback: (mode: RollbackMode) => Promise<void>;

@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { GitFork } from "lucide-react";
+import { GitFork, Zap } from "lucide-react";
 import { useI18n } from "../../../../i18n";
 import { AiResponse } from "./AiResponse";
 import { CompactionMessage } from "./CompactionMessage";
@@ -39,6 +39,7 @@ export const ChatMessageList = ({
     streamElapsedMs,
     streamTtftMs,
     visionAnalysis,
+    triggeredByTask,
   } = useChatConversationContext();
 
   const lastAssistantMessageId = useMemo(() => {
@@ -221,6 +222,9 @@ export const ChatMessageList = ({
             }
             summary={message.content}
             thinking={message.thinking}
+            incompleteVariant={message.incompleteVariant}
+            interruptionReason={message.interruptionReason}
+            recoveryOutcome={message.recoveryOutcome}
             showActions={showActions}
             toolCalls={message.toolCalls}
             hookExecutions={message.hookExecutions}
@@ -293,6 +297,34 @@ export const ChatMessageList = ({
     );
   };
 
+  // Informational banner shown when the active conversation was created by a
+  // scheduled task firing: which task triggered it and when. Rendered above
+  // the first message so the origin of the conversation is always visible.
+  const renderTriggeredByTaskBanner = (): React.JSX.Element | null => {
+    if (!triggeredByTask) {
+      return null;
+    }
+    let timeLabel = "";
+    const ms = Date.parse(triggeredByTask.triggeredAt);
+    if (!Number.isNaN(ms)) {
+      timeLabel = new Date(ms).toLocaleTimeString();
+    }
+    return (
+      <div className="chat-task-triggered-banner" role="note">
+        <Zap size={12} strokeWidth={1.9} aria-hidden="true" />
+        <span className="chat-task-triggered-text">
+          {t("chat.triggeredByTask", {
+            defaultValue: "Triggered by scheduled task: {{name}}",
+            values: { name: triggeredByTask.name },
+          })}
+        </span>
+        {timeLabel && (
+          <span className="chat-task-triggered-time">{timeLabel}</span>
+        )}
+      </div>
+    );
+  };
+
   // Keep the fork divider outside virtualization so it is always present when
   // visible (it is a single small node and never needs height preservation).
   const renderItem = (
@@ -328,6 +360,7 @@ export const ChatMessageList = ({
   if (!showForkDivider) {
     return (
       <div className="chat-message-list">
+        {renderTriggeredByTaskBanner()}
         {messages.map((message, index) => renderItem(message, index))}
         {forkDividerIndex === messages.length && forkedFromConversationId
           ? renderForkDivider()
@@ -343,6 +376,7 @@ export const ChatMessageList = ({
 
   return (
     <div className="chat-message-list">
+      {renderTriggeredByTaskBanner()}
       {beforeFork.map((message, index) => renderItem(message, index))}
       {renderForkDivider()}
       {afterFork.map((message, index) =>

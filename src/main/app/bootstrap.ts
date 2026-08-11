@@ -3,6 +3,7 @@ import { APP_ICON_PATH, APP_USER_MODEL_ID, isMacOS } from "./constants";
 import { initializeApplicationServices } from "./applicationServices";
 import { createWindow, getMainWindow } from "./mainWindow";
 import { initTray } from "./tray";
+import { registerToggleWindowShortcut } from "./globalShortcuts";
 import { registerIpcHandlers } from "../ipc/registerIpcHandlers";
 import { native, getRawNative } from "../native/nativeBridge";
 import { installGuestViewErrorFilter } from "../utils/guestViewErrorFilter";
@@ -118,6 +119,10 @@ export const bootstrapApplication = (): void => {
 
     // 初始化系统托盘（黑白脱色图标 + 悬停快速信息 + 右键菜单）。
     initTray(native);
+
+    // 注册显示/隐藏对话窗口的全局快捷键（toggleWindow，默认 mod+shift+h）。
+    // native 代理已做 storageReady 门控，会等待 storage 就绪后读取设置再注册。
+    void registerToggleWindowShortcut(native);
 
     // 安装/同步内置 skills 与内置文档（供 snow-app-docs 技能阅读）：
     // 首次安装、应用升级或开发模式下自动推送官方版本；内置 skill 的

@@ -52,6 +52,7 @@ export type ApiConfigInput = {
   autoCompressThreshold?: number;
   maxRetries?: number;
   retryBaseDelayMs?: number;
+  partialRetryMaxChars?: number;
   systemPromptIdsJson: string;
   customHeaderSchemeId: string;
   configJson: string;
@@ -153,6 +154,14 @@ export type AppLogInput = {
   context?: string;
   error?: string;
   source: string;
+};
+
+/** Result of running a scheduled-task pre-script in the Rust backend. */
+export type PreScriptResult = {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
 };
 
 export type AppLogRecord = {
@@ -264,6 +273,8 @@ export type KeyboardShortcutsSettings = {
   openTodo: KeyboardShortcutConfig;
   cycleProject: KeyboardShortcutConfig;
   openProjectExplorer: KeyboardShortcutConfig;
+  toggleWindow: KeyboardShortcutConfig;
+  togglePet: KeyboardShortcutConfig;
 };
 
 export type CodebaseEmbedProgress = {
@@ -678,6 +689,18 @@ export type ConversationSearchResult = {
   matchedContent: string;
 };
 
+export type StreamInterruptionReason =
+  | "unexpected_eof"
+  | "read_error"
+  | "idle_timeout"
+  | "explicit_incomplete"
+  | "output_limit";
+
+export type StreamRecoveryOutcome =
+  | "partial_threshold"
+  | "retry_exhausted"
+  | "non_retriable";
+
 export type ChatMessageRecord = {
   id: string;
   role: string;
@@ -688,6 +711,8 @@ export type ChatMessageRecord = {
   responseId: string;
   checkpointId: string;
   toolCallsJson: string;
+  interruptionReason?: StreamInterruptionReason | null;
+  recoveryOutcome?: StreamRecoveryOutcome | null;
   createdAt: string;
 };
 
@@ -732,6 +757,16 @@ export type ImageLibraryMigrationProgress = {
   done: boolean;
 };
 
+/** 可迁移的存储位置种类：checkpoint（检查点）| upload（上传图片） */
+export type StorageLocationKind = "checkpoint" | "upload";
+
+/** 存储位置迁移进度（与图库迁移结构一致） */
+export type StorageMigrationProgress = {
+  copied: number;
+  total: number;
+  done: boolean;
+};
+
 export type UserMessageSummary = {
   id: string;
   content: string;
@@ -760,6 +795,55 @@ export type MemoCountSummary = {
   pending: number;
   done: number;
 };
+
+export type ScheduledTaskRunRecord = {
+  /** ISO timestamp (UTC) when this run started. */
+  runAt: string;
+  /** "running" | "completed" | "error". */
+  status: string;
+  /** Elapsed milliseconds of the finished run. */
+  durationMs?: number;
+  /** Error message when status === "error". */
+  error?: string;
+};
+
+/** Full task record persisted in SQLite (camelCase view of the napi struct). */
+export type ScheduledTaskRecord = {
+  id: string;
+  directoryId: string;
+  name: string;
+  prompt: string;
+  /** Serialized ScheduledTaskSchedule JSON. */
+  scheduleJson: string;
+  apiProfile?: string;
+  basicModel?: string;
+  model?: string;
+  thinkingStrength?: string;
+  status: string;
+  paused: boolean;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  runCount: number;
+  lastError?: string;
+  /** Optional pre-script shell command executed before the AI Loop. */
+  preScript?: string;
+  /** Pre-script timeout in ms (default 60000, range 1000-300000). */
+  preScriptTimeoutMs?: number;
+  /** When true, a pre-script failure still proceeds to the AI Loop. */
+  runOnScriptError?: boolean;
+  /** How many times the pre-script skipped the AI Loop. */
+  skipCount: number;
+  /** ISO timestamp of the last skip, if any. */
+  lastSkippedAt?: string;
+  /** Reason from the last skip. */
+  lastSkipReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  history: ScheduledTaskRunRecord[];
+};
+
+/** Write-side shape (same as ScheduledTaskRecord minus history). */
+export type ScheduledTaskRecordInput = Omit<ScheduledTaskRecord, "history">;
 
 export type ResponsesApiMessage = {
   role: "user" | "assistant" | "system" | "developer" | "tool";
@@ -790,6 +874,10 @@ export type ResponsesApiRequest = {
   skipPersist?: boolean;
   planMode?: boolean;
   goalMode?: boolean;
+  /** Per-request thinking strength override ("none" | "low" | "medium" |
+   *  "high" | custom). Applied in-memory over the resolved profile's
+   *  config_json; never mutates the stored profile. */
+  thinkingStrength?: string;
   /**
    * Project ROLE.md content of an SSH (`ssh://`) workspace, resolved by the
    * main process via SSH (mirrors RoleEditorPanel's access path). Absent for
@@ -816,6 +904,8 @@ export type ResponsesApiResult = {
   toolCallsJson: string;
   tokenUsage: TokenUsage;
   persistedUserMessageIds: string[];
+  interruptionReason?: StreamInterruptionReason | null;
+  recoveryOutcome?: StreamRecoveryOutcome | null;
 };
 
 export type ResponsesApiStreamChunk = {
@@ -837,6 +927,10 @@ export type McpToolDefinition = {
   name: string;
   description: string;
   inputSchemaJson: string;
+};
+
+export type McpToolStatus = McpToolDefinition & {
+  enabled: boolean;
 };
 
 export type SkillDefinition = {
@@ -1034,6 +1128,10 @@ export type GitLogEntry = {
   message: string;
   refs: string;
   parents: string[];
+  /** 本次提交新增的行数（来自 git log --shortstat）。 */
+  additions: number;
+  /** 本次提交删除的行数（来自 git log --shortstat）。 */
+  deletions: number;
 };
 export type GitCommitFile = {
   path: string;
@@ -1265,6 +1363,7 @@ export type NativeBridge = {
     item: SensitiveCommandConfigInput
   ) => Promise<void>;
   deleteSensitiveCommandConfig: (commandId: string) => Promise<void>;
+  resetSensitiveCommandConfigs: () => Promise<void>;
   listProjectSensitiveCommandConfigs: (
     projectId: string
   ) => Promise<ProjectSensitiveCommandConfigRecord[]>;
@@ -1349,6 +1448,18 @@ export type NativeBridge = {
   ) => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   deleteConversations: (conversationIds: string[]) => Promise<void>;
+  /** 归档会话：从运行库搬移到独立的归档冷数据库（含子代理级联），置顶会话不参与归档。 */
+  archiveConversations: (conversationIds: string[]) => Promise<void>;
+  /** 分页列出归档会话（按归档时间倒序）。 */
+  listArchivedConversationsPaginated: (
+    directoryId: string,
+    limit: number,
+    offset: number
+  ) => Promise<ChatConversationPage>;
+  /** 还原归档会话：从归档冷数据库搬移回运行库（含子代理级联）。 */
+  restoreArchivedConversations: (conversationIds: string[]) => Promise<void>;
+  /** 永久删除归档会话（含子代理级联）。 */
+  deleteArchivedConversations: (conversationIds: string[]) => Promise<void>;
   appendToolMessage: (conversationId: string, content: string) => Promise<void>;
   listChatMessages: (conversationId: string) => Promise<ChatMessageRecord[]>;
   listUserMessages: (conversationId: string) => Promise<UserMessageSummary[]>;
@@ -1399,7 +1510,7 @@ export type NativeBridge = {
     projectId?: string
   ) => Promise<SkillUninstallResult>;
   listGithubSkills: () => Promise<GithubSkillRecord[]>;
-  listMcpServerTools: (configServerId: string) => Promise<McpToolDefinition[]>;
+  listMcpServerTools: (configServerId: string) => Promise<McpToolStatus[]>;
   listMcpProjectServers: (
     projectId: string
   ) => Promise<McpProjectServerStatus[]>;
@@ -1415,6 +1526,13 @@ export type NativeBridge = {
   setMcpProjectToolEnabled: (
     projectId: string,
     toolName: string,
+    enabled: boolean
+  ) => Promise<void>;
+  setMcpToolEnabled: (toolName: string, enabled: boolean) => Promise<void>;
+  setMcpToolsEnabled: (toolNames: string[], enabled: boolean) => Promise<void>;
+  setMcpProjectToolsEnabled: (
+    projectId: string,
+    toolNames: string[],
     enabled: boolean
   ) => Promise<void>;
   authorizeSensitiveCommand: (command: string, token: string) => Promise<void>;
@@ -1547,6 +1665,13 @@ export type NativeBridge = {
     until: string
   ) => Promise<DailyUsageBreakdown[]>;
   writeAppLog: (input: AppLogInput) => Promise<void>;
+  /** Executes a scheduled-task pre-script (shell command) in the project cwd. */
+  runPreScript: (
+    command: string,
+    cwd: string,
+    timeoutMs: number,
+    envJson: string
+  ) => Promise<PreScriptResult>;
   listAppLogs: (
     level: string,
     module: string,
@@ -1571,6 +1696,20 @@ export type NativeBridge = {
   updateMemoStatus: (memoId: string, status: string) => Promise<MemoRecord>;
   deleteMemo: (memoId: string) => Promise<void>;
   getMemoCountSummary: (directoryId: string) => Promise<MemoCountSummary>;
+  listScheduledTasks: () => Promise<ScheduledTaskRecord[]>;
+  upsertScheduledTask: (
+    input: ScheduledTaskRecordInput
+  ) => Promise<ScheduledTaskRecord>;
+  deleteScheduledTask: (taskId: string) => Promise<void>;
+  clearScheduledTasks: (directoryId: string | null) => Promise<number>;
+  appendScheduledTaskRun: (taskId: string, runAt: string) => Promise<string>;
+  finalizeScheduledTaskRun: (
+    taskId: string,
+    runId: string,
+    status: string,
+    durationMs?: number,
+    error?: string
+  ) => Promise<void>;
   sha256File: (filePath: string) => Promise<string>;
   getImageLibraryRoot: () => Promise<string>;
   getImageLibraryDir: () => Promise<string>;
@@ -1595,6 +1734,29 @@ export type NativeBridge = {
   commitImageLibraryMigration: () => Promise<void>;
   /** 回滚迁移：删除已复制到新目录的文件并移除日志（幂等） */
   rollbackImageLibraryMigration: () => Promise<void>;
+  /** 读取检查点自定义保存目录（空字符串表示使用默认目录） */
+  getCheckpointDir: () => Promise<string>;
+  /** 设置检查点自定义保存目录（传入空字符串重置为默认目录） */
+  setCheckpointDir: (dir: string) => Promise<void>;
+  /** 读取上传图片自定义保存目录（空字符串表示使用默认目录） */
+  getUploadDir: () => Promise<string>;
+  /** 设置上传图片自定义保存目录（传入空字符串重置为默认目录） */
+  setUploadDir: (dir: string) => Promise<void>;
+  /** 检查点根目录绝对路径（优先用户自定义路径，回退默认） */
+  getCheckpointRoot: () => Promise<string>;
+  /** 上传图片根目录绝对路径（优先用户自定义路径，回退默认） */
+  getUploadRoot: () => Promise<string>;
+  /** 准备存储目录迁移：校验目标目录并写入迁移日志；返回待迁移文件数量（0 表示无需迁移） */
+  prepareStorageMigration: (
+    kind: StorageLocationKind,
+    targetDir: string
+  ) => Promise<number>;
+  /** 复制下一批存储目录文件并返回迁移进度 */
+  migrateStorageChunk: (kind: StorageLocationKind) => Promise<StorageMigrationProgress>;
+  /** 提交迁移：写入新目录设置并清理旧根目录文件 */
+  commitStorageMigration: (kind: StorageLocationKind) => Promise<void>;
+  /** 回滚迁移：删除已复制到新目录的文件并移除日志（幂等） */
+  rollbackStorageMigration: (kind: StorageLocationKind) => Promise<void>;
   /** 探测本机浏览器（Chrome/Edge/Chromium/Firefox）及其配置文件与数据量 */
   browserImportListSources: () => Promise<BrowserImportSource[]>;
   /** 解密并导出指定浏览器配置文件的已保存密码（明文，仅供主进程加密落盘） */

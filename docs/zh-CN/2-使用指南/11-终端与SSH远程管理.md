@@ -49,6 +49,16 @@ AI 的 `bash-terminal-execute` 每次执行独立命令；需要**长驻进程�
    - 使用 filesystem 工具读写远程文件、bash 工具在远程执行命令；
    - 打开远程 Git 仓库（见下文）。
 
+```mermaid
+flowchart TD
+    A[侧边栏 → 添加目录 → SSH] --> B[填写连接信息<br/>主机/端口/用户名/认证方式]
+    B --> C{保存凭据?<br/>密码或密钥路径持久化}
+    C -- 是 --> D[ssh:save-credential<br/>下次连接免输入]
+    C -- 否 --> E
+    D --> E[连接成功<br/>目录出现在侧边栏]
+    E --> F[与本地目录同等对待<br/>远程文件树/远程终端/远程命令/远程 Git]
+```
+
 > 支持 `ssh://user@host:port/path` 形式的 URL 解析与连接（`ssh:parse-url`）；
 > 已保存的凭据可在 **SSH 管理界面**中列出与管理（`ssh:list-credentials`）。
 

@@ -75,6 +75,7 @@ fn build_request(image_data_url: &str, system_prompt: &str) -> ResponsesApiReque
         skip_persist: None,
         plan_mode: None,
         goal_mode: None,
+        thinking_strength: None,
         remote_role_content: None,
         remote_include_global_rules: None,
     }

@@ -67,14 +67,20 @@ pub(super) fn process_sse_event_block(
             response_status,
             token_usage,
             tool_args_delta,
+            stream_finished,
         ) {
             eprintln!(
-                "Chat stream event processing error (skipping event): {}",
+                "Chat stream event processing error (terminal provider error): {}",
                 process_error.reason
             );
-            continue;
+            *response_status = String::from("failed");
+            *stream_finished = true;
+            return;
         }
         raw_events.push(event);
+        if *stream_finished {
+            return;
+        }
     }
 
     // Fallback: some providers return a complete JSON response without SSE
@@ -90,7 +96,7 @@ pub(super) fn process_sse_event_block(
             return;
         }
         if let Ok(event) = serde_json::from_str::<Value>(trimmed_block) {
-            let _ = process_chat_completion_event(
+            if let Err(process_error) = process_chat_completion_event(
                 &event,
                 content_chunks,
                 thinking_chunks,
@@ -101,7 +107,16 @@ pub(super) fn process_sse_event_block(
                 response_status,
                 token_usage,
                 tool_args_delta,
-            );
+                stream_finished,
+            ) {
+                eprintln!(
+                    "Chat stream event processing error (terminal provider error): {}",
+                    process_error.reason
+                );
+                *response_status = String::from("failed");
+                *stream_finished = true;
+                return;
+            }
             raw_events.push(event);
         }
     }
@@ -120,6 +135,7 @@ fn process_chat_completion_event(
     response_status: &mut String,
     token_usage: &mut ChatTokenUsage,
     tool_args_delta: &mut String,
+    stream_finished: &mut bool,
 ) -> Result<()> {
     if let Some(error) = event.get("error") {
         let message = error
@@ -189,6 +205,7 @@ fn process_chat_completion_event(
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
             {
+                *stream_finished = true;
                 *response_status = if finish_reason == "stop" {
                     "completed".to_string()
                 } else {
@@ -343,4 +360,77 @@ fn merge_tool_call_field(key: &str, target: &mut Value, delta: &Value) {
 
 fn is_ignorable_tool_call_delta_value(value: &Value) -> bool {
     value.is_null() || value.as_str().is_some_and(str::is_empty)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::Value;
+
+    use super::process_sse_event_block;
+    use crate::storage::services::chat_conversations::ChatTokenUsage;
+
+    fn parse_terminal(event_block: &str) -> (String, bool) {
+        let mut raw_events = Vec::<Value>::new();
+        let mut content_chunks = Vec::new();
+        let mut thinking_chunks = Vec::new();
+        let mut tool_calls = Vec::new();
+        let mut tool_positions = HashMap::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut response_status = String::from("completed");
+        let mut token_usage = ChatTokenUsage::default();
+        let mut tool_args_delta = String::new();
+        let mut stream_finished = false;
+
+        process_sse_event_block(
+            event_block,
+            &mut raw_events,
+            &mut content_chunks,
+            &mut thinking_chunks,
+            &mut tool_calls,
+            &mut tool_positions,
+            &mut response_id,
+            &mut response_model,
+            &mut response_status,
+            &mut token_usage,
+            &mut tool_args_delta,
+            &mut stream_finished,
+        );
+
+        (response_status, stream_finished)
+    }
+
+    #[test]
+    fn finish_reason_and_done_are_terminal() {
+        assert_eq!(
+            parse_terminal(r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+            ("completed".to_string(), true)
+        );
+        assert_eq!(
+            parse_terminal(r#"data: {"choices":[{"delta":{},"finish_reason":"length"}]}"#),
+            ("length".to_string(), true)
+        );
+        assert_eq!(
+            parse_terminal("data: [DONE]"),
+            ("completed".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn provider_error_is_failed_terminal_and_stops_event_block() {
+        assert_eq!(
+            parse_terminal("data: {not-json}"),
+            ("completed".to_string(), false)
+        );
+        assert_eq!(
+            parse_terminal(concat!(
+                r#"data: {"error":{"message":"upstream failed","type":"server_error"}}"#,
+                "\n",
+                r#"data: {"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
+            )),
+            ("failed".to_string(), true)
+        );
+    }
 }

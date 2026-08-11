@@ -32,8 +32,13 @@ export const CommandPanel = forwardRef<CommandPanelHandle, CommandPanelProps>(
         return commands;
       }
 
-      return commands.filter((command) =>
-        command.label.toLowerCase().includes(normalizedQuery)
+      return commands.filter(
+        (command) =>
+          command.label.toLowerCase().includes(normalizedQuery) ||
+          command.description.toLowerCase().includes(normalizedQuery) ||
+          command.searchKeywords?.some((keyword) =>
+            keyword.toLowerCase().includes(normalizedQuery)
+          )
       );
     }, [commands, query]);
 

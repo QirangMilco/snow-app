@@ -19,6 +19,7 @@ use crate::storage::{
     PluginMarketplaceRecord, PluginRecord, ProjectMcpServerConfigRecord,
     ProjectSensitiveCommandConfigInput, ProjectSensitiveCommandConfigRecord,
     RemoteDraftInput, RemoteDraftRecord,
+    ScheduledTaskRecord, ScheduledTaskRecordInput,
     SensitiveCommandConfigInput, SensitiveCommandConfigRecord, SensitiveCommandMatchResult,
     SubAgentConfigInput, SubAgentConfigRecord, SystemPromptItemInput, SystemPromptItemRecord,
     UserMessageSummary, WorkspaceDirectoryInput, WorkspaceDirectoryRecord,
@@ -1035,6 +1036,13 @@ pub async fn delete_sensitive_command_config(command_id: String) -> napi::Result
 }
 
 #[napi]
+pub async fn reset_sensitive_command_configs() -> napi::Result<()> {
+    tokio::task::spawn_blocking(crate::storage::reset_sensitive_command_configs)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
 pub async fn list_project_sensitive_command_configs(
     project_id: String,
 ) -> napi::Result<Vec<ProjectSensitiveCommandConfigRecord>> {
@@ -1111,6 +1119,49 @@ pub async fn list_chat_conversations_paginated(
 ) -> napi::Result<ChatConversationPage> {
     tokio::task::spawn_blocking(move || {
         crate::storage::list_chat_conversations_paginated(directory_id, limit, offset)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+/// 归档会话：从运行库搬移到独立的归档冷数据库（含子代理级联）。
+/// 置顶会话不参与归档。
+#[napi]
+pub async fn archive_conversations(conversation_ids: Vec<String>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::archive_conversations(conversation_ids))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 分页列出归档会话（按归档时间倒序）。
+#[napi]
+pub async fn list_archived_conversations_paginated(
+    directory_id: String,
+    limit: i32,
+    offset: i32,
+) -> napi::Result<ChatConversationPage> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::list_archived_conversations_paginated(directory_id, limit, offset)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+/// 还原归档会话：从归档冷数据库搬移回运行库（含子代理级联）。
+#[napi]
+pub async fn restore_archived_conversations(conversation_ids: Vec<String>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::restore_archived_conversations(conversation_ids)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+/// 永久删除归档会话（含子代理级联）。
+#[napi]
+pub async fn delete_archived_conversations(conversation_ids: Vec<String>) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::delete_archived_conversations(conversation_ids)
     })
     .await
     .map_err(map_spawn_error)?
@@ -1499,6 +1550,65 @@ pub async fn get_memo_count_summary(directory_id: String) -> napi::Result<MemoCo
         .map_err(map_spawn_error)?
 }
 
+// ============================================================================
+// Scheduled tasks — 定时任务持久化：任务定义/状态 + 运行历史存 SQLite。
+// 所有 SQLite I/O 均在 spawn_blocking 中执行，不阻塞 Node.js。
+// ============================================================================
+
+#[napi]
+pub async fn list_scheduled_tasks() -> napi::Result<Vec<ScheduledTaskRecord>> {
+    tokio::task::spawn_blocking(crate::storage::list_scheduled_tasks)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn upsert_scheduled_task(
+    input: ScheduledTaskRecordInput,
+) -> napi::Result<ScheduledTaskRecord> {
+    tokio::task::spawn_blocking(move || crate::storage::upsert_scheduled_task(input))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn delete_scheduled_task(task_id: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::delete_scheduled_task(task_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn clear_scheduled_tasks(directory_id: Option<String>) -> napi::Result<u32> {
+    tokio::task::spawn_blocking(move || crate::storage::clear_scheduled_tasks(directory_id))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn append_scheduled_task_run(task_id: String, run_at: String) -> napi::Result<String> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::append_scheduled_task_run(task_id, run_at)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn finalize_scheduled_task_run(
+    task_id: String,
+    run_id: String,
+    status: String,
+    duration_ms: Option<i64>,
+    error: Option<String>,
+) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::finalize_scheduled_task_run(task_id, run_id, status, duration_ms, error)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
 /// 将 tokio JoinError 转换为 napi Error
 fn map_spawn_error(e: tokio::task::JoinError) -> Error {
     Error::new(
@@ -1508,7 +1618,7 @@ fn map_spawn_error(e: tokio::task::JoinError) -> Error {
 }
 
 // ============================================================================
-// Keyboard shortcuts — 快捷键设置，6 个快捷键各自 enabled + foregroundOnly。
+// Keyboard shortcuts — 快捷键设置，9 个快捷键各自 enabled + foregroundOnly。
 // ============================================================================
 
 #[napi(object)]
@@ -1551,6 +1661,8 @@ pub struct KeyboardShortcutsSettingsNapi {
     pub cycle_project: KeyboardShortcutConfigNapi,
     pub open_project_explorer: KeyboardShortcutConfigNapi,
     pub cycle_api_profile: KeyboardShortcutConfigNapi,
+    pub toggle_window: KeyboardShortcutConfigNapi,
+    pub toggle_pet: KeyboardShortcutConfigNapi,
 }
 
 impl From<crate::storage::services::keyboard_shortcuts::KeyboardShortcutsSettings>
@@ -1565,6 +1677,8 @@ impl From<crate::storage::services::keyboard_shortcuts::KeyboardShortcutsSetting
             cycle_project: s.cycle_project.into(),
             open_project_explorer: s.open_project_explorer.into(),
             cycle_api_profile: s.cycle_api_profile.into(),
+            toggle_window: s.toggle_window.into(),
+            toggle_pet: s.toggle_pet.into(),
         }
     }
 }
@@ -1581,6 +1695,8 @@ impl From<KeyboardShortcutsSettingsNapi>
             cycle_project: s.cycle_project.into(),
             open_project_explorer: s.open_project_explorer.into(),
             cycle_api_profile: s.cycle_api_profile.into(),
+            toggle_window: s.toggle_window.into(),
+            toggle_pet: s.toggle_pet.into(),
         }
     }
 }
@@ -1599,6 +1715,86 @@ pub async fn set_keyboard_shortcuts_settings(
 ) -> napi::Result<()> {
     let settings = settings.into();
     tokio::task::spawn_blocking(move || crate::storage::set_keyboard_shortcuts_settings(settings))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+// ============================================================================
+// 存储位置（checkpoint / upload 目录）
+// ============================================================================
+
+#[napi]
+pub async fn get_checkpoint_dir() -> napi::Result<String> {
+    tokio::task::spawn_blocking(crate::storage::get_checkpoint_dir)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_checkpoint_dir(dir: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::set_checkpoint_dir(dir))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn get_upload_dir() -> napi::Result<String> {
+    tokio::task::spawn_blocking(crate::storage::get_upload_dir)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn set_upload_dir(dir: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::set_upload_dir(dir))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn get_checkpoint_root() -> napi::Result<String> {
+    tokio::task::spawn_blocking(crate::storage::get_checkpoint_root)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+#[napi]
+pub async fn get_upload_root() -> napi::Result<String> {
+    tokio::task::spawn_blocking(crate::storage::get_upload_root)
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 准备存储目录迁移（kind: "checkpoint" | "upload"）；返回待迁移文件数量（0 表示无需迁移）。
+#[napi]
+pub async fn prepare_storage_migration(kind: String, target_dir: String) -> napi::Result<u32> {
+    tokio::task::spawn_blocking(move || {
+        crate::storage::prepare_storage_migration(kind, target_dir)
+    })
+    .await
+    .map_err(map_spawn_error)?
+}
+
+/// 复制下一批存储目录文件并返回迁移进度（copied/total/done）。
+#[napi]
+pub async fn migrate_storage_chunk(kind: String) -> napi::Result<crate::storage::MigrationProgress> {
+    tokio::task::spawn_blocking(move || crate::storage::migrate_storage_chunk(kind))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 提交存储目录迁移：写入新目录设置并清理旧根目录文件。
+#[napi]
+pub async fn commit_storage_migration(kind: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::commit_storage_migration(kind))
+        .await
+        .map_err(map_spawn_error)?
+}
+
+/// 回滚存储目录迁移：删除已复制到新目录的文件并移除日志（幂等）。
+#[napi]
+pub async fn rollback_storage_migration(kind: String) -> napi::Result<()> {
+    tokio::task::spawn_blocking(move || crate::storage::rollback_storage_migration(kind))
         .await
         .map_err(map_spawn_error)?
 }

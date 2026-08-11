@@ -73,6 +73,29 @@ export const conversationApi = {
     ipcRenderer.invoke("chat-conversations:delete", conversationId),
   deleteConversations: (conversationIds: string[]): Promise<void> =>
     ipcRenderer.invoke("chat-conversations:batch-delete", conversationIds),
+  archiveConversations: (conversationIds: string[]): Promise<void> =>
+    ipcRenderer.invoke("chat-conversations:archive", conversationIds),
+  listArchivedConversationsPaginated: (
+    directoryId: string,
+    limit: number,
+    offset: number
+  ): Promise<ChatConversationPage> =>
+    ipcRenderer.invoke(
+      "chat-conversations:list-archived-paginated",
+      directoryId,
+      limit,
+      offset
+    ),
+  restoreArchivedConversations: (conversationIds: string[]): Promise<void> =>
+    ipcRenderer.invoke(
+      "chat-conversations:restore-archived",
+      conversationIds
+    ),
+  deleteArchivedConversations: (conversationIds: string[]): Promise<void> =>
+    ipcRenderer.invoke(
+      "chat-conversations:delete-archived",
+      conversationIds
+    ),
   listSubAgentConversationsByParents: (
     parentConversationIds: string[]
   ): Promise<Record<string, ChatConversationRecord[]>> =>

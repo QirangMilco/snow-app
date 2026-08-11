@@ -4,6 +4,10 @@ export type McpToolDefinition = {
   inputSchemaJson: string;
 };
 
+export type McpToolStatus = McpToolDefinition & {
+  enabled: boolean;
+};
+
 export type SkillDefinition = {
   id: string;
   name: string;

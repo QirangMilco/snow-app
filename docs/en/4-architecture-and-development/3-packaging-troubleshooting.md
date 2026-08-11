@@ -19,6 +19,18 @@
 > Key signal: the process exits within seconds with code `1` (Node/Electron default exit
 > code for uncaught exceptions).
 
+```mermaid
+flowchart TD
+    A[Packaged app fails to start] --> B{Symptom}
+    B -- double-click does nothing, no window, no dialog --> C[Corrupted main-process files in app.asar<br/>most common, see Section 2]
+    B -- dev mode works, packaged build does not --> D[out/ written concurrently during packaging<br/>see Sections 2 and 4]
+    B -- crash, no WER record in Event Viewer --> E[Main-process JS syntax error<br/>clean exit code 1, see Section 2]
+    B -- DLL errors<br/>entry point not found --> F[Missing runtime libs / incomplete build<br/>check top-level DLLs in win-unpacked]
+    C --> G[Use Section 2 diagnostics to locate the broken file]
+    D --> G
+    E --> G
+```
+
 ## 2. Case Study: v0.1.16 packaged build would not start (2026-08-05)
 
 ### 2.1 Symptoms

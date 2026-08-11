@@ -16,7 +16,6 @@ use similar::TextDiff;
 
 use super::gitignore::GitignoreMatcher;
 
-const CHECKPOINT_DIR_NAME: &str = "checkpoints";
 const OBJECT_DIR_NAME: &str = "objects";
 const PENDING_DIR_NAME: &str = "pending";
 const MANIFEST_VERSION: u32 = 2;
@@ -175,8 +174,7 @@ impl Drop for CheckpointWorktreeCapture {
     }
 }
 fn checkpoint_root() -> Result<PathBuf> {
-    let storage_dir = crate::storage::paths::app_storage_dir()?;
-    Ok(storage_dir.join(CHECKPOINT_DIR_NAME))
+    super::storage_locations::checkpoint_root()
 }
 
 fn checkpoint_guard() -> Result<MutexGuard<'static, ()>> {

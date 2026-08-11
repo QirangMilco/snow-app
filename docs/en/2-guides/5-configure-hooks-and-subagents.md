@@ -300,6 +300,6 @@ If `beforeSubAgentStart` Hook execution itself throws, the current caller contin
 | Prompt action has no effect | The current native executor does not execute prompt model calls; use command or supported context. |
 | Context does not reach the child prompt | `beforeSubAgentStart` currently records context but does not append it to the child prompt; put required content in `systemPrompt`. |
 | Global sub-agent explicit list is rejected | Explicit lists require `projectId`; make it project-scoped or use global `["*"]`/`[]`. |
-| Sub-agent cannot find a tool | Use the exact project-enabled full tool name and inspect MCP server/project tool toggles. |
+| Sub-agent cannot find a tool | Use the exact project-enabled full tool name and inspect MCP server and tool toggles (global + project). |
 | Sub-agent depends on main conversation | It has no main history; place context in the task prompt or self-contained `systemPrompt`. |
 | Wrong same-ID config activates | Project scope wins over global; query both scopes and verify `projectId`. |

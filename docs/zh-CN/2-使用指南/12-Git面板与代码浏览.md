@@ -39,6 +39,17 @@
 - **同步操作**：工具栏提供 pull、push 和手动状态刷新。面板打开后还会立即执行一次后台 fetch，并在窗口可见时每 60 秒再次 fetch；成功后刷新 ahead/behind 数量。本地与 SSH 仓库都使用该流程，后台 fetch 的离线、鉴权或无远端错误会静默忽略；
 - **状态反馈**：ahead/behind 数量显示在顶部，pull 的落后状态有徽标；pull/push 失败会显示错误，而后台 fetch 不打断操作。
 
+```mermaid
+flowchart TD
+    A[暂存文件<br/>至少一个已暂存文件] --> B{提交信息}
+    B -- AI 生成 --> C[点星光按钮<br/>读取已暂存 Diff, basicModel 流式生成]
+    C --> D[生成片段写入输入框<br/>可继续手工编辑]
+    B -- 手工填写 --> D
+    D --> E[提交<br/>非空提交信息]
+    E --> F[pull / push 同步<br/>面板后台每 60 秒 fetch 刷新 ahead/behind]
+    F --> G[状态反馈<br/>ahead/behind 徽标, 失败显示错误]
+```
+
 > **AI 协作**：AI 修改文件后可通过聊天中的 `/file-changes` 查看本轮变更，也可在 Git 面板审阅和暂存。若让 AI 在终端直接执行 Git 命令，该命令不等同于面板按钮，仍应遵循用户授权与敏感命令规则。
 
 ## 2. 项目资源管理器与工作区搜索

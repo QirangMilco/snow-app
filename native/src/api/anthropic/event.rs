@@ -83,14 +83,20 @@ pub(super) fn process_anthropic_sse_event_block(
             token_usage,
             tool_args_delta,
             tool_parse_errors,
+            stream_finished,
         ) {
             eprintln!(
-                "Anthropic stream event processing error (skipping event): {}",
+                "Anthropic stream event processing error (terminal provider error): {}",
                 process_error.reason
             );
-            continue;
+            *response_status = String::from("failed");
+            *stream_finished = true;
+            return;
         }
         raw_events.push(event);
+        if *stream_finished {
+            return;
+        }
     }
 
     // Fallback: some providers return a complete JSON response without SSE
@@ -111,7 +117,7 @@ pub(super) fn process_anthropic_sse_event_block(
                 raw_events.push(event);
                 return;
             }
-            let _ = process_anthropic_event(
+            if let Err(process_error) = process_anthropic_event(
                 &event,
                 content_chunks,
                 thinking_chunks,
@@ -125,7 +131,16 @@ pub(super) fn process_anthropic_sse_event_block(
                 token_usage,
                 tool_args_delta,
                 tool_parse_errors,
-            );
+                stream_finished,
+            ) {
+                eprintln!(
+                    "Anthropic stream event processing error (terminal provider error): {}",
+                    process_error.reason
+                );
+                *response_status = String::from("failed");
+                *stream_finished = true;
+                return;
+            }
             raw_events.push(event);
         }
     }
@@ -147,6 +162,7 @@ fn process_anthropic_event(
     token_usage: &mut ChatTokenUsage,
     tool_args_delta: &mut String,
     tool_parse_errors: &mut Vec<String>,
+    stream_finished: &mut bool,
 ) -> Result<()> {
     let event_type = event
         .get("type")
@@ -341,6 +357,7 @@ fn process_anthropic_event(
                     .and_then(Value::as_str)
                     .filter(|value| !value.is_empty())
                 {
+                    *stream_finished = true;
                     *response_status = if stop_reason == "end_turn" {
                         "completed".to_string()
                     } else {
@@ -381,4 +398,81 @@ fn process_anthropic_event(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use serde_json::Value;
+
+    use super::process_anthropic_sse_event_block;
+    use crate::storage::services::chat_conversations::ChatTokenUsage;
+
+    fn parse_terminal(event_block: &str) -> (String, bool) {
+        let mut raw_events = Vec::<Value>::new();
+        let mut content_chunks = Vec::new();
+        let mut thinking_chunks = Vec::new();
+        let mut thinking_blocks = Vec::new();
+        let mut tool_calls = Vec::new();
+        let mut tool_positions = HashMap::new();
+        let mut tool_input_json = HashMap::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut response_status = String::from("completed");
+        let mut token_usage = ChatTokenUsage::default();
+        let mut tool_args_delta = String::new();
+        let mut tool_parse_errors = Vec::new();
+        let mut stream_finished = false;
+
+        process_anthropic_sse_event_block(
+            event_block,
+            &mut raw_events,
+            &mut content_chunks,
+            &mut thinking_chunks,
+            &mut thinking_blocks,
+            &mut tool_calls,
+            &mut tool_positions,
+            &mut tool_input_json,
+            &mut response_id,
+            &mut response_model,
+            &mut response_status,
+            &mut token_usage,
+            &mut tool_args_delta,
+            &mut tool_parse_errors,
+            &mut stream_finished,
+        );
+
+        (response_status, stream_finished)
+    }
+
+    #[test]
+    fn max_tokens_and_message_stop_are_terminal() {
+        assert_eq!(
+            parse_terminal(
+                r#"data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}"#,
+            ),
+            ("max_tokens".to_string(), true)
+        );
+        assert_eq!(
+            parse_terminal(r#"data: {"type":"message_stop"}"#),
+            ("completed".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn provider_error_is_failed_terminal_and_stops_event_block() {
+        assert_eq!(
+            parse_terminal("data: {not-json}"),
+            ("completed".to_string(), false)
+        );
+        assert_eq!(
+            parse_terminal(concat!(
+                r#"data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#,
+                "\n",
+                r#"data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#,
+            )),
+            ("failed".to_string(), true)
+        );
+    }
 }

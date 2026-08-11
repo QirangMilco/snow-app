@@ -7,6 +7,7 @@ import { createReviewCommand } from "./ReviewCommand";
 import { createRoleCommand } from "./RoleCommand";
 import { createSensitiveCommandsCommand } from "./SensitiveCommandsCommand";
 import { createSkillsCommand } from "./SkillsCommand";
+import { SUPPORTED_LOCALES, resources } from "../../../../i18n";
 import type { ChatCommand } from "./types";
 
 /**
@@ -23,6 +24,44 @@ export const RUNNING_DISABLED_COMMAND_IDS: ReadonlySet<string> = new Set([
   "mcp",
   "review",
 ]);
+
+/**
+ * 指令描述对应的 i18n key 映射（含无项目等禁用态变体）。
+ * 用于跨语言搜索：过滤时除当前语言的 description 外，
+ * 还会匹配所有语言版本的描述文本（如中文界面下输入 /new 也能搜到 clear）。
+ */
+const COMMAND_DESCRIPTION_KEYS: Record<string, string[]> = {
+  clear: ["chatCommand.clearDescription"],
+  changes: ["chatCommand.fileChangesDescription"],
+  mcp: ["chatCommand.mcpDescription", "chatCommand.mcpNoProject"],
+  role: ["chatCommand.roleDescription", "chatCommand.roleNoProject"],
+  "sensitive-commands": [
+    "chatCommand.sensitiveCommandsDescription",
+    "chatCommand.sensitiveCommandsNoProject",
+  ],
+  skills: ["chatCommand.skillsDescription", "chatCommand.skillsNoProject"],
+  codebase: ["chatCommand.codebaseDescription", "chatCommand.codebaseNoProject"],
+  review: [
+    "chatCommand.reviewDescription",
+    "chatCommand.reviewNoProject",
+    "chatCommand.reviewNewChatOnly",
+  ],
+  compact: ["chatCommand.compactDescription"],
+};
+
+/** 收集指定 i18n key 在所有语言下的描述文本（去重）作为搜索关键词 */
+const collectSearchKeywords = (keys: string[]): string[] => {
+  const keywords = new Set<string>();
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const key of keys) {
+      const text = resources[locale][key];
+      if (text) {
+        keywords.add(text);
+      }
+    }
+  }
+  return [...keywords];
+};
 
 type ChatCommandLabels = {
   clearDescription: string;
@@ -160,6 +199,14 @@ export const createChatCommands = ({
       ),
       disabled: compactDisabled || isRunningDisabled("compact"),
     });
+  }
+
+  // 附加跨语言搜索关键词：过滤指令时支持按任意语言版本的描述匹配
+  for (const command of commands) {
+    const keys = COMMAND_DESCRIPTION_KEYS[command.id];
+    if (keys) {
+      command.searchKeywords = collectSearchKeywords(keys);
+    }
   }
 
   return commands;

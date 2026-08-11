@@ -169,7 +169,11 @@ export const shouldPreventDefault = (key: string): boolean => {
   return key !== "escape";
 };
 
-/** 7 个快捷键动作的有序列表。 */
+/**
+ * 9 个快捷键动作的有序列表。
+ * 排列规则：台前生效的快捷键在前（默认 foregroundOnly=true），
+ * 全局生效的 toggleWindow（默认 foregroundOnly=false）放最后。
+ */
 export const SHORTCUT_ACTIONS: KeyboardShortcutAction[] = [
   "cancelSession",
   "openSearch",
@@ -178,6 +182,8 @@ export const SHORTCUT_ACTIONS: KeyboardShortcutAction[] = [
   "cycleProject",
   "openProjectExplorer",
   "cycleApiProfile",
+  "togglePet",
+  "toggleWindow",
 ];
 
 /**
@@ -216,6 +222,14 @@ export const SHORTCUT_META: Record<KeyboardShortcutAction, ShortcutMeta> = {
   cycleApiProfile: {
     descKey: "settings.shortcutCycleApiProfile",
     descDefault: "Open API provider picker",
+  },
+  toggleWindow: {
+    descKey: "settings.shortcutToggleWindow",
+    descDefault: "Show/hide main window",
+  },
+  togglePet: {
+    descKey: "settings.shortcutTogglePet",
+    descDefault: "Show/hide desktop pet",
   },
 };
 

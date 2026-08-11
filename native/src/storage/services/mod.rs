@@ -1,5 +1,6 @@
 pub mod api_configs;
 pub mod app_logs;
+pub mod archive;
 pub mod builtin_services;
 pub mod chat_conversations;
 pub mod checkpoint;
@@ -29,8 +30,10 @@ pub mod project_mcp_server_configs;
 pub mod project_sensitive_command_configs;
 pub mod remote_drafts;
 pub mod request_logging_settings;
+pub mod scheduled_tasks;
 pub mod sensitive_command_configs;
 pub mod sub_agent_configs;
+pub mod storage_locations;
 pub mod system_prompts;
 pub mod system_settings;
 pub mod theme_settings;

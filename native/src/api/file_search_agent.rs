@@ -8,7 +8,9 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::api::anthropic::payload::{
-    apply_last_user_message_cache_control, build_anthropic_thinking, get_persistent_user_id,
+    apply_last_user_message_cache_control, build_anthropic_thinking,
+    config_json_enables_one_m_context, get_persistent_user_id, has_one_m_context_marker,
+    strip_one_m_context_marker,
 };
 use crate::api::chat::payload::build_chat_reasoning_effort;
 use crate::api::config::{
@@ -112,8 +114,11 @@ pub async fn run_file_search_agent(
         ));
     }
 
-    let retry_options =
-        RetryOptions::from_config(api_config.max_retries, api_config.retry_base_delay_ms);
+    let retry_options = RetryOptions::from_config(
+        api_config.max_retries,
+        api_config.retry_base_delay_ms,
+        api_config.partial_retry_max_chars,
+    );
     let tools = build_agent_tools();
     let system_prompt = build_system_prompt(workspace_path.trim());
     let user_prompt = format!("Find files matching this description: {trimmed_query}");
@@ -820,6 +825,13 @@ async fn run_anthropic_round(
         ));
     }
 
+    // `[1M]` 后缀是 Claude Code 生态的本地上下文能力声明：发送前剥离。
+    // 1M 上下文生效条件：模型名带标记，或档案开关 snowcfg.enable1mContext
+    // 开启（与主流程一致，开关兜底模型名标记）。
+    let enable_one_m_context = has_one_m_context_marker(model)
+        || config_json_enables_one_m_context(&api_config.config_json);
+    let model = strip_one_m_context_marker(model);
+
     let mut payload = json!({
         "model": model,
         "stream": true,
@@ -862,7 +874,7 @@ async fn run_anthropic_round(
     send_streaming_sse_request(
         &client,
         &endpoint,
-        build_anthropic_header_map(api_key, custom_headers)?,
+        build_anthropic_header_map(api_key, custom_headers, enable_one_m_context)?,
         &payload,
         retry_options,
         |event| {

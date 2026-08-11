@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::embedding::{self, EmbeddingConfig};
+use crate::api::retry::{is_retriable_error, RetryOptions};
 use crate::storage::services::code_chunker::{chunk_content, ChunkingConfig};
 use crate::storage::services::codebase_embed_sessions::{self, EmbedSessionRecord};
 use crate::storage::services::codebase_index::{
@@ -835,7 +836,7 @@ async fn embed_single_file(
         let inputs: Vec<String> = batch.iter().map(|c| c.content.clone()).collect();
 
         // Embed this batch with retry.
-        let embeddings = match embed_with_retry(embedding_config, &inputs, session_id, 3).await {
+        let embeddings = match embed_with_retry(embedding_config, &inputs, session_id).await {
             Ok(emb) => emb,
             Err(embed_err) => {
                 // On embed failure: store whatever vectors we have collected
@@ -953,8 +954,9 @@ async fn embed_with_retry(
     config: &EmbeddingConfig,
     inputs: &[String],
     session_id: &str,
-    max_retries: u32,
 ) -> Result<Vec<Vec<f64>>> {
+    // 统一重试策略：判定与退避与 LLM 请求一致（is_retriable_error + 指数退避）
+    let options = RetryOptions::default();
     let mut attempt = 0u32;
     loop {
         if is_cancelled(session_id) {
@@ -964,28 +966,17 @@ async fn embed_with_retry(
         match embedding::embed_batch(config, inputs).await {
             Ok(result) => return Ok(result),
             Err(error) => {
-                if attempt >= max_retries {
+                if attempt >= options.max_retries || !is_retriable_error(&error) {
                     return Err(error);
                 }
 
-                // Only retry on retriable errors
-                let reason = error.reason.to_lowercase();
-                let retriable = reason.contains("timeout")
-                    || reason.contains("network")
-                    || reason.contains("529")
-                    || reason.contains("429")
-                    || reason.contains("rate limit")
-                    || reason.contains("500")
-                    || reason.contains("502")
-                    || reason.contains("503")
-                    || reason.contains("504")
-                    || reason.contains("overloaded");
-
-                if !retriable {
-                    return Err(error);
-                }
-
-                let delay = std::time::Duration::from_millis(2000u64 * (attempt as u64 + 1));
+                // 与 wait_before_retry 一致的指数退避（base×2^attempt，封顶 30s）
+                let delay = std::time::Duration::from_millis(
+                    options
+                        .base_delay_ms
+                        .saturating_mul(1u64 << attempt.min(4))
+                        .min(30_000),
+                );
                 tokio::select! {
                     _ = tokio::time::sleep(delay) => {}
                     _ = wait_if_paused(session_id) => {}

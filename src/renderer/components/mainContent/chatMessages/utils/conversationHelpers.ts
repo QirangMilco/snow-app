@@ -3,6 +3,7 @@ import type {
   ToolCallInfo,
 } from "./conversationTypes";
 import type { ChatMessageRecord } from "../../../../../preload";
+import { resolveResponseDisposition } from "./responseDisposition";
 
 export const deleteCheckpoints = (checkpointIds: string[]): void => {
   for (const checkpointId of checkpointIds) {
@@ -348,15 +349,32 @@ export const buildConversationMessages = (
   return records
     .filter((record) => record.role !== "tool")
     .map((record) => {
-      const toolCalls = parseToolCalls(record.toolCallsJson).map((toolCall) => {
-        const result = consumeToolResult(toolCall);
-        return {
-          ...toolCall,
-          status:
-            result === undefined ? ("error" as const) : ("completed" as const),
-          result,
-        };
-      });
+      const assistantDisposition =
+        record.role === "user" ? null : resolveResponseDisposition(record);
+      const toolCalls =
+        assistantDisposition?.kind === "incomplete"
+          ? []
+          : parseToolCalls(record.toolCallsJson).map((toolCall) => {
+              const result = consumeToolResult(toolCall);
+              return {
+                ...toolCall,
+                status:
+                  result === undefined
+                    ? ("error" as const)
+                    : ("completed" as const),
+                result,
+              };
+            });
+      const messageStatus: NonNullable<ChatConversationMessage["status"]> =
+        record.role === "user"
+          ? isResponseErrorStatus(record.status)
+            ? "error"
+            : "sent"
+          : assistantDisposition?.kind === "error"
+            ? "error"
+            : assistantDisposition?.kind === "incomplete"
+              ? "incomplete"
+              : "sent";
 
       return {
         id: record.id,
@@ -367,12 +385,19 @@ export const buildConversationMessages = (
             : record.content,
         thinking: record.thinking || undefined,
         timestamp: record.createdAt,
-        status: isResponseErrorStatus(record.status) ? "error" : "sent",
+        status: messageStatus,
         responseId: record.responseId || undefined,
         checkpointId: record.checkpointId || undefined,
         model: record.model || undefined,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         isContextCompaction: record.status === "context_compaction",
+        ...(assistantDisposition?.kind === "incomplete"
+          ? {
+              incompleteVariant: assistantDisposition.variant,
+              interruptionReason: assistantDisposition.reason,
+              recoveryOutcome: assistantDisposition.recoveryOutcome,
+            }
+          : {}),
       };
     });
 };

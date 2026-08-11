@@ -537,7 +537,7 @@ export const TopBar = ({
             type="button"
             aria-label="New chat"
             title="New chat"
-            onClick={handleNewChat}
+            onClick={() => handleNewChat()}
           >
             <SquarePen size={16} strokeWidth={1.8} />
           </button>

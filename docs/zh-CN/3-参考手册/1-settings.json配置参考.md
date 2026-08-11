@@ -44,6 +44,8 @@
 | `timeoutMs` | number | 超时时间（毫秒） |
 | `alwaysAllow` | array | 免确认的工具名列表 |
 
+> **工具级启停不在 settings.json**：MCP 工具级启停（全局/项目）由 MCP 设置面板管理（应用数据库），不写入 settings.json；settings.json 的 `mcpServers` 仅承载服务器级配置。
+
 ### stdio 示例
 
 ```json

@@ -96,6 +96,14 @@ Using "add a settings item" as an example — the cross-layer change pattern:
    npm run check:ts     # no `any`, must pass
 ```
 
+```mermaid
+flowchart TD
+    A[① Renderer<br/>settings panel UI + trilingual strings] --> B[② Preload<br/>type definitions + xxxApi channel]
+    B --> C[③ Main<br/>ipcMain.handle + register handler]
+    C --> D[④ Native<br/>Rust storage service + napi export]
+    D --> E[⑤ Build & verify<br/>npm run build:rust + check:ts]
+```
+
 **Read-only query chain**: Renderer → `window.snow.xxxMethod` →
 `ipcRenderer.invoke` → `ipcMain.handle` → `native.xxx` (storageReady gate
 auto-waits) → rusqlite. `src/preload/index.ts` spreads each `*Api` object, so

@@ -300,6 +300,6 @@ sequenceDiagram
 | prompt action 没有效果 | 当前 native executor 不执行 prompt 模型调用；改用 command 或受支持的 context。 |
 | context 未进入子代理 prompt | `beforeSubAgentStart` 当前只记录结果，不拼接子代理 prompt；把必需内容写入子代理 `systemPrompt`。 |
 | 全局子代理显式工具列表被拒 | 显式列表需要 `projectId`；改成项目级，或全局使用 `["*"]`/`[]`。 |
-| 子代理找不到工具 | 使用当前项目的完整启用工具名，检查 MCP 服务器和项目工具开关。 |
+| 子代理找不到工具 | 使用当前项目的完整启用工具名，检查 MCP 服务器与工具开关（全局+项目）。 |
 | 子代理行为依赖主对话 | 子代理没有主会话历史；把上下文放进任务 prompt 或自包含 `systemPrompt`。 |
 | 同 ID 激活了错误配置 | 项目级优先于全局；分别 `config-get` 并核对 `projectId`。 |

@@ -768,7 +768,8 @@ const formatTokens = (count: number): string => {
 };
 
 // 显示主窗口：恢复最小化 / 隐藏（托盘）状态并聚焦；窗口已全部关闭（macOS）时重建。
-const showMainWindow = (): void => {
+// 导出供全局快捷键（globalShortcuts.ts）呼出窗口复用。
+export const showMainWindow = (): void => {
   // macOS 从菜单栏托盘恢复时，重新显示 Dock 图标。
   if (process.platform === "darwin") {
     app.dock?.show();

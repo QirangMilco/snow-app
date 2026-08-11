@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Copy,
   Download,
   FileText,
@@ -154,6 +156,8 @@ export const ImageLibraryPanel = ({
   const [providerFilter, setProviderFilter] = useState("all");
   const [dataUrls, setDataUrls] = useState<Record<string, string>>({});
   const [lightbox, setLightbox] = useState<ImageLibraryRecord | null>(null);
+  /** 灯箱详情面板是否展开（收起可避免遮挡图片） */
+  const [lightboxDetailsOpen, setLightboxDetailsOpen] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingDeletion, setPendingDeletion] =
     useState<ImageLibraryRecord | null>(null);
@@ -1887,9 +1891,50 @@ export const ImageLibraryPanel = ({
                 </button>
               </div>
               <div
-                className="image-library-lightbox-details"
+                className={`image-library-lightbox-details${
+                  lightboxDetailsOpen ? "" : " collapsed"
+                }`}
                 onClick={(event) => event.stopPropagation()}
               >
+                <div className="image-library-lightbox-details-head">
+                  <span className="image-library-lightbox-details-title">
+                    {t("settings.imageLibraryDetails", {
+                      defaultValue: "Details",
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="image-library-lightbox-details-toggle"
+                    onClick={() => setLightboxDetailsOpen((open) => !open)}
+                    aria-expanded={lightboxDetailsOpen}
+                    title={
+                      lightboxDetailsOpen
+                        ? t("settings.imageLibraryDetailsCollapse", {
+                            defaultValue: "Collapse details",
+                          })
+                        : t("settings.imageLibraryDetailsExpand", {
+                            defaultValue: "Expand details",
+                          })
+                    }
+                    aria-label={
+                      lightboxDetailsOpen
+                        ? t("settings.imageLibraryDetailsCollapse", {
+                            defaultValue: "Collapse details",
+                          })
+                        : t("settings.imageLibraryDetailsExpand", {
+                            defaultValue: "Expand details",
+                          })
+                    }
+                  >
+                    {lightboxDetailsOpen ? (
+                      <ChevronDown size={12} aria-hidden="true" />
+                    ) : (
+                      <ChevronUp size={12} aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+                {lightboxDetailsOpen ? (
+                  <>
                 {lightbox.prompt ? (
                   <div className="image-library-lightbox-prompt">
                     <div className="image-library-lightbox-detail-row">
@@ -1949,6 +1994,8 @@ export const ImageLibraryPanel = ({
                 <div className="image-library-lightbox-nav-hint">
                   ←/→ {t("settings.imageLibraryNavHint")}
                 </div>
+                  </>
+                ) : null}
               </div>
             </div>,
             document.body

@@ -138,6 +138,16 @@ This project is a content-management dashboard that needs a complete UI refresh:
 6. Verify that the console is clean and navigation, dialogs, and forms still work.
 ```
 
+```mermaid
+flowchart TD
+    A[Screenshot current pages<br/>home + list pages] --> B[imagegen-image-describe analyzes the current UI]
+    B --> C[imagegen-generate design references<br/>multiple variants, pick the best]
+    C --> D[Turn the design into an executable spec<br/>colors / font stack / spacing / component styles]
+    D --> E[Refactor style files per the spec<br/>CSS variables + component classes, behavior unchanged]
+    E --> F[Preview on dev server, compare screenshots<br/>fix until it matches the design]
+    F --> G[Check console is clean<br/>navigation / dialogs / forms work]
+```
+
 ## 7. Best practices
 
 | Practice | Guidance |

@@ -15,6 +15,13 @@ Skill 是一个以 `SKILL.md` 为入口的指令包。Snow App 会扫描技能�
 | 3 | `<项目>/.agents/skills/` | 项目级 | 高于全局目录 |
 | 4 | `<项目>/.snow/skills/` | 项目级；GitHub 项目安装位置 | 最高 |
 
+```mermaid
+flowchart LR
+    A[~/.agents/skills/<br/>全局用户级, 最低] --> B[~/.snow/skills/<br/>全局 + GitHub 全局安装]
+    B --> C[<项目>/.agents/skills/<br/>项目级]
+    C --> D[<项目>/.snow/skills/<br/>项目级 + GitHub 项目安装, 最高]
+```
+
 没有项目上下文时只扫描两个全局目录。扫描是递归的：每个 `SKILL.md` 所在目录都是一个 Skill，**技能 ID 是它相对扫描根目录的路径**，并统一使用 `/`。例如：
 
 ```text

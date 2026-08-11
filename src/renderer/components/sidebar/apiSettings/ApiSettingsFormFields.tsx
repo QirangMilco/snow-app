@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import { useI18n } from "../../../i18n";
 import { ApiModelCombobox } from "./ApiModelCombobox";
 import { CustomSelect } from "../../common/CustomSelect";
@@ -11,6 +11,7 @@ import {
   REQUEST_METHODS,
 } from "./apiSettingsConstants";
 import { THINKING_OPTIONS_BY_METHOD } from "../../mainContent/chatInput/constants";
+import { ThinkingStrengthMenu } from "../../mainContent/chatInput/ThinkingStrengthMenu";
 import {
   AUTO_COMPRESS_THRESHOLD_MAX_PERCENT,
   AUTO_COMPRESS_THRESHOLD_MIN_PERCENT,
@@ -72,6 +73,8 @@ export function ApiSettingsFormFields({
   const { t } = useI18n();
   const [showApiKey, setShowApiKey] = useState(false);
   const [showVisionKey, setShowVisionKey] = useState(false);
+  const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
+  const thinkingMenuRef = useRef<HTMLDivElement | null>(null);
   const [modelOptions, setModelOptions] = useState<Model[]>([]);
   const [isLoadingModelOptions, setIsLoadingModelOptions] = useState(false);
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(
@@ -104,18 +107,45 @@ export function ApiSettingsFormFields({
     void loadBindingOptions();
   }, [loadBindingOptions]);
 
+  // 点击思考强度菜单外部时关闭
+  useEffect(() => {
+    if (!isThinkingMenuOpen) return;
+    const handleMouseDown = (event: MouseEvent): void => {
+      if (
+        thinkingMenuRef.current &&
+        !thinkingMenuRef.current.contains(event.target as Node)
+      ) {
+        setIsThinkingMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [isThinkingMenuOpen]);
+
   // When the request method changes, the set of valid thinking-strength options
   // changes with it. If the current value is not among the new method's options,
-  // reset it to the default so the dropdown never shows an invalid selection.
+  // reset it to the default so the menu never shows an invalid selection.
+  // Manual custom values are intentionally left untouched: they are only reset
+  // when the request method itself switches to one that no longer accepts them.
+  const prevRequestMethodRef = useRef(data.requestMethod);
   useEffect(() => {
-    const resolved = resolveThinkingValue(
-      data.thinkingValue,
-      data.requestMethod
-    );
+    const prev = prevRequestMethodRef.current;
+    prevRequestMethodRef.current = data.requestMethod;
+    if (prev === data.requestMethod) return;
+    const resolved = resolveThinkingValue(data.thinkingValue, data.requestMethod);
     if (resolved !== data.thinkingValue) {
       onChange("thinkingValue", resolved);
     }
   }, [data.requestMethod, data.thinkingValue, onChange]);
+
+  const thinkingOptions =
+    THINKING_OPTIONS_BY_METHOD[
+      (data.requestMethod ||
+        "chat") as keyof typeof THINKING_OPTIONS_BY_METHOD
+    ] || THINKING_OPTIONS_BY_METHOD.chat;
+  const activeThinkingLabel =
+    thinkingOptions.find((option) => option.value === data.thinkingValue)
+      ?.label ?? data.thinkingValue;
 
   const loadModelOptions = useCallback(
     async (force = false) => {
@@ -222,6 +252,8 @@ export function ApiSettingsFormFields({
         defaultValue: "No models found",
       })}
       retryText={t("common.retry", { defaultValue: "Retry" })}
+      // 模型名自由编辑：不自动补/剥 [1M] 标记（请求是否启用 1M 上下文
+      // 由独立开关 snowcfg.enable1mContext 决定，不依赖模型名后缀）。
       onChange={(value) => onChange(field, value)}
       onRequestModels={handleModelInputFocus}
       onRetry={handleRetryModelOptions}
@@ -327,20 +359,32 @@ export function ApiSettingsFormFields({
                 defaultValue: "Thinking strength",
               })}
             </span>
-            <CustomSelect
-              value={data.thinkingValue}
-              options={(
-                THINKING_OPTIONS_BY_METHOD[
-                  (data.requestMethod ||
-                    "chat") as keyof typeof THINKING_OPTIONS_BY_METHOD
-                ] || THINKING_OPTIONS_BY_METHOD.chat
-              ).map((option) => ({
-                value: option.value,
-                label: option.label,
-              }))}
-              onChange={(value) => onChange("thinkingValue", value)}
-              disabled={disabled}
-            />
+            <div className="thinking-menu-wrap" ref={thinkingMenuRef}>
+              <button
+                aria-expanded={isThinkingMenuOpen}
+                className="thinking-menu-trigger"
+                disabled={disabled}
+                onClick={() => setIsThinkingMenuOpen((value) => !value)}
+                type="button"
+              >
+                <span>{activeThinkingLabel}</span>
+                <ChevronDown size={14} className="thinking-menu-chevron" />
+              </button>
+              {isThinkingMenuOpen && (
+                <div className="model-dropdown drop-down">
+                  <ThinkingStrengthMenu
+                    open={isThinkingMenuOpen}
+                    value={data.thinkingValue}
+                    options={thinkingOptions}
+                    subtitle={data.requestMethod}
+                    onSelect={(value) => {
+                      onChange("thinkingValue", value);
+                      setIsThinkingMenuOpen(false);
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           </label>
           {data.requestMethod === "gemini" && (
             <div className="api-settings-field">
@@ -499,6 +543,40 @@ export function ApiSettingsFormFields({
             "basicModel",
             t("settings.apiBasicModel", { defaultValue: "Basic model" }),
             "gpt-4.1-mini"
+          )}
+          {data.requestMethod === "anthropic" && (
+            <div className="api-settings-field">
+              <span>
+                {t("settings.apiOneMContext", {
+                  defaultValue: "1M context",
+                })}
+              </span>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={data.oneMContext}
+                  onChange={(event) =>
+                    onChange("oneMContext", event.target.checked)
+                  }
+                  disabled={disabled}
+                  hidden
+                />
+                <span className="toggle-slider" />
+                <span>
+                  {t(
+                    data.oneMContext
+                      ? "settings.enabled"
+                      : "settings.disabled"
+                  )}
+                </span>
+              </label>
+              <small className="api-settings-hint-text">
+                {t("settings.apiOneMContextHint", {
+                  defaultValue:
+                    "When enabled, all Anthropic requests send the context-1m beta header to declare 1M-token context support (for Anthropic and compatible gateways/proxies).",
+                })}
+              </small>
+            </div>
           )}
           <label className="api-settings-field">
             <span>
@@ -811,6 +889,21 @@ export function ApiSettingsFormFields({
               value={data.retryBaseDelayMs}
               onChange={changeField("retryBaseDelayMs")}
               placeholder="3000"
+              type="number"
+              min={0}
+              disabled={disabled}
+            />
+          </label>
+          <label className="api-settings-field">
+            <span>
+              {t("settings.apiPartialRetryMaxChars", {
+                defaultValue: "Partial keep threshold (chars)",
+              })}
+            </span>
+            <input
+              value={data.partialRetryMaxChars}
+              onChange={changeField("partialRetryMaxChars")}
+              placeholder="1000"
               type="number"
               min={0}
               disabled={disabled}

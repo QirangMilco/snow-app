@@ -8,10 +8,17 @@ import {
 import type {
   CreateScheduledTaskInput,
   ScheduledTaskRecord,
+  UpdateScheduledTaskInput,
 } from "../../preload";
 
+/** Create input with an optional project override: omitted = the current
+ *  project; "" = global task. */
+type CreateTaskInput = Omit<CreateScheduledTaskInput, "directoryId"> & {
+  directoryId?: string;
+};
+
 /**
- * React bridge for the in-memory scheduled task scheduler.
+ * React bridge for the scheduled task scheduler.
  *
  * This hook does two jobs:
  *  1. Registers the AI Loop executor. When a task fires, its configured prompt
@@ -25,15 +32,24 @@ import type {
  * singleton concern, so it should be mounted exactly once for the lifetime of
  * the app (e.g. in MainSidebarContent, which is always rendered).
  *
- * Process-lifetime guarantee (requirement #4): the store and its timers live
- * only while this renderer process is alive. Closing/ quitting the app
- * destroys everything; nothing is persisted.
+ * Persistence: the store hydrates from the backend SQLite database on startup
+ * (task definitions, pause state and run history survive restarts). Execution
+ * still requires the renderer process to be alive — a task whose fire time
+ * passes while the app is closed is skipped on the next launch.
  */
-export const useScheduledTasks = (directoryId: string): {
+export const useScheduledTasks = (
+  directoryId: string,
+  directoryPath: string
+): {
   tasks: ScheduledTaskRecord[];
-  createTask: (input: Omit<CreateScheduledTaskInput, "directoryId">) => ScheduledTaskRecord;
+  createTask: (input: CreateTaskInput) => ScheduledTaskRecord;
+  updateTask: (
+    id: string,
+    input: UpdateScheduledTaskInput
+  ) => ScheduledTaskRecord | null;
   removeTask: (id: string) => void;
   clearTasks: () => void;
+  clearGlobalTasks: () => void;
   togglePauseTask: (id: string) => void;
   runTaskNow: (id: string) => Promise<void>;
   isExecutorReady: boolean;
@@ -64,11 +80,27 @@ export const useScheduledTasks = (directoryId: string): {
 
   // Register buildFromContent as the AI Loop executor.
   useEffect(() => {
-    const unregister = scheduledTasksStore.setExecutor((prompt) => {
-      // buildFromContent creates a NEW conversation and auto-sends the prompt,
-      // which kicks off the existing AI Loop with all tools available.
-      buildFromContent(prompt);
-    });
+    const unregister = scheduledTasksStore.setExecutor(
+      (prompt, taskName, directoryId, options) => {
+        // buildFromContent creates a NEW conversation and auto-sends the prompt,
+        // which kicks off the existing AI Loop with all tools available. The
+        // task's bound project is forwarded so the new conversation lands in
+        // the task's project even when the user is viewing another one; an
+        // empty directoryId (global task) falls back to the currently active
+        // project. Per-task API overrides (apiProfile/basicModel/model/
+        // thinkingStrength) are passed along so the fired conversation runs on
+        // the configured provider while its first title can use the task's
+        // basic-model snapshot. The task name is forwarded too so the new
+        // conversation's message list can show a "triggered by scheduled task"
+        // banner.
+        buildFromContent(prompt, directoryId || undefined, {
+          apiProfile: options.apiProfile,
+          basicModel: options.basicModel,
+          model: options.model,
+          thinkingStrength: options.thinkingStrength,
+        }, taskName);
+      }
+    );
     setIsExecutorReady(true);
     return () => {
       unregister();
@@ -76,14 +108,43 @@ export const useScheduledTasks = (directoryId: string): {
     };
   }, [buildFromContent]);
 
+  // Register the pre-script runner: binds the project directory as cwd and
+  // delegates to the Rust backend via the preload bridge (fully async, the
+  // tokio runtime spawns the shell process — never blocks the renderer).
+  useEffect(() => {
+    if (!directoryPath) return;
+    const unregister = scheduledTasksStore.setScriptRunner(
+      (command, options) => {
+        const envJson = JSON.stringify({
+          SNOW_DIRECTORY: directoryPath,
+          ...options.env,
+        });
+        return window.snow.runPreScript(
+          command,
+          directoryPath,
+          options.timeoutMs,
+          envJson
+        );
+      }
+    );
+    return unregister;
+  }, [directoryPath]);
+
   const createTask = useCallback(
-    (input: Omit<CreateScheduledTaskInput, "directoryId">): ScheduledTaskRecord => {
+    (input: CreateTaskInput): ScheduledTaskRecord => {
       return scheduledTasksStore.create({
         ...input,
-        directoryId,
+        directoryId: input.directoryId ?? directoryId,
       });
     },
     [directoryId]
+  );
+
+  const updateTask = useCallback(
+    (id: string, input: UpdateScheduledTaskInput): ScheduledTaskRecord | null => {
+      return scheduledTasksStore.update(id, input);
+    },
+    []
   );
 
   const removeTask = useCallback((id: string): void => {
@@ -93,6 +154,10 @@ export const useScheduledTasks = (directoryId: string): {
   const clearTasks = useCallback((): void => {
     scheduledTasksStore.clear(directoryId);
   }, [directoryId]);
+
+  const clearGlobalTasks = useCallback((): void => {
+    scheduledTasksStore.clearGlobal();
+  }, []);
 
   const togglePauseTask = useCallback((id: string): void => {
     scheduledTasksStore.togglePause(id);
@@ -105,8 +170,10 @@ export const useScheduledTasks = (directoryId: string): {
   return {
     tasks,
     createTask,
+    updateTask,
     removeTask,
     clearTasks,
+    clearGlobalTasks,
     togglePauseTask,
     runTaskNow,
     isExecutorReady,

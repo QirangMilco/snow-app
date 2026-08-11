@@ -60,6 +60,25 @@ API profile resolution prefers an explicit request profile, then the persisted c
 5. Preload forwards only chunks matching the current `streamId`.
 6. `createStreamChunkHandler` updates text, thinking, tool execution IDs, and stream metrics; the invoke Promise returns the final `ResponsesApiResult`.
 
+```mermaid
+sequenceDiagram
+    participant R as Renderer loop
+    participant P as Preload (apiConfigApi)
+    participant M as Main (chatHandlers)
+    participant N as Rust stream
+    participant C as createStreamChunkHandler
+
+    R->>P: createResponseStream(request, onChunk, onStreamId)
+    P->>P: create streamId and register chunk listener
+    P->>M: invoke chat:create-response
+    M->>N: native.createResponseStream
+    N-->>M: Rust callback chunk
+    M-->>P: safeSend { streamId, chunk }
+    P-->>R: only chunks matching streamId
+    R->>C: update text / thinking / tool execution ID / metrics
+    N-->>R: invoke Promise resolves with final ResponsesApiResult
+```
+
 This chain is unrelated to `src/main/app/sessionProxy.ts`, which configures Electron network proxies.
 
 ## 4. Renderer Main Loop
@@ -93,19 +112,47 @@ A round streams the model, parses `toolCallsJson`, creates an executor from the 
 
 `collect_all_mcp_tools` filters and merges tools in this order:
 
-1. Resolve project scope.
+1. Resolve global and project scope.
 2. Expose codebase tools only when a project exists, codebase is enabled, and vector chunks exist.
 3. Expose imagegen only when at least one channel is enabled.
 4. Read 14 built-in services in fixed order; Plan approval appears only in Plan Mode requests.
-5. Apply project server/tool enable states; terminal is disabled by default and requires explicit project enablement.
+5. Apply global and project server/tool enable states (global disable wins); terminal is disabled by default and requires explicit project enablement.
 6. Inject the Skills tool dynamically.
 7. Discover external stdio/HTTP MCP tools in parallel; one server failure is logged without failing all discovery.
 
-Sub-agents use `collect_allowed_mcp_tools`. Their `tools_json` must be a string array; only built-in sub-agents may use `*`. Missing or project-disabled tools are rejected rather than silently expanding authority. External MCP supports `server/discover` with a legacy initialize fallback.
+```mermaid
+flowchart TD
+    A[Resolve global and project scope] --> B{Project exists, codebase enabled, and vector chunks exist?}
+    B -- yes --> C[Expose codebase tools]
+    B -- no --> D
+    C --> D{At least one imagegen channel enabled?}
+    D -- yes --> E[Expose imagegen]
+    D -- no --> F
+    E --> F[Read 14 built-in services in fixed order<br/>Plan approval only in Plan Mode requests]
+    F --> G[Apply global and project enable states<br/>global disable wins, terminal disabled by default]
+    G --> H[Inject Skills tool dynamically]
+    H --> I[Discover external MCP stdio/HTTP tools in parallel<br/>one failure is logged, not fatal]
+```
+
+Sub-agents use `collect_allowed_mcp_tools`. Their `tools_json` must be a string array; only built-in sub-agents may use `*`. Missing or globally/project-disabled tools are rejected rather than silently expanding authority. External MCP supports `server/discover` with a legacy initialize fallback.
 
 ## 6. Tool Calls and Checkpoints
 
-`call_mcp_tool` sanitizes polluted names, validates Plan special tools, blocks writes before Plan approval, checks project enable state, checks the sub-agent allowlist, resolves local/SSH workspace context, anchors local relative paths to the project root, augments pre-tool checkpoint capture, routes by tool type, privacy-masks output, and updates the post-tool checkpoint.
+`call_mcp_tool` sanitizes polluted names, validates Plan special tools, blocks writes before Plan approval, checks global and project enable state, checks the sub-agent allowlist, resolves local/SSH workspace context, anchors local relative paths to the project root, augments pre-tool checkpoint capture, routes by tool type, privacy-masks output, and updates the post-tool checkpoint.
+
+```mermaid
+flowchart TD
+    A[Sanitize polluted tool names] --> B[Validate Plan special tools]
+    B --> C[Block writes before Plan approval]
+    C --> D[Check global and project enable state]
+    D --> E[Check sub-agent allowlist]
+    E --> F[Resolve local/SSH workspace context]
+    F --> G[Anchor local relative paths to project root]
+    G --> H[Augment pre-tool checkpoint capture]
+    H --> I[Route by tool type]
+    I --> J[Privacy-mask output]
+    J --> K[Update post-tool checkpoint]
+```
 
 Routes include bash, grep, remote filesystem, browser, user interaction, app control, terminal, imagegen, external MCP, and ordinary built-ins. Cancellable remote execution returns an execution ID through a `tool_execution` chunk. Checkpoint capture lets parent and sub-agent file changes share one preview and restoration boundary.
 
@@ -121,6 +168,25 @@ Renderer `useToolAuthorization.ts` composes these policies:
 - Pending confirmations suspend on a Promise until the user decides.
 
 Rust is the second boundary: `bash.rs` verifies short-lived one-use authorization tokens for sensitive commands, while `call_mcp_tool` enforces Plan Mode and sub-agent allowed-tools. Frontend convenience policy never replaces backend enforcement.
+
+```mermaid
+flowchart TD
+    A[Tool call] --> B{toolConfirmation Hook}
+    B -- approve --> G[Execute tool]
+    B -- deny --> K[Denial result back to model]
+    B -- continue --> C{Sensitive command?}
+    C -- yes --> D[Rust verifies short-lived one-use token<br/>sensitive commands bypassed by no approve-all]
+    D -- passed --> G
+    C -- no --> E{Interactive bash?}
+    E -- yes --> F[Interactive terminal UI confirms]
+    F --> G
+    E -- no --> H{YOLO Mode or project alwaysApprovedTools?}
+    H -- yes --> G
+    H -- no --> I[Suspend on Promise until user decides]
+    I -- approved --> G
+    I -- denied --> K
+    G --> L[Rust second boundary<br/>Plan Mode write blocking + sub-agent allowlist]
+```
 
 ## 8. Hooks
 
@@ -159,6 +225,29 @@ After the model calls `sub-agents-activate`, Renderer runs `beforeSubAgentStart`
 
 A sub-agent inherits parent checkpoint IDs so its file changes remain inside the parent's rollback boundary. Rust also enforces allowed-tools and blocks writes while the parent Plan is unapproved. A sub-agent cannot call or grant Plan approval. Completion persists `completed` or `failed`, runs `onSubAgentComplete`, and makes the conversation read-only; later queued input is forwarded to the parent. Parent abort propagates to active sub-agents, and startup cancels stale `running` sessions.
 
+Activation runs in parallel with the main agent (pre-started by the Renderer) and returns a structured JSON tool result when it ends; the main agent never auto-retries — the model decides the next step from the result. Normal completion returns `{success: true, conversationId, agentName, summary}` (`onSubAgentComplete` may append context on pass, append a warning on warn, or replace the summary on abort). An API stream failure returns the failure content as the final output and marks the message as error. An exception returns `{success: false, error}`, persists the session as `failed`, broadcasts the failure event, and forwards messages the user queued inside the sub-conversation to the parent. A user interrupt returns "Sub-agent interrupted by user". An unapproved parent Plan stops the sub-agent immediately and returns control to the main loop. There is no global sub-agent timeout (only per-tool timeouts); stopping the main agent recursively cancels the whole descendant tree via `childSubAgentIds` (aborting streams, rejecting pending authorizations, killing bash child processes), and app startup cleans up stale `running` sessions.
+
+```mermaid
+flowchart TD
+    A[Main agent calls sub-agents-activate] --> B[Renderer runs beforeSubAgentStart]
+    B --> C{Blocked by Hook?}
+    C -->|yes| X[Return block message, no session created]
+    C -->|no| D[Create independent session, persist running]
+    D --> E[Independent sub-agent loop: streaming request + tool execution]
+    E --> F{Exit condition}
+    F -->|normal completion, no tool calls| G[Run onSubAgentComplete, persist completed]
+    F -->|API stream failure| H[Failure content as final output, message marked error]
+    F -->|exception| I[Persist failed and broadcast failure, forward queued input to parent]
+    F -->|user interrupt| J[Return Sub-agent interrupted by user]
+    F -->|parent Plan unapproved| K[Stop immediately, return control]
+    G --> L[Structured JSON tool result to main agent]
+    H --> L
+    I --> L
+    J --> L
+    K --> L
+    L --> M[Main agent model decides next step, no auto-retry]
+```
+
 ## 10. Context Compaction
 
 Compaction is manual or automatic when total tokens reach `autoCompressThreshold`:
@@ -170,11 +259,46 @@ Compaction is manual or automatic when total tokens reach `autoCompressThreshold
 5. Renderer reloads database messages; automatic compaction resumes the original loop with `resumeAfterCompaction`.
 6. Failure deletes the temporary checkpoint.
 
+```mermaid
+flowchart TD
+    A[Manual trigger or tokens reach autoCompressThreshold] --> B{Local workspace?}
+    B -- yes --> C[Create temporary checkpoint]
+    B -- no --> D[SSH skips local file checkpoints]
+    C --> E[Run beforeCompress]
+    D --> E
+    E --> F[Stream contextCompaction request<br/>compaction exposes no tools]
+    F --> G[Rust generates handoff from complete valid context<br/>persists boundary: real usage + checkpoint ID]
+    G --> H[Renderer reloads database messages]
+    H --> I{Compaction succeeded?}
+    I -- yes --> J[Resume original loop with resumeAfterCompaction]
+    I -- no --> K[Delete the temporary checkpoint]
+```
+
 ## 11. Rollback
 
 `useRollback.ts` aborts the current stream, cancels summary generation, computes the checkpoint diff and TODOs to remove, and shows a preview. After confirmation it waits for stream and summary Promises to finish, avoiding races with SQLite write transactions. The user may truncate conversation only or also call `restoreCheckpoint` for files.
 
 Rolling back the first message may delete the conversation; other cases call `truncateConversation` and clean obsolete checkpoints. A `context_compaction` boundary must be truncated using that boundary's own `responseId`, not misclassified as a first message.
+
+```mermaid
+flowchart TD
+    A[Start rollback] --> B[Abort current stream and cancel summary generation]
+    B --> C[Compute checkpoint diff and TODOs to remove]
+    C --> D[Show preview]
+    D --> E{User confirms?}
+    E -- no --> F[Cancel rollback]
+    E -- yes --> G[Wait for stream and summary Promises to finish<br/>avoid races with SQLite write transactions]
+    G --> H{First message?}
+    H -- yes --> I[Delete the whole conversation]
+    H -- no --> J[truncateConversation and clean obsolete checkpoints]
+    I --> K{Restore files too?}
+    J --> K
+    K -- yes --> L[restoreCheckpoint restores files]
+    K -- no --> M{Rolling back a compaction boundary?}
+    L --> M
+    M -- yes --> N[Truncate with the boundary's own responseId<br/>do not misclassify as first message]
+    M -- no --> O[Done]
+```
 
 ## 12. Persistence
 

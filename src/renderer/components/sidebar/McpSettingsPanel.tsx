@@ -517,6 +517,115 @@ export function McpSettingsPanel({
     }
   };
 
+  const handleToggleTool = async (
+    server: McpSettingsListItem,
+    tool: McpServerTool,
+    enabled: boolean
+  ): Promise<void> => {
+    if (isBusy || !server.globalEnabled || !server.enabled) {
+      return;
+    }
+    if (activeScope === "project" && !activeDirectory) {
+      return;
+    }
+    setError("");
+    setStatus("");
+
+    const updateToolState = (nextEnabled: boolean): void => {
+      setToolsByServerId((previous) => {
+        const current = previous[server.serverId];
+        if (!current) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [server.serverId]: current.map((item) =>
+            item.name === tool.name ? { ...item, enabled: nextEnabled } : item
+          ),
+        };
+      });
+    };
+
+    updateToolState(enabled);
+    try {
+      if (activeScope === "global") {
+        await window.snow.setMcpToolEnabled(tool.name, enabled);
+      } else if (activeDirectory) {
+        await window.snow.setMcpProjectToolEnabled(
+          activeDirectory.directoryId,
+          tool.name,
+          enabled
+        );
+      }
+    } catch (e) {
+      updateToolState(!enabled);
+      setError(
+        e instanceof Error
+          ? formatMcpError(e, t)
+          : t("settings.mcpToolToggleError", {
+              defaultValue: "Failed to update MCP tool",
+            })
+      );
+    }
+  };
+
+  const handleToggleAllTools = async (
+    server: McpSettingsListItem,
+    enabled: boolean
+  ): Promise<void> => {
+    if (isBusy || !server.globalEnabled || !server.enabled) {
+      return;
+    }
+    if (activeScope === "project" && !activeDirectory) {
+      return;
+    }
+    const tools = toolsByServerId[server.serverId];
+    if (!tools || tools.length === 0) {
+      return;
+    }
+    const toolNames = tools.map((tool) => tool.name);
+    setError("");
+    setStatus("");
+
+    const updateAllToolsState = (nextEnabled: boolean): void => {
+      setToolsByServerId((previous) => {
+        const current = previous[server.serverId];
+        if (!current) {
+          return previous;
+        }
+        return {
+          ...previous,
+          [server.serverId]: current.map((item) => ({
+            ...item,
+            enabled: nextEnabled,
+          })),
+        };
+      });
+    };
+
+    updateAllToolsState(enabled);
+    try {
+      if (activeScope === "global") {
+        await window.snow.setMcpToolsEnabled(toolNames, enabled);
+      } else if (activeDirectory) {
+        await window.snow.setMcpProjectToolsEnabled(
+          activeDirectory.directoryId,
+          toolNames,
+          enabled
+        );
+      }
+    } catch (e) {
+      updateAllToolsState(!enabled);
+      setError(
+        e instanceof Error
+          ? formatMcpError(e, t)
+          : t("settings.mcpToolToggleError", {
+              defaultValue: "Failed to update MCP tool",
+            })
+      );
+    }
+  };
+
   const handleDelete = async (server: McpServerConfig) => {
     setError("");
     setStatus("");
@@ -829,6 +938,21 @@ export function McpSettingsPanel({
     void handleProjectFetchTools(server);
   };
 
+  const handleListToggleTool = (
+    server: McpSettingsListItem,
+    tool: McpServerTool,
+    enabled: boolean
+  ): void => {
+    void handleToggleTool(server, tool, enabled);
+  };
+
+  const handleListToggleAllTools = (
+    server: McpSettingsListItem,
+    enabled: boolean
+  ): void => {
+    void handleToggleAllTools(server, enabled);
+  };
+
   const handleListEdit = (server: McpSettingsListItem): void => {
     if (isGlobalScope) {
       const globalServer = findGlobalServer(server.serverId);
@@ -1092,6 +1216,8 @@ export function McpSettingsPanel({
             fetchingToolServerIds={fetchingToolServerIds}
             onToggleEnabled={handleListToggle}
             onFetchTools={handleListFetchTools}
+            onToggleTool={handleListToggleTool}
+            onToggleAllTools={handleListToggleAllTools}
             onEdit={handleListEdit}
             onDelete={handleListDelete}
             onReleaseImportResource={requestRelease}

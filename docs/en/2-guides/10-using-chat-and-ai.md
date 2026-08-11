@@ -189,7 +189,8 @@ Compaction is **not absolutely irreversible**. The compaction message is a `cont
 
 ## 9. Scheduled Tasks and Memos
 
-- Create scheduled tasks from the sidebar or with `app-control-createScheduledTask`. They may run once, at an interval, or daily at a fixed time. They exist only while the app process is running and are cleared on exit;
+- Create scheduled tasks from the sidebar or with `app-control-createScheduledTask`. They may run once, at an interval, or daily at a fixed time. Tasks are saved in the local database and kept after restarting the app; executions missed while the app is closed are skipped;
+- A scheduled task can use `model` to pin the advanced model for its main requests and `basicModel` to pin only its first conversation title. If `apiProfile` is specified but `model` is omitted, the advanced default comes only from that same profile's `advancedModel`; Snow never borrows the current conversation's model or another profile's model. An omitted `basicModel` comes from the profile bound to the task conversation and never affects main requests. An omitted or trim-empty `thinkingStrength` stores no snapshot and inherits the resolved profile's latest setting when the task fires;
 - Create, edit, and delete memos from the sidebar. The AI can also create one with `app-control-createMemo`.
 
 ## 10. Background Notifications, Tray, and Windows
@@ -210,6 +211,7 @@ Compaction is **not absolutely irreversible**. The compaction message is a `cont
 | Earlier context disappears after compaction | The model context now uses the summary; roll back from the compaction boundary if needed |
 | Images remain after deleting a conversation | Library images are kept by default; select **Delete images too** in the deletion dialog to remove them |
 | Work stops after closing the window | Choose **Minimize** in the close dialog to hide to tray; **Quit** ends the process and clears scheduled tasks that exist only in memory |
+| The response stream stops mid-way | It retries automatically: partial tool calls or short partial text retry immediately (the message shows a "retrying" state); if a large amount of text (roughly 1000+ characters) was already received, the incomplete result is kept (marked as incomplete) and you can regenerate it manually |
 
 ## 12. References
 

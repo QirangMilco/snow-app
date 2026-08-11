@@ -133,8 +133,16 @@ Locating visual/layout issues (alignment, spacing, overflow, style drift):
 A complete flow that needs no external framework (Trellis / task systems) — only
 Snow App built-in tools and the official skill:
 
-```
-Requirement → clarify → plan → implement → verify → commit
+```mermaid
+flowchart LR
+    A[Requirement] --> B[Clarify<br/>goals / scope / acceptance criteria]
+    B --> C[Plan on disk<br/>verifiable steps + TODO list]
+    C --> D{Research needed?}
+    D -- no --> E[Implement<br/>surgical changes]
+    D -- yes --> F[Research<br/>docs / code search / parallel sub-agents]
+    F --> E
+    E --> G[Verify<br/>lint / typecheck / tests / build]
+    G --> H[Commit<br/>logical batches, confirm with user]
 ```
 
 ### 4.1 Clarify the requirement

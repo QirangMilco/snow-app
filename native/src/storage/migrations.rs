@@ -77,7 +77,11 @@ pub fn run_post_schema_migrations(connection: &Connection) -> rusqlite::Result<(
     migrate_chat_conversations_modes(connection)?;
     migrate_sub_agent_configs_project_id(connection)?;
     migrate_sub_agent_configs_model(connection)?;
+    migrate_scheduled_tasks_pre_script(connection)?;
+    migrate_api_configs_partial_retry_max_chars(connection)?;
+    migrate_chat_messages_interruption_metadata(connection)?;
     purge_assistant_raw_json_blobs(connection)?;
+    drop_tables_referencing_sub_agent_configs_legacy(connection)?;
     Ok(())
 }
 
@@ -212,6 +216,58 @@ fn migrate_plugins_desired_state(connection: &Connection) -> rusqlite::Result<()
         connection.execute(
             "UPDATE plugins
                 SET desired_state = CASE WHEN state = 'disabled' THEN 'disabled' ELSE 'enabled' END",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Adds the `partial_retry_max_chars` column to `api_configs` for databases
+/// created by older app versions.
+///
+/// The column stores the mid-stream retry keep-partial threshold (chars),
+/// part of the unified retry policy sourced from the API profile. Idempotent:
+/// no-op when the column is already present (fresh databases get it from the
+/// `CREATE TABLE` statement in `create_schema`).
+fn migrate_api_configs_partial_retry_max_chars(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(api_configs)")?;
+    let mut columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    let has_column = columns.try_fold(false, |found, column| {
+        Ok::<bool, rusqlite::Error>(found || column? == "partial_retry_max_chars")
+    })?;
+
+    if !has_column {
+        connection.execute(
+            "ALTER TABLE api_configs
+                ADD COLUMN partial_retry_max_chars INTEGER NOT NULL DEFAULT 1000",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Adds nullable final stream interruption metadata to assistant messages.
+/// Existing rows remain `NULL`, and each column is checked independently so
+/// partially migrated and repeatedly migrated databases are both safe.
+fn migrate_chat_messages_interruption_metadata(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(chat_messages)")?;
+    let columns: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !columns.iter().any(|column| column == "interruption_reason") {
+        connection.execute(
+            "ALTER TABLE chat_messages ADD COLUMN interruption_reason TEXT",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "recovery_outcome") {
+        connection.execute(
+            "ALTER TABLE chat_messages ADD COLUMN recovery_outcome TEXT",
             [],
         )?;
     }
@@ -416,6 +472,46 @@ fn migrate_sub_agent_configs_project_id(connection: &Connection) -> rusqlite::Re
     Ok(())
 }
 
+/// Drops tables left behind by intermediate dev builds whose foreign keys
+/// reference `sub_agent_configs_legacy` — a table that no longer exists once
+/// [`migrate_sub_agent_configs_project_id`] has rebuilt `sub_agent_configs`.
+///
+/// With `PRAGMA foreign_keys = ON` (set by `database::open_connection`),
+/// SQLite validates the whole foreign-key chain when preparing DML against a
+/// related table: e.g. deleting a workspace directory cascades into the
+/// orphan table (which references `workspace_directories`), whose dangling
+/// `agent_id` FK then fails with "no such table: main.sub_agent_configs_legacy".
+/// Reads still work, which makes the failure look like a delete-only bug.
+///
+/// The affected tables are orphaned leftovers (the current schema never
+/// creates them), so dropping them is safe. Detection is generic so any
+/// future table with a dangling FK to the legacy table is cleaned too.
+///
+/// Idempotent: no-op when no such table exists.
+fn drop_tables_referencing_sub_agent_configs_legacy(
+    connection: &Connection,
+) -> rusqlite::Result<()> {
+    let tables: Vec<String> = connection
+        .prepare(
+            "SELECT name
+               FROM sqlite_master
+              WHERE type = 'table'
+                AND name != 'sub_agent_configs_legacy'
+                AND sql LIKE '%sub_agent_configs_legacy%'",
+        )?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    for table in tables {
+        connection.execute(&format!("DROP TABLE IF EXISTS \"{table}\""), [])?;
+        eprintln!(
+            "Dropped orphan table \"{table}\" with dangling foreign key to sub_agent_configs_legacy"
+        );
+    }
+
+    Ok(())
+}
+
 /// Adds the optional independent model override for sub-agents.
 ///
 /// Existing rows receive an empty string, which preserves the compatibility
@@ -438,9 +534,58 @@ fn migrate_sub_agent_configs_model(connection: &Connection) -> rusqlite::Result<
     Ok(())
 }
 
-/// Clears the `raw_json` column for assistant messages that still hold the full
-/// SSE chunk array persisted by older app versions.
+/// Adds the pre-script configuration and skip-state columns to
+/// `scheduled_tasks` for databases created by older app versions.
 ///
+/// Without these columns, a task's pre-script (and its timeout / run-on-error
+/// flag, plus skip counters) only lived in the renderer's memory and was
+/// silently lost on restart. Idempotent: each column is checked independently
+/// via `PRAGMA table_info`, so partially migrated and repeatedly migrated
+/// databases are both safe (fresh databases get the columns from `CREATE
+/// TABLE`).
+fn migrate_scheduled_tasks_pre_script(connection: &Connection) -> rusqlite::Result<()> {
+    let mut statement = connection.prepare("PRAGMA table_info(scheduled_tasks)")?;
+    let columns: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if !columns.iter().any(|column| column == "pre_script") {
+        connection.execute("ALTER TABLE scheduled_tasks ADD COLUMN pre_script TEXT", [])?;
+    }
+    if !columns.iter().any(|column| column == "pre_script_timeout_ms") {
+        connection.execute(
+            "ALTER TABLE scheduled_tasks ADD COLUMN pre_script_timeout_ms INTEGER",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "run_on_script_error") {
+        connection.execute(
+            "ALTER TABLE scheduled_tasks ADD COLUMN run_on_script_error INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "skip_count") {
+        connection.execute(
+            "ALTER TABLE scheduled_tasks ADD COLUMN skip_count INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "last_skipped_at") {
+        connection.execute(
+            "ALTER TABLE scheduled_tasks ADD COLUMN last_skipped_at TEXT",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "last_skip_reason") {
+        connection.execute(
+            "ALTER TABLE scheduled_tasks ADD COLUMN last_skip_reason TEXT",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Historically every assistant response stored `serde_json::to_string(raw_events)`
 /// — the complete streaming chunk array — into `chat_messages.raw_json`. Each
 /// token produced a chunk repeating `id` / `model` / `system_fingerprint`,
@@ -478,5 +623,128 @@ fn purge_assistant_raw_json_blobs(connection: &Connection) -> rusqlite::Result<(
         connection.execute_batch("VACUUM")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{drop_tables_referencing_sub_agent_configs_legacy, migrate_chat_messages_interruption_metadata};
+    use rusqlite::Connection;
+
+    #[test]
+    fn interruption_metadata_migration_is_legacy_safe_and_repeatable() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch(
+                "CREATE TABLE chat_messages (id TEXT PRIMARY KEY);
+                 INSERT INTO chat_messages (id) VALUES ('legacy-message');",
+            )
+            .expect("create legacy chat messages table");
+
+        migrate_chat_messages_interruption_metadata(&connection).expect("migrate legacy table");
+        migrate_chat_messages_interruption_metadata(&connection).expect("repeat migration");
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(chat_messages)")
+            .expect("prepare table info");
+        let columns: Vec<String> = statement
+            .query_map([], |row| row.get(1))
+            .expect("read table info")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect columns");
+        let metadata: (Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT interruption_reason, recovery_outcome
+                   FROM chat_messages
+                  WHERE id = 'legacy-message'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read legacy metadata");
+
+        assert_eq!(
+            columns,
+            vec!["id", "interruption_reason", "recovery_outcome"]
+        );
+        assert_eq!(metadata, (None, None));
+    }
+
+    #[test]
+    fn interruption_metadata_migration_repairs_a_partial_schema() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch(
+                "CREATE TABLE chat_messages (
+                    id TEXT PRIMARY KEY,
+                    interruption_reason TEXT
+                 );",
+            )
+            .expect("create partially migrated table");
+
+        migrate_chat_messages_interruption_metadata(&connection).expect("repair partial schema");
+
+        let recovery_column_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*)
+                   FROM pragma_table_info('chat_messages')
+                  WHERE name = 'recovery_outcome'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count recovery column");
+        assert_eq!(recovery_column_count, 1);
+    }
+
+    #[test]
+    fn drops_orphan_tables_with_dangling_fk_to_legacy() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch(
+                "CREATE TABLE sub_agent_configs_legacy (agent_id TEXT PRIMARY KEY);
+                 CREATE TABLE sub_agent_project_overrides (
+                    agent_id TEXT NOT NULL,
+                    PRIMARY KEY (agent_id),
+                    FOREIGN KEY (agent_id)
+                      REFERENCES sub_agent_configs_legacy(agent_id) ON DELETE CASCADE
+                 );
+                 CREATE TABLE normal_table (id TEXT PRIMARY KEY);",
+            )
+            .expect("create fixture tables");
+
+        drop_tables_referencing_sub_agent_configs_legacy(&connection)
+            .expect("drop orphan tables");
+
+        let remaining: Vec<String> = connection
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .expect("prepare table list")
+            .query_map([], |row| row.get(0))
+            .expect("query table list")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect table list");
+        assert_eq!(
+            remaining,
+            vec!["sub_agent_configs_legacy", "normal_table"],
+            "orphan table with dangling FK must be dropped, unrelated tables kept"
+        );
+    }
+
+    #[test]
+    fn orphan_cleanup_is_a_no_op_on_clean_schema() {
+        let connection = Connection::open_in_memory().expect("open database");
+        connection
+            .execute_batch("CREATE TABLE sub_agent_configs (agent_id TEXT PRIMARY KEY);")
+            .expect("create fixture table");
+
+        drop_tables_referencing_sub_agent_configs_legacy(&connection)
+            .expect("cleanup is a no-op");
+
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sub_agent_configs'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count tables");
+        assert_eq!(count, 1, "clean schema must be untouched");
+    }
 }
 

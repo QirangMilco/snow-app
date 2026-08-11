@@ -52,6 +52,11 @@ Snow App 通过 **API 档案（Profile）** 管理模型服务商的接入信息
   可选"继承全局"或"不使用"；
 - **自动压缩**：开启 `enableAutoCompress` 后，当上下文用量达到阈值
   `autoCompressThreshold`（百分比）时自动压缩历史消息；
+- **1M 上下文（Anthropic）**：当请求方法为 `anthropic` 时，可开启 **1M context**
+  开关，开启后所有 Anthropic 请求自动携带 `anthropic-beta: context-1m-2025-08-07`
+  请求头，声明 100 万上下文能力，供 Anthropic 官方 API 及要求显式启用 1M
+  上下文的网关/中转识别；模型名无需附加任何标记（若模型名带有 Claude Code
+  生态的 `[1M]` 后缀，也会自动剥离并同样生效，兼容 cc-switch 等工具）；
 - **Google 搜索（Gemini）**：开启 `googleSearch` 后，Gemini 聊天请求会注入
   Google Search 工具实现实时联网接地（Grounding with Google Search）；
   视觉模型独立配置区另有 `visionGoogleSearch` 开关，可单独控制视觉请求；
@@ -102,6 +107,12 @@ Snow App 内置 `config` 工具，AI Agent 可读写与 UI 同源的配置。API
 | `config-get scope=apiProfiles key=<档案名>` | 读取单个档案（密钥脱敏，不存在返回 null） |
 | `config-set scope=apiProfiles key=<档案名> value={...}` | 新建/更新档案（写应用数据库，与 UI 同源、立即生效） |
 | `config-delete scope=apiProfiles key=<档案名>` | 删除档案（破坏性操作，须先经用户确认再带 `confirmed: true`） |
+
+```mermaid
+flowchart LR
+    A[第一步: 建无密钥档案<br/>baseUrl + advancedModel + basicModel] --> B[第二步: 用户提供密钥后补上<br/>apiKey 省略即留空, 不会清掉已填密钥]
+    B --> C[第三步（可选）: 切换为生效档案<br/>isActive: true]
+```
 
 ### 5.1 常用操作速查（Agent 照着做）
 

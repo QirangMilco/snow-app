@@ -1,3 +1,8 @@
+import type {
+  StreamInterruptionReason,
+  StreamRecoveryOutcome,
+} from "./api";
+
 export type ChatConversationRecord = {
   conversationId: string;
   title: string;
@@ -61,6 +66,8 @@ export type ChatMessageRecord = {
   responseId: string;
   checkpointId: string;
   toolCallsJson: string;
+  interruptionReason?: StreamInterruptionReason | null;
+  recoveryOutcome?: StreamRecoveryOutcome | null;
   createdAt: string;
 };
 

@@ -503,7 +503,7 @@ export const useConversationManagement = (
     }
   }, [ctx.updateSessionField]);
 
-  const handleNewChat = useCallback((): void => {
+  const handleNewChat = useCallback((directoryId?: string): void => {
     ctx.selectionRequestIdRef.current += 1;
     ctx.setIsLoadingInitialHistory(false);
 
@@ -557,6 +557,12 @@ export const useConversationManagement = (
     }
 
     ctx.setActiveId(undefined);
+
+    // One-shot target project for the next new-chat send (e.g. a scheduled
+    // task firing for its bound project). Consumed by handleSendMessage so
+    // the new PENDING session lands in the target project; undefined resets
+    // to the currently active project.
+    ctx.pendingDirectoryIdRef.current = directoryId;
 
     // A new chat uses the PENDING_SESSION_KEY. Reload the pending panel from
     // that key's queue so messages belonging to the previously active

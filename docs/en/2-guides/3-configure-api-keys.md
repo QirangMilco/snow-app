@@ -43,6 +43,7 @@ When the main model does not support vision, turn off the **Supports vision** sw
 - **System prompt**: choose from saved system prompts, or inherit the global profile setting;
 - **Custom header scheme**: choose a scheme defined in `custom-headers.json`, with the option to "inherit global" or "use none";
 - **Auto-compress**: when `enableAutoCompress` is on, history messages are automatically compressed when context usage reaches the threshold `autoCompressThreshold` (percentage);
+- **1M context (Anthropic)**: when the request method is `anthropic`, the **1M context** switch makes all Anthropic requests send the `anthropic-beta: context-1m-2025-08-07` header to declare 1M-token context support, recognized by the Anthropic API and gateways/proxies that require explicitly enabling 1M context; no model-name marker is needed (a Claude Code ecosystem `[1M]` suffix on the model name is also stripped and honored, staying compatible with tools like cc-switch);
 - **Google search (Gemini)**: when `googleSearch` is enabled, Gemini chat requests inject the Google Search tool for real-time web grounding; the separate vision-model section has its own `visionGoogleSearch` switch for vision requests;
 - **Responses Fast Mode**: when the request method is `responses`, you can enable `responsesFastMode` so the server processes Responses requests in fast mode.
 
@@ -85,6 +86,12 @@ config that the UI uses. API-profile related tools:
 | `config-get scope=apiProfiles key=<profile-name>` | Read one profile (keys masked; null when missing) |
 | `config-set scope=apiProfiles key=<profile-name> value={...}` | Create/update a profile (writes the app database, same as the UI; takes effect immediately) |
 | `config-delete scope=apiProfiles key=<profile-name>` | Delete a profile (destructive — ask the user first, then call with `confirmed: true`) |
+
+```mermaid
+flowchart LR
+    A[Step 1: create a keyless profile<br/>baseUrl + advancedModel + basicModel] --> B[Step 2: fill in the key later<br/>omitted apiKey never clears a filled one]
+    B --> C[Step 3 optional: switch to active<br/>isActive: true]
+```
 
 ### 5.1 Quick Reference (agents, follow along)
 

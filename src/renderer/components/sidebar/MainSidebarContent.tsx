@@ -69,7 +69,10 @@ export function MainSidebarContent({
   // for the whole app lifetime. Tasks only live while the process is alive.
   // Project isolation: tasks are scoped to the active directory, mirroring
   // the memo project-isolation model.
-  const { tasks: scheduledTasks } = useScheduledTasks(activeDirectoryId);
+  const { tasks: scheduledTasks } = useScheduledTasks(
+    activeDirectoryId,
+    activeDirectory?.path ?? ""
+  );
 
   // Load the pending memo count for the sidebar badge. It is refreshed
   // whenever the memo modal closes (the modal calls onPendingCountChange
@@ -317,6 +320,7 @@ export function MainSidebarContent({
       />
       <ScheduledTasksModal
         directoryId={activeDirectoryId}
+        directoryPath={activeDirectory?.path ?? ""}
         open={isScheduledTasksOpen}
         onClose={() => setIsScheduledTasksOpen(false)}
       />

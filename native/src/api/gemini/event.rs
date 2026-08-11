@@ -61,10 +61,12 @@ pub(super) fn process_gemini_sse_event_block(
             tool_args_delta,
         ) {
             eprintln!(
-                "Gemini stream event processing error (skipping event): {}",
+                "Gemini stream event processing error (terminal provider error): {}",
                 process_error.reason
             );
-            continue;
+            *response_status = String::from("failed");
+            *stream_finished = true;
+            return;
         }
 
         // Detect finishReason to signal normal stream completion.
@@ -81,6 +83,9 @@ pub(super) fn process_gemini_sse_event_block(
         }
 
         raw_events.push(event);
+        if *stream_finished {
+            return;
+        }
     }
 
     // Fallback: some providers return a complete JSON response without SSE
@@ -92,7 +97,7 @@ pub(super) fn process_gemini_sse_event_block(
             return;
         }
         if let Ok(event) = serde_json::from_str::<Value>(trimmed_block) {
-            let _ = process_gemini_event(
+            if let Err(process_error) = process_gemini_event(
                 &event,
                 content_chunks,
                 thinking_chunks,
@@ -102,7 +107,15 @@ pub(super) fn process_gemini_sse_event_block(
                 response_status,
                 token_usage,
                 tool_args_delta,
-            );
+            ) {
+                eprintln!(
+                    "Gemini stream event processing error (terminal provider error): {}",
+                    process_error.reason
+                );
+                *response_status = String::from("failed");
+                *stream_finished = true;
+                return;
+            }
             // Detect finishReason in raw JSON fallback.
             if let Some(candidates) = event.get("candidates").and_then(Value::as_array) {
                 for candidate in candidates {
@@ -219,4 +232,69 @@ fn process_gemini_event(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use super::process_gemini_sse_event_block;
+    use crate::storage::services::chat_conversations::ChatTokenUsage;
+
+    fn parse_terminal(event_block: &str) -> (String, bool) {
+        let mut raw_events = Vec::<Value>::new();
+        let mut content_chunks = Vec::new();
+        let mut thinking_chunks = Vec::new();
+        let mut tool_calls = Vec::new();
+        let mut response_id = String::new();
+        let mut response_model = String::new();
+        let mut response_status = String::from("completed");
+        let mut token_usage = ChatTokenUsage::default();
+        let mut tool_args_delta = String::new();
+        let mut stream_finished = false;
+
+        process_gemini_sse_event_block(
+            event_block,
+            &mut raw_events,
+            &mut content_chunks,
+            &mut thinking_chunks,
+            &mut tool_calls,
+            &mut response_id,
+            &mut response_model,
+            &mut response_status,
+            &mut token_usage,
+            &mut tool_args_delta,
+            &mut stream_finished,
+        );
+
+        (response_status, stream_finished)
+    }
+
+    #[test]
+    fn stop_and_max_tokens_are_terminal() {
+        assert_eq!(
+            parse_terminal(r#"data: {"candidates":[{"finishReason":"STOP"}]}"#),
+            ("completed".to_string(), true)
+        );
+        assert_eq!(
+            parse_terminal(r#"data: {"candidates":[{"finishReason":"MAX_TOKENS"}]}"#),
+            ("max_tokens".to_string(), true)
+        );
+    }
+
+    #[test]
+    fn provider_error_is_failed_terminal_and_stops_event_block() {
+        assert_eq!(
+            parse_terminal("data: {not-json}"),
+            ("completed".to_string(), false)
+        );
+        assert_eq!(
+            parse_terminal(concat!(
+                r#"data: {"error":{"code":429,"message":"Resource exhausted","status":"RESOURCE_EXHAUSTED"}}"#,
+                "\n",
+                r#"data: {"candidates":[{"finishReason":"STOP"}]}"#,
+            )),
+            ("failed".to_string(), true)
+        );
+    }
 }

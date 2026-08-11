@@ -42,6 +42,8 @@ Keys are server names, and values are server configuration objects:
 | `timeoutMs` | number | Timeout in milliseconds |
 | `alwaysAllow` | array | List of tool names exempt from confirmation |
 
+> **Tool-level toggles are not stored in settings.json**: MCP tool-level enable/disable (global/project) is managed in the MCP Settings panel (app database) and is not written to settings.json; the `mcpServers` field in settings.json carries server-level configuration only.
+
 ### stdio Example
 
 ```json

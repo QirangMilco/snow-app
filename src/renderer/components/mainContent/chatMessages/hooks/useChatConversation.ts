@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatInputSendOptions } from "../../chatInput/types";
-import type { ApiConfigRecord } from "../../../../../preload";
+import type {
+  ApiConfigRecord,
+  ScheduledTaskRunOptions,
+} from "../../../../../preload";
 
 import type {
   ConversationContextValue,
@@ -120,6 +123,10 @@ export const useChatConversation = (
   const [isLoadingInitialHistory, setIsLoadingInitialHistory] = useState(false);
   const [draftToRestore, setDraftToRestore] = useState<string | null>(null);
   const [autoSendToken, setAutoSendToken] = useState(0);
+  // One-shot per-send overrides queued by buildFromContent (scheduled tasks).
+  // Consumed by the ChatInput's auto-send effect, then cleared.
+  const [pendingAutoSendOverride, setPendingAutoSendOverride] =
+    useState<ScheduledTaskRunOptions | null>(null);
   const [rollbackPreview, setRollbackPreview] =
     useState<ConversationContextValue["rollbackPreview"]>(null);
   const [newChatRequested, setNewChatRequested] = useState(false);
@@ -158,6 +165,8 @@ export const useChatConversation = (
     ConversationContextValue["sessionsRefData"]["current"]
   >(new Map());
   const activeConversationIdRef = useRef<string | undefined>(undefined);
+  const pendingDirectoryIdRef = useRef<string | undefined>(undefined);
+  const pendingTaskNameRef = useRef<string | undefined>(undefined);
   const selectionRequestIdRef = useRef(0);
   const historyLoadPromisesRef = useRef(new Map<string, Promise<void>>());
   const loadingOlderConversationIdsRef = useRef(new Set<string>());
@@ -396,6 +405,8 @@ export const useChatConversation = (
 
     sessionsRefData,
     activeConversationIdRef,
+    pendingDirectoryIdRef,
+    pendingTaskNameRef,
     selectionRequestIdRef,
     historyLoadPromisesRef,
     loadingOlderConversationIdsRef,
@@ -619,6 +630,7 @@ export const useChatConversation = (
     baselineCheckpointId: activeSession?.baselineCheckpointId,
     streamStartedAt: activeSession?.streamStartedAt ?? 0,
     visionAnalysis: activeSession?.visionAnalysis,
+    triggeredByTask: activeSession?.triggeredByTask,
     forkedFromConversationId: activeSession?.forkedFromConversationId,
     forkMessageCount: activeSession?.forkMessageCount,
     streamingConversationIds,
@@ -660,11 +672,24 @@ export const useChatConversation = (
     saveInputDraft,
     getInputDraft,
     clearInputDraft,
-    buildFromContent: (content: string) => {
-      conversationManagementApi.handleNewChat();
+    buildFromContent: (
+      content: string,
+      directoryId?: string,
+      options?: ScheduledTaskRunOptions,
+      taskName?: string
+    ) => {
+      conversationManagementApi.handleNewChat(directoryId);
+      // One-shot task name for the message-list "triggered by scheduled task"
+      // banner; consumed by handleSendMessage when the new session starts.
+      pendingTaskNameRef.current = taskName;
       setDraftToRestore(content);
+      // Queue the per-send overrides (if any) for the ChatInput's auto-send
+      // effect; it merges them into the send options and clears them after.
+      setPendingAutoSendOverride(options ?? null);
       setAutoSendToken(Date.now());
     },
+    pendingAutoSendOverride,
+    setPendingAutoSendOverride,
     handleRollback: rollbackApi.handleRollback,
     rollbackPreview,
     confirmRollback: rollbackApi.confirmRollback,

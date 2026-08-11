@@ -19,6 +19,7 @@ import {
 import {
   emptyApiConfigForm,
   extractGoogleSearchFromConfigJson,
+  extractOneMContextFromConfigJson,
   extractResponsesFastModeFromConfigJson,
   extractResponsesVerbosityFromConfigJson,
   extractThinkingValueFromConfigJson,
@@ -102,7 +103,12 @@ export function ApiSettingsTreePanel({
       if (form === "add") {
         setAddForm((previous) => ({ ...previous, [field]: value }));
       } else if (editForm) {
-        setEditForm({ ...editForm, [field]: value });
+        // 函数式更新：单次交互可能连续触发多个字段的 onChange
+        // （如 1M 上下文开关同时更新 oneMContext 与两个模型名），
+        // 非函数式展开会基于同一旧快照互相覆盖，导致部分字段丢失。
+        setEditForm((previous) =>
+          previous ? { ...previous, [field]: value } : previous
+        );
       }
     };
 
@@ -250,6 +256,8 @@ export function ApiSettingsTreePanel({
       maxRetries: config.maxRetries != null ? String(config.maxRetries) : "",
       retryBaseDelayMs:
         config.retryBaseDelayMs != null ? String(config.retryBaseDelayMs) : "",
+      partialRetryMaxChars:
+        config.partialRetryMaxChars != null ? String(config.partialRetryMaxChars) : "",
       systemPromptIdsJson: config.systemPromptIdsJson ?? "",
       customHeaderSchemeId: config.customHeaderSchemeId ?? "",
       thinkingValue: extractThinkingValueFromConfigJson(
@@ -263,6 +271,7 @@ export function ApiSettingsTreePanel({
         config.configJson
       ),
       googleSearch: extractGoogleSearchFromConfigJson(config.configJson),
+      oneMContext: extractOneMContextFromConfigJson(config.configJson),
       visionGoogleSearch: extractVisionGoogleSearchFromConfigJson(
         config.configJson
       ),
@@ -354,6 +363,7 @@ export function ApiSettingsTreePanel({
         autoCompressThreshold: config.autoCompressThreshold,
         maxRetries: config.maxRetries,
         retryBaseDelayMs: config.retryBaseDelayMs,
+        partialRetryMaxChars: config.partialRetryMaxChars,
         systemPromptIdsJson: config.systemPromptIdsJson ?? "",
         customHeaderSchemeId: config.customHeaderSchemeId ?? "",
         configJson: config.configJson,
@@ -408,6 +418,7 @@ export function ApiSettingsTreePanel({
         autoCompressThreshold: config.autoCompressThreshold,
         maxRetries: config.maxRetries,
         retryBaseDelayMs: config.retryBaseDelayMs,
+        partialRetryMaxChars: config.partialRetryMaxChars,
         systemPromptIdsJson: config.systemPromptIdsJson ?? "",
         customHeaderSchemeId: config.customHeaderSchemeId ?? "",
         configJson: config.configJson,

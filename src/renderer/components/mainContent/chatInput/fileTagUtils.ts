@@ -840,6 +840,20 @@ export const readEditableContent = (el: HTMLElement): string =>
   });
 
 /**
+ * 判断编辑区序列化内容是否为空（用于 data-empty / placeholder 显隐）。
+ *
+ * 注意不能用 String.prototype.trim() 判断：trim 会删除空格，导致仅含
+ * 空格的输入被误判为空（输入空格时 placeholder 不隐藏）；也不能直接
+ * 比较 === ""：删除全部内容后浏览器会在 contenteditable 中残留 <br>
+ * （序列化为 \n），导致 placeholder 不恢复显示。
+ *
+ * 因此这里只剥离 <br> / 空块产生的结构换行符 \n，其余任何字符
+ * （包括空格）都视为真实内容。
+ */
+export const isEditableContentEmpty = (content: string): boolean =>
+  content.replace(/\n/g, "") === "";
+
+/**
  * 读取编辑区内容为人类可读纯文本，用于复制/剪切时剪贴板的
  * text/plain 格式：文件 chip 输出路径（含行号后缀）、文本片段
  * chip 输出原文等，保证粘贴到应用外依然可读。

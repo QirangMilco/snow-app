@@ -11,10 +11,10 @@ import {
   formatMcpToolResultForModel,
   formatToolResultsContent,
   getErrorMessage,
-  isResponseErrorStatus,
   parseToolCalls,
   updateFirstMatchingToolCall,
 } from "../utils/conversationHelpers";
+import { resolveResponseDisposition } from "../utils/responseDisposition";
 import { appendHookExecutionToMessage, runHook } from "./hookOutcome";
 import { extractFileChangeFromTool } from "./fileChangeTracking";
 import { injectSessionIdIntoToolArgs } from "../utils/toolSessionMetadata";
@@ -43,6 +43,7 @@ export type SubAgentActivationDeps = {
   ) => Promise<ToolAuthorizationDecision[]>;
   parentApiProfile: string | undefined;
   parentModel: string | undefined;
+  parentThinkingStrength: string | undefined;
   planApprovedSessionKeysRef: { current: Set<string> };
 };
 
@@ -56,6 +57,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
     requestToolAuthorizations,
     parentApiProfile,
     parentModel,
+    parentThinkingStrength,
     planApprovedSessionKeysRef,
   } = deps;
 
@@ -135,6 +137,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
         apiConfigs: await window.snow.listApiConfigs(),
         parentApiProfile,
         parentModel,
+        parentThinkingStrength,
       });
       const allowedTools = parseSubAgentTools(runtimeConfig.toolsJson);
 
@@ -283,6 +286,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
             directoryId: dirId,
             apiProfile: runtimeConfig.apiProfile,
             model: runtimeConfig.model,
+            thinkingStrength: runtimeConfig.thinkingStrength,
             resumeAfterCompaction,
             subAgentToolsJson,
             subAgentSystemPrompt: runtimeConfig.systemPrompt || undefined,
@@ -304,7 +308,8 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
         }
 
         const subResponse = await subStreamPromise;
-        const subResponseFailed = isResponseErrorStatus(subResponse.status);
+        const subResponseDisposition = resolveResponseDisposition(subResponse);
+        const subResponseFailed = subResponseDisposition.kind === "error";
 
         const subRef = ctx.sessionsRefData.current.get(subConvId);
         if (subRef) {
@@ -337,7 +342,52 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
           );
         }
 
-        const subToolCalls = parseToolCalls(subResponse.toolCallsJson);
+        // A final incomplete-like result terminates the sub-agent's internal
+        // loop. Keep display-safe content and metadata, but never parse,
+        // authorize, execute, or return incomplete tool arguments.
+        if (subResponseDisposition.kind === "incomplete") {
+          const currentSubAssistant = ctx.sessionsRef.current?.[
+            subConvId
+          ]?.messages.find((message) => message.id === subAssistantMessageId);
+          const incompleteContent =
+            subResponse.content || currentSubAssistant?.content || "";
+          const safeIncompleteResult = incompleteContent.trim()
+            ? incompleteContent
+            : "Sub-agent response ended before completion. Any incomplete tool call was discarded and was not executed.";
+
+          ctx.updateSessionMessages(subConvId, (currentMessages) =>
+            currentMessages.map((currentMessage) =>
+              currentMessage.id === subAssistantMessageId
+                ? {
+                    ...currentMessage,
+                    content:
+                      subResponse.content || currentMessage.content || "",
+                    thinking:
+                      subResponse.thinking ||
+                      currentMessage.thinking ||
+                      undefined,
+                    timestamp: formatMessageTime(),
+                    status: "incomplete" as const,
+                    incompleteVariant: subResponseDisposition.variant,
+                    interruptionReason: subResponseDisposition.reason,
+                    recoveryOutcome: subResponseDisposition.recoveryOutcome,
+                    responseId: subResponse.id || undefined,
+                    model: subResponse.model || undefined,
+                    toolCalls: undefined,
+                    isRetrying: false,
+                    retryAttempt: undefined,
+                    retryError: undefined,
+                  }
+                : currentMessage
+            )
+          );
+          return safeIncompleteResult;
+        }
+
+        const subToolCalls =
+          subResponseDisposition.kind === "complete"
+            ? parseToolCalls(subResponse.toolCallsJson)
+            : [];
 
         if (subResponseFailed) {
           const failureContent =
@@ -466,9 +516,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
                     content:
                       subResponse.content ||
                       currentMessage.content ||
-                      (subResponse.status === "incomplete"
-                        ? "Sub-agent response was interrupted. Please retry."
-                        : "Sub-agent completed with no output."),
+                      "Sub-agent completed with no output.",
                     status: "sent" as const,
                     responseId: subResponse.id || undefined,
                     model: subResponse.model || undefined,
@@ -478,12 +526,7 @@ export const createSubAgentActivation = (deps: SubAgentActivationDeps) => {
             )
           );
 
-          return (
-            subResponse.content ||
-            (subResponse.status === "incomplete"
-              ? "Sub-agent response was interrupted. Please retry."
-              : "Sub-agent completed with no output.")
-          );
+          return subResponse.content || "Sub-agent completed with no output.";
         }
 
         ctx.updateSessionMessages(subConvId, (currentMessages) =>

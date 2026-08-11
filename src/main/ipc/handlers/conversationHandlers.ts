@@ -351,6 +351,98 @@ export const registerConversationHandlers = (native: NativeBridge): void => {
     }
   );
   ipcMain.handle(
+    "chat-conversations:archive",
+    async (_event, conversationIds: unknown) => {
+      if (!Array.isArray(conversationIds)) {
+        throw new Error("Conversation IDs are required to archive");
+      }
+
+      const safeIds = conversationIds.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (safeIds.length === 0) {
+        return;
+      }
+
+      snowLog.info({
+        module: "ipc/conversation",
+        func: "archive",
+        message: "Conversations archived",
+        context: `count=${safeIds.length}`,
+      });
+      await native.archiveConversations(safeIds);
+    }
+  );
+  ipcMain.handle(
+    "chat-conversations:list-archived-paginated",
+    (_event, directoryId: unknown, limit: unknown, offset: unknown) => {
+      if (typeof directoryId !== "string" || !directoryId.trim()) {
+        throw new Error(
+          "Directory ID is required to list archived conversations"
+        );
+      }
+
+      const safeLimit =
+        typeof limit === "number" && limit > 0 ? Math.floor(limit) : 20;
+      const safeOffset =
+        typeof offset === "number" && offset > 0 ? Math.floor(offset) : 0;
+
+      return native.listArchivedConversationsPaginated(
+        directoryId.trim(),
+        safeLimit,
+        safeOffset
+      );
+    }
+  );
+  ipcMain.handle(
+    "chat-conversations:restore-archived",
+    async (_event, conversationIds: unknown) => {
+      if (!Array.isArray(conversationIds)) {
+        throw new Error("Conversation IDs are required to restore");
+      }
+
+      const safeIds = conversationIds.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (safeIds.length === 0) {
+        return;
+      }
+
+      snowLog.info({
+        module: "ipc/conversation",
+        func: "restore-archived",
+        message: "Archived conversations restored",
+        context: `count=${safeIds.length}`,
+      });
+      await native.restoreArchivedConversations(safeIds);
+    }
+  );
+  ipcMain.handle(
+    "chat-conversations:delete-archived",
+    async (_event, conversationIds: unknown) => {
+      if (!Array.isArray(conversationIds)) {
+        throw new Error(
+          "Conversation IDs are required to delete archived conversations"
+        );
+      }
+
+      const safeIds = conversationIds.filter(
+        (id): id is string => typeof id === "string" && id.trim() !== ""
+      );
+      if (safeIds.length === 0) {
+        return;
+      }
+
+      snowLog.warn({
+        module: "ipc/conversation",
+        func: "delete-archived",
+        message: "Archived conversations permanently deleted",
+        context: `count=${safeIds.length}`,
+      });
+      await native.deleteArchivedConversations(safeIds);
+    }
+  );
+  ipcMain.handle(
     "chat-conversations:list-sub-agent",
     (_event, parentConversationId: unknown) => {
       if (

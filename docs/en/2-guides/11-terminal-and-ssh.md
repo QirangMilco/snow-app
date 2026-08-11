@@ -52,6 +52,16 @@ AI uses an **interactive terminal session**:
    - filesystem tools read/write remote files; bash tools run remote commands;
    - open remote Git repositories (see below).
 
+```mermaid
+flowchart TD
+    A[Sidebar → Add directory → SSH] --> B[Fill in host, port, username, auth<br/>password or key]
+    B --> C{Save credential?<br/>password or key path persisted}
+    C -- yes --> D[ssh:save-credential<br/>next connections need no input]
+    C -- no --> E
+    D --> E[Connected<br/>directory appears in the sidebar]
+    E --> F[Behaves like a local directory<br/>remote file tree / terminal / commands / Git]
+```
+
 > `ssh://user@host:port/path` URLs are parsed and connected directly
 > (`ssh:parse-url`); saved credentials can be listed/managed in the SSH
 > management UI (`ssh:list-credentials`).

@@ -113,8 +113,13 @@ const normalizeResponsesApiRequest = (value: unknown): ResponsesApiRequest => {
       typeof source.planMode === "boolean" ? source.planMode : undefined,
     goalMode:
       typeof source.goalMode === "boolean" ? source.goalMode : undefined,
+    thinkingStrength:
+      typeof source.thinkingStrength === "string" &&
+      source.thinkingStrength.trim()
+        ? source.thinkingStrength
+        : undefined,
   };
-};
+}
 
 /**
  * Resolve the project ROLE.md content for an SSH workspace so the Rust prompt

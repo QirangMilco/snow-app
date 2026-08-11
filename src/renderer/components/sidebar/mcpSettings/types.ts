@@ -7,7 +7,7 @@ import type {
 export type McpServerConfig = McpServerConfigRecord;
 export type ProjectMcpServerConfig = ProjectMcpServerConfigRecord;
 export type McpServerConfigLike = Omit<McpServerConfig, "id">;
-export type McpServerTool = McpToolDefinition;
+export type McpServerTool = McpToolDefinition & { enabled: boolean };
 
 export type McpKeyValuePair = {
   id: string;

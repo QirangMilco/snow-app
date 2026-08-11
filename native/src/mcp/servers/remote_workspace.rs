@@ -24,6 +24,21 @@ pub fn is_ssh_path(path: &str) -> bool {
     path.trim_start().starts_with("ssh://")
 }
 
+/// Detect Windows drive-letter absolute paths (`C:\...` / `C:/...`, case
+/// insensitive) and UNC paths (`\\server\share\...` / `//server/share/...`).
+/// These belong to the App Host machine where the Electron app runs and must
+/// never be resolved against an SSH workspace.
+pub fn is_windows_absolute_path(path: &str) -> bool {
+    let trimmed = path.trim_start();
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return true;
+    }
+    matches!(
+        trimmed.as_bytes(),
+        [drive, b':', b'/' | b'\\', ..] if drive.is_ascii_alphabetic()
+    )
+}
+
 /// Resolve a filesystem path against an SSH workspace URI without performing
 /// I/O. Absolute paths retain the workspace SSH authority; relative paths are
 /// resolved beneath the remote workspace root.
@@ -32,6 +47,11 @@ pub fn resolve_remote_workspace_path(workspace_path: &str, requested_path: &str)
     let requested_path = requested_path.trim();
 
     if is_ssh_path(requested_path) {
+        return requested_path.to_string();
+    }
+    // Windows drive-letter and UNC paths are App Host (local) paths; they
+    // must never be joined into an SSH workspace URI.
+    if is_windows_absolute_path(requested_path) {
         return requested_path.to_string();
     }
     if requested_path.is_empty() || requested_path == "." {

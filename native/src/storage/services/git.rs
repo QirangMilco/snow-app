@@ -144,6 +144,8 @@ pub struct GitLogEntry {
     pub message: String,
     pub refs: String,
     pub parents: Vec<String>,
+    pub additions: i32,
+    pub deletions: i32,
 }
 
 #[napi(object)]
@@ -916,12 +918,19 @@ pub fn get_git_log(repo_path: &str, skip: i32, limit: i32) -> Result<Vec<GitLogE
     // `--decorate=full` emits unambiguous ref names (refs/heads/…,
     // refs/remotes/…, refs/tags/…) so the renderer can tell local branches,
     // remote-tracking branches and tags apart.
+    // `--shortstat` appends a diffstat line (e.g. "1 file changed,
+    // 5 insertions(+), 2 deletions(-)") after each commit's pretty line so
+    // the renderer can show per-commit added/removed line counts. Merge
+    // commits with no changes produce no shortstat line (additions/deletions
+    // stay 0). The stat vocabulary is hardcoded English in git and does not
+    // follow the system locale.
     let output = run_git_raw(
         repo_path,
         &[
             "log",
             "--all",
             "--decorate=full",
+            "--shortstat",
             format_arg,
             "--date=iso",
             "--skip",
@@ -939,25 +948,54 @@ pub fn get_git_log(repo_path: &str, skip: i32, limit: i32) -> Result<Vec<GitLogE
         }
 
         let parts: Vec<&str> = line.split('\x1f').collect();
-        if parts.len() < 8 {
-            continue;
+        if parts.len() >= 8 {
+            let parents: Vec<String> = parts[7].split_whitespace().map(|s| s.to_string()).collect();
+
+            entries.push(GitLogEntry {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                author: parts[2].to_string(),
+                email: parts[3].to_string(),
+                date: parts[4].to_string(),
+                message: parts[5].to_string(),
+                refs: parts[6].to_string(),
+                parents,
+                additions: 0,
+                deletions: 0,
+            });
+        } else if let Some(entry) = entries.last_mut() {
+            // shortstat line belonging to the commit parsed just above.
+            entry.additions = parse_shortstat_count(line, "insertion");
+            entry.deletions = parse_shortstat_count(line, "deletion");
         }
-
-        let parents: Vec<String> = parts[7].split_whitespace().map(|s| s.to_string()).collect();
-
-        entries.push(GitLogEntry {
-            hash: parts[0].to_string(),
-            short_hash: parts[1].to_string(),
-            author: parts[2].to_string(),
-            email: parts[3].to_string(),
-            date: parts[4].to_string(),
-            message: parts[5].to_string(),
-            refs: parts[6].to_string(),
-            parents,
-        });
     }
 
     Ok(entries)
+}
+
+/// Extracts the number preceding `keyword` in a git `--shortstat` line, e.g.
+/// "1 file changed, 5 insertions(+), 2 deletions(-)" with keyword "insertion"
+/// yields 5. Matches both singular and plural forms ("insertion"/"insertions",
+/// "deletion"/"deletions"). Returns 0 when the keyword is absent.
+fn parse_shortstat_count(line: &str, keyword: &str) -> i32 {
+    let mut result = 0;
+    let mut rest = line;
+    while let Some(idx) = rest.find(keyword) {
+        // 数字与 keyword 之间有空白（"347 insertions"），先 trim 掉再取数字。
+        let digits: String = rest[..idx]
+            .trim_end()
+            .chars()
+            .rev()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if !digits.is_empty() {
+            if let Ok(n) = digits.chars().rev().collect::<String>().parse::<i32>() {
+                result = n;
+            }
+        }
+        rest = &rest[idx + keyword.len()..];
+    }
+    result
 }
 
 pub fn get_commit_files(repo_path: &str, hash: &str) -> Result<Vec<GitCommitFile>> {

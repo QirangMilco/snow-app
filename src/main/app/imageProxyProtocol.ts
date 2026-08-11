@@ -1,6 +1,6 @@
 import { protocol, net } from "electron";
 import { readFile } from "fs/promises";
-import { dirname, join, normalize, sep } from "path";
+import { join, normalize, sep } from "path";
 import type { NativeBridge } from "../native/types";
 import {
   IMG_PROXY_SCHEME,
@@ -64,8 +64,8 @@ const serveLocalImage = async (
   if (normalized.startsWith("image/")) {
     root = await native.getImageLibraryRoot();
   } else {
-    const storageInfo = await native.initializeAppStorage();
-    root = join(dirname(storageInfo.databasePath), "upload");
+    // upload/ 以上传图片根目录为根（优先用户自定义路径，回退 ~/.snowapp/upload）
+    root = await native.getUploadRoot();
   }
 
   const filePath = normalize(join(root, normalized));

@@ -5,6 +5,7 @@ import type {
 } from "../utils/conversationTypes";
 import type { FileChangeRecord } from "../utils/conversationTypes";
 import { parseToolCalls } from "../utils/conversationHelpers";
+import { resolveResponseDisposition } from "../utils/responseDisposition";
 import { generateComparePatch } from "../../../../utils/generateComparePatch";
 
 /** Tools whose successful execution counts as a file modification. */
@@ -248,7 +249,10 @@ export function extractFileChangesFromRecords(
 
   const changes: ExtractedFileChange[] = [];
   for (const record of records) {
-    if (record.role !== "assistant") {
+    if (
+      record.role !== "assistant" ||
+      resolveResponseDisposition(record).kind !== "complete"
+    ) {
       continue;
     }
     for (const toolCall of parseToolCalls(record.toolCallsJson)) {

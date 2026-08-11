@@ -40,6 +40,58 @@ export const clearBrowserRouteRulesForInstance = (instanceId: string): void => {
   browserRouteRulesByInstance.delete(instanceId);
 };
 
+/**
+ * 每个 webview 标签页最近一次主 Frame 导航状态。
+ *
+ * 主 Frame 导航失败后 Chromium 会停留在 chrome-error://chromewebdata/
+ * 错误页，此时 capturePage 仍能返回全黑 PNG。Screenshot 等操作在捕获前
+ * 检查该状态，失败时直接返回原导航错误，避免把错误页图片当作正常结果。
+ * 状态以 tabId（webview 元素）为 key 隔离，标签页关闭时清理。
+ */
+type MainFrameNavigationState =
+  | { status: "success"; url: string }
+  | {
+      status: "failed";
+      url: string;
+      errorCode?: number;
+      errorDescription: string;
+    };
+
+const mainFrameNavigationStates = new Map<string, MainFrameNavigationState>();
+
+/** 主 Frame 导航成功（含页面内导航、重定向目标加载）后记录并清除失败状态。 */
+export const recordMainFrameNavigationSuccess = (
+  tabId: string,
+  url: string
+): void => {
+  mainFrameNavigationStates.set(tabId, { status: "success", url });
+};
+
+/** 主 Frame 导航失败时记录，供 screenshot 等操作拒绝执行。 */
+export const recordMainFrameNavigationFailure = (
+  tabId: string,
+  url: string,
+  errorCode: number | undefined,
+  errorDescription: string
+): void => {
+  mainFrameNavigationStates.set(tabId, {
+    status: "failed",
+    url,
+    ...(errorCode !== undefined ? { errorCode } : {}),
+    errorDescription,
+  });
+};
+
+/** 标签页关闭或实例卸载时清理对应状态，避免跨实例残留。 */
+export const clearBrowserNavigationState = (tabId: string): void => {
+  mainFrameNavigationStates.delete(tabId);
+};
+
+const getMainFrameNavigationState = (
+  tabId: string | undefined
+): MainFrameNavigationState | undefined =>
+  tabId ? mainFrameNavigationStates.get(tabId) : undefined;
+
 // Electron webview console-message level: 0=verbose, 1=info, 2=warning, 3=error.
 const CONSOLE_LEVEL_MIN: Record<string, number> = {
   verbose: 0,
@@ -806,6 +858,15 @@ const screenshot = async (
   instanceId: string,
   args: BrowserMcpCommandArgs
 ): Promise<unknown> => {
+  // 最近一次主 Frame 导航失败时，页面停留在 Chromium 错误页，capturePage
+  // 只会返回全黑 PNG。此时直接返回原导航错误，不把错误页当作正常结果。
+  const tabId = (webview as HTMLElement).dataset.tabId;
+  const navigationState = getMainFrameNavigationState(tabId);
+  if (navigationState?.status === "failed") {
+    throw new Error(
+      `Browser screenshot unavailable: main-frame navigation to ${navigationState.url} failed with ${navigationState.errorDescription}`
+    );
+  }
   // Viewport-only by default: full-page captures of long pages produce
   // huge base64 payloads that inflate context and may exceed provider
   // per-image limits.

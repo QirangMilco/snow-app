@@ -645,6 +645,98 @@ impl McpService for BrowserService {
                     }
                 }),
             },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "open_tab".to_string(),
+                description: "Open a new tab inside an embedded browser instance and navigate it to a URL. The new tab becomes the active tab of that instance. Omit instanceId to use the most recently focused browser instance.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "url": {
+                            "type": "string",
+                            "description": "URL to open in the new tab (http://, https://, or file://)."
+                        }
+                    },
+                    "required": ["url"]
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "list_tabs".to_string(),
+                description: "List all tabs inside an embedded browser instance with their tab IDs, titles, URLs, and active state. Use this to discover tabs before switching or closing them. Omit instanceId to use the most recently focused browser instance.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        }
+                    }
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "close_tab".to_string(),
+                description: "Close a tab inside an embedded browser instance by its tab ID (from browser-list_tabs). Closing the last tab of an instance opens a fresh homepage tab instead, so the instance always keeps at least one tab. Omit instanceId to use the most recently focused browser instance.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "tabId": {
+                            "type": "string",
+                            "description": "The tab ID to close (from browser-list_tabs)."
+                        }
+                    },
+                    "required": ["tabId"]
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "focus_tab".to_string(),
+                description: "Switch to (activate) a tab inside an embedded browser instance by its tab ID (from browser-list_tabs), bringing it to the foreground. Subsequent page-level operations (navigate, click, screenshot, etc.) act on this tab. Omit instanceId to use the most recently focused browser instance.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "tabId": {
+                            "type": "string",
+                            "description": "The tab ID to activate (from browser-list_tabs)."
+                        }
+                    },
+                    "required": ["tabId"]
+                }),
+            },
+            McpTool {
+                server_id: SERVER_ID.to_string(),
+                name: "get_tab_content".to_string(),
+                description: "Extract the visible text content (document.body.innerText) of the active tab in an embedded browser instance, together with its URL and title. Useful for reading article text or page content without a screenshot. Omit instanceId to use the most recently focused browser instance.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "instanceId": {
+                            "type": "string",
+                            "description": "Optional browser instance ID. Omit it or use current to target the most recently focused embedded browser tab."
+                        },
+                        "maxLength": {
+                            "type": "number",
+                            "description": "Maximum number of characters to return (default 20000, range 1000-100000).",
+                            "default": DEFAULT_MAX_CONTENT_LENGTH,
+                            "minimum": MIN_MAX_CONTENT_LENGTH,
+                            "maximum": MAX_MAX_CONTENT_LENGTH
+                        }
+                    }
+                }),
+            },
         ]
     }
 
@@ -653,7 +745,8 @@ impl McpService for BrowserService {
             "create" | "navigate" | "click" | "screenshot" | "devtools" | "close" | "focus"
             | "list" | "evaluate" | "type" | "wait" | "press_key"
             | "select_option" | "hover" | "upload-file" | "back"
-            | "forward" | "navigate_back" | "navigate_forward" => Err(Error::new(
+            | "forward" | "navigate_back" | "navigate_forward" | "open_tab"
+            | "list_tabs" | "close_tab" | "focus_tab" | "get_tab_content" => Err(Error::new(
                 Status::GenericFailure,
                 "Browser tools must be executed through the asynchronous Electron command bridge"
                     .to_string(),
@@ -1056,6 +1149,29 @@ fn validate_and_normalize_args(tool_name: &str, args: &Value) -> napi::Result<Va
             required_non_empty_string(args, "instanceId", tool_name)?;
         }
         "list" => {}
+        "open_tab" => {
+            optional_non_empty_string(args, "instanceId")?;
+            let url = required_non_empty_string(args, "url", tool_name)?;
+            validate_web_url(url)?;
+        }
+        "list_tabs" => {
+            optional_non_empty_string(args, "instanceId")?;
+        }
+        "close_tab" | "focus_tab" => {
+            optional_non_empty_string(args, "instanceId")?;
+            required_non_empty_string(args, "tabId", tool_name)?;
+        }
+        "get_tab_content" => {
+            optional_non_empty_string(args, "instanceId")?;
+            let max_length = bounded_u64(
+                args,
+                "maxLength",
+                DEFAULT_MAX_CONTENT_LENGTH,
+                MIN_MAX_CONTENT_LENGTH,
+                MAX_MAX_CONTENT_LENGTH,
+            )?;
+            normalized.insert("maxLength".to_string(), json!(max_length));
+        }
         _ => return Err(unknown_tool_error(tool_name)),
     }
 
@@ -1162,7 +1278,7 @@ fn unknown_tool_error(tool_name: &str) -> Error {
     Error::new(
         Status::GenericFailure,
         format!(
-            "Unknown tool: \"{tool_name}\" for MCP server \"browser\". Available tools: [browser-create, browser-navigate, browser-navigate_back, browser-navigate_forward, browser-click, browser-hover, browser-type, browser-select_option, browser-press_key, browser-screenshot, browser-wait, browser-devtools, browser-close, browser-focus, browser-list, browser-evaluate]"
+            "Unknown tool: \"{tool_name}\" for MCP server \"browser\". Available tools: [browser-create, browser-navigate, browser-navigate_back, browser-navigate_forward, browser-click, browser-hover, browser-type, browser-select_option, browser-press_key, browser-screenshot, browser-wait, browser-devtools, browser-close, browser-focus, browser-list, browser-evaluate, browser-open_tab, browser-list_tabs, browser-close_tab, browser-focus_tab, browser-get_tab_content]"
         ),
     )
 }

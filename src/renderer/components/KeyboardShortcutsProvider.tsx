@@ -17,9 +17,13 @@ import { isMacOS } from "../utils/shortcutUtils";
 
 /**
  * 所有快捷键的默认配置。当后端尚未 seed 或读取失败时使用。
- * 7 个快捷键全部默认 enabled=true, foregroundOnly=true。
+ * 9 个快捷键默认 enabled=true；除 toggleWindow 外默认 foregroundOnly=true。
  * cycleApiProfile 的默认键平台相关：macOS 用 Ctrl+P（Alt 会输入特殊字符），
  * 其他平台用 Alt+P。
+ * toggleWindow（mod+shift+h）默认 foregroundOnly=false：它由主进程
+ * globalShortcut 注册，窗口隐藏到托盘时也要能呼出，不受"仅台前"限制。
+ * togglePet（mod+shift+p）默认 foregroundOnly=true：宠物启停由渲染进程
+ * 快捷键触发，仅应用聚焦时生效。
  */
 const DEFAULT_SETTINGS: KeyboardShortcutsSettings = {
   cancelSession: { key: "escape", enabled: true, foregroundOnly: true },
@@ -30,6 +34,16 @@ const DEFAULT_SETTINGS: KeyboardShortcutsSettings = {
   openProjectExplorer: { key: "mod+d", enabled: true, foregroundOnly: true },
   cycleApiProfile: {
     key: isMacOS() ? "ctrl+p" : "alt+p",
+    enabled: true,
+    foregroundOnly: true,
+  },
+  toggleWindow: {
+    key: "mod+shift+h",
+    enabled: true,
+    foregroundOnly: false,
+  },
+  togglePet: {
+    key: "mod+shift+p",
     enabled: true,
     foregroundOnly: true,
   },
@@ -158,10 +172,19 @@ export const KeyboardShortcutsProvider = ({
           ...prev,
           [action]: { ...current, ...config },
         };
-        // 双写：异步写入 SQLite，不阻塞 UI
-        void window.snow.setKeyboardShortcutsSettings(next).catch(() => {
-          // 写入失败时静默处理，内存缓存仍已更新
-        });
+        // 双写：异步写入 SQLite，不阻塞 UI；写入成功后通知主进程
+        // 重注册全局快捷键（toggleWindow 由主进程 globalShortcut 处理，
+        // 窗口隐藏时也能呼出，需在设置变更后同步）。
+        void window.snow
+          .setKeyboardShortcutsSettings(next)
+          .then(() => {
+            void window.snow.reloadGlobalShortcut().catch(() => {
+              // 全局快捷键重注册失败时静默处理（如组合键被其他应用占用）
+            });
+          })
+          .catch(() => {
+            // 写入失败时静默处理，内存缓存仍已更新
+          });
         return next;
       });
     },
